@@ -1,0 +1,18 @@
+# AITP Atlas bundle: a read-only view of AITP research.
+#
+# root:           the research root, the folder whose research.md is the root note. Required.
+# knowledge:      the shared collection (its index.md). Empty: the folder of the index.md the
+#                 root note links to, else ../knowledge beside the root.
+# library:        full texts (arxiv/<version>/paper.pdf). Empty: <knowledge>/library.
+# excludePaths:   folders, relative to the root, never read as topics.
+# maxAgeSeconds:  how old a reading of the tree may be before it is refreshed.
+
+- insert:
+    - id: aitp-atlas
+      name: 'aitp-atlas'
+      config:
+        root: ''
+        knowledge: ''
+        library: ''
+        excludePaths: []
+        maxAgeSeconds: 30

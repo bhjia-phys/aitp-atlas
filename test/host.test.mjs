@@ -1,0 +1,201 @@
+/**
+ * The host half against a fake DSH context: DSH's authentication guards every
+ * route, documents stream with byte ranges, folders list, contents are sorted
+ * by kind, and the editor saves only what has not changed on disk meanwhile.
+ * Nothing else in the research tree changes.
+ */
+import assert from 'node:assert/strict';
+import { promises as fsp } from 'node:fs';
+import { Readable, Writable } from 'node:stream';
+import test from 'node:test';
+import { apply, normalizeConfig } from '../index.js';
+import { makeFixture, snapshot } from './fixture.mjs';
+
+const COOKIE = 'dsh-browser=signed';
+
+function fakeContext({ withConnection = true } = {}) {
+  const routes = new Map();
+  const touched = [];
+  const record = (name) => new Proxy({}, { get: (_t, key) => (...args) => touched.push(`${name}.${String(key)}`) });
+  // DSH's connection service: a signed cookie admits, anything else is 401.
+  const connection = { requestRejection: (req) => (String((req.headers || {}).cookie || '').includes(COOKIE) ? undefined : 401) };
+  const web = {
+    effect: (fn) => fn(),
+    webServer: { register: (route) => routes.set(route.path, route) },
+    get: (name) => (name === 'connection' && withConnection ? connection : undefined),
+  };
+  const ctx = {
+    effect: (fn) => fn(),
+    tools: record('tools'),
+    systemPrompt: record('systemPrompt'),
+    get: () => undefined,
+    inject: (names, fn) => {
+      assert.deepEqual(names, ['webServer']);
+      fn(web);
+    },
+  };
+  return { ctx, routes, touched };
+}
+
+async function call(routes, method, name, { query = '', body, headers, cookie = true, raw = false } = {}) {
+  const route = routes.get(`/aitp-atlas/api/${name}`);
+  assert.ok(route, `route ${name}`);
+  const req = Readable.from(body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]);
+  req.method = method;
+  req.url = `/aitp-atlas/api/${name}${query ? '?' + query : ''}`;
+  req.headers = { host: '127.0.0.1:3000', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie: COOKIE } : {}), ...(headers || {}) };
+  const chunks = [];
+  const out = {};
+  const res = new Writable({
+    write(chunk, _encoding, done) {
+      chunks.push(Buffer.from(chunk));
+      done();
+    },
+  });
+  res.statusCode = 200;
+  res.headersSent = false;
+  res.setHeader = (k, v) => {
+    out[k.toLowerCase()] = v;
+  };
+  const finished = new Promise((resolve) => res.on('finish', resolve));
+  await route.handler(req, res);
+  await finished;
+  const buffer = Buffer.concat(chunks);
+  const json = !raw && out['content-type'] && out['content-type'].includes('json') ? JSON.parse(buffer.toString('utf8')) : null;
+  return { status: res.statusCode, headers: out, json, buffer };
+}
+
+const q = (path) => 'path=' + encodeURIComponent(path);
+
+test('host: authenticated routes, sorted contents, in-app documents and folders', async () => {
+  const fx = await makeFixture();
+  try {
+    const before = await snapshot(fx.base);
+    const h = fakeContext();
+    apply(h.ctx, { root: fx.root });
+    assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/search']);
+
+    // Without DSH's signed browser cookie, every route answers 401.
+    for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
+      assert.equal((await call(h.routes, 'GET', name, { query: q(fx.file('topics/research.md')), cookie: false })).status, 401, name);
+    }
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('topics/x.md'), text: 'x', create: true }, cookie: false })).status, 401);
+
+    const ov = (await call(h.routes, 'GET', 'overview', { query: 'fresh=1' })).json;
+    assert.deepEqual(ov.directions.map((d) => d.topics), [['mc/worm', 'mc/continuation'], ['topology'], []]);
+    assert.deepEqual(ov.topics['mc/worm'].latest, { name: 'Mixing test', status: 'paused', date: '2026-11-02' });
+    assert.equal(ov.topics['mc/worm'].counts.notes, 1);
+    assert.deepEqual(ov.timeline.slice(0, 2).map((e) => e.name), ['Critical exponents', 'Parallel tempering → independent topic']);
+    // What waits on the researcher travels with each topic; a pointer names its owner's file.
+    assert.deepEqual(ov.topics['mc/continuation'].waiting.map((t) => [t.name, t.status, t.date, t.owner]), [['Window choice', 'waiting on the researcher', '2026-10-20', '']]);
+    assert.deepEqual(ov.topics[''].waiting.map((t) => [t.name, t.owner]), [['Window choice', fx.file('topics/mc/continuation/research.md')]]);
+    assert.deepEqual(ov.topics.orphan.waiting.map((t) => t.name), ['Orphan decision']);
+    assert.deepEqual(ov.topics['mc/worm'].waiting, []);
+    assert.deepEqual(ov.web, [['mc/continuation', 'topology']]);
+    assert.deepEqual(ov.counts, { topics: 5, directions: 3, unreached: 1, entries: 3, papers: 1 });
+
+    // A topic: its contents sorted by kind, with missing files marked.
+    const note = (await call(h.routes, 'GET', 'note', { query: q(fx.file('topics/mc/worm/research.md')) })).json;
+    assert.equal(note.shown, 'topics/mc/worm/research.md');
+    assert.equal(note.editable, true);
+    const groups = Object.fromEntries(note.topic.contents.map((g) => [g.key, g.items]));
+    assert.deepEqual(Object.keys(groups), ['branches', 'notes', 'reports', 'code', 'data', 'knowledge', 'topics']);
+    assert.deepEqual(groups.notes.map((i) => [i.label, i.exists]), [['the plan', false]]);
+    assert.deepEqual(groups.data.map((i) => [i.type, i.exists, i.section]), [['image', true, 'The equilibrium distribution'], ['table', true, 'The equilibrium distribution']]);
+    assert.equal(groups.knowledge[0].exists, true);
+    const topo = (await call(h.routes, 'GET', 'note', { query: q(fx.file('topics/topology/research.md')) })).json;
+    assert.deepEqual(topo.topic.contents.map((g) => [g.key, g.items.map((i) => i.type)]), [['papers', ['pdf', 'arxiv']], ['writing', ['tex']]]);
+
+    // Documents: a supporting file knows its topic; LaTeX is text; a PDF streams, with byte ranges.
+    const tex = (await call(h.routes, 'GET', 'note', { query: q(fx.file('topics/topology/manuscript/draft.tex')) })).json;
+    assert.deepEqual([tex.type, tex.editable, tex.owner.id], ['tex', true, 'topology']);
+    const pdf = await call(h.routes, 'GET', 'raw', { query: q(fx.file('topics/topology/readings/thouless.pdf')), raw: true });
+    assert.equal(pdf.status, 200);
+    assert.equal(pdf.headers['content-type'], 'application/pdf');
+    assert.match(pdf.headers['content-security-policy'], /sandbox/);
+    assert.equal(pdf.buffer.toString('utf8'), '%PDF-1.4 reading\n');
+    const part = await call(h.routes, 'GET', 'raw', { query: q(fx.file('topics/topology/readings/thouless.pdf')), headers: { range: 'bytes=0-3' }, raw: true });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers['content-range'], 'bytes 0-3/17');
+    assert.equal(part.buffer.toString('utf8'), '%PDF');
+    assert.equal((await call(h.routes, 'GET', 'raw', { query: q(fx.file('topics/mc/worm/research.md')) })).status, 415);
+    const dir = (await call(h.routes, 'GET', 'dir', { query: q(fx.file('topics/mc/worm')) })).json;
+    assert.deepEqual(dir.entries.map((e) => e.name), ['code', 'data', 'figures', 'stability', 'research.md']);
+    assert.equal(dir.topic.id, 'mc/worm');
+    const vendor = await call(h.routes, 'GET', 'vendor/pdf.min.mjs', { raw: true });
+    assert.equal(vendor.status, 200);
+    assert.match(vendor.headers['content-type'], /javascript/);
+
+    // Refusals.
+    assert.equal((await call(h.routes, 'GET', 'note', { query: q(fx.file('../outside.md')) })).status, 403);
+    assert.equal((await call(h.routes, 'GET', 'note', { query: q(fx.file('knowledge/library/arxiv/1510.07698v2/paper.pdf')) })).status, 415);
+    assert.equal((await call(h.routes, 'POST', 'overview')).status, 405);
+    assert.equal((await call(h.routes, 'POST', 'open', { body: 'path=x', headers: { 'content-type': 'text/plain' } })).status, 403);
+    assert.deepEqual(await snapshot(fx.base), before, 'reading changes nothing');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('host: the editor creates and saves notes, and never overwrites a changed file', async () => {
+  const fx = await makeFixture();
+  try {
+    const h = fakeContext();
+    apply(h.ctx, { root: fx.root });
+    const fresh = fx.file('topics/mc/worm/notes/spectral-flow.md');
+    const created = await call(h.routes, 'POST', 'save', { body: { path: fresh, text: '# Spectral flow\n\n', create: true } });
+    assert.equal(created.status, 200);
+    assert.equal(await fsp.readFile(fresh, 'utf8'), '# Spectral flow\n\n');
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fresh, text: 'again', create: true } })).status, 409, 'create never replaces a file');
+
+    const opened = (await call(h.routes, 'GET', 'note', { query: q(fresh) })).json;
+    const saved = await call(h.routes, 'POST', 'save', { body: { path: fresh, text: '# Spectral flow\n\nThe index counts crossings.\n', mtimeMs: opened.mtimeMs } });
+    assert.equal(saved.status, 200);
+    // Another writer (an AI session) changes the file; a save based on the old reading is refused.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await fsp.writeFile(fresh, '# Spectral flow\n\nEdited by a session.\n', 'utf8');
+    const stale = await call(h.routes, 'POST', 'save', { body: { path: fresh, text: 'mine', mtimeMs: saved.json.mtimeMs } });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.json.conflict, true);
+    assert.equal(await fsp.readFile(fresh, 'utf8'), '# Spectral flow\n\nEdited by a session.\n');
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fresh, text: 'mine', overwrite: true } })).status, 200, 'overwrite is an explicit choice');
+
+    // Only notes, LaTeX, BibTeX and text; only inside the research and the knowledge collection; never the library.
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('topics/mc/worm/code/new.py'), text: 'x', create: true } })).status, 415);
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('outside/new.md'), text: 'x', create: true } })).status, 403);
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('knowledge/library/notes.md'), text: 'x', create: true } })).status, 403);
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('topics/mc/worm/research.md'), text: 'x', create: true } })).status, 409);
+    const tex = fx.file('topics/topology/manuscript/section.tex');
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: tex, text: '\\section{Edge}\n', create: true } })).status, 200);
+    assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fresh, text: 'x' }, headers: { origin: 'https://elsewhere.example' } })).status, 403);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('host: without DSH authentication only this computer is answered; no root, no routes', async () => {
+  const fx = await makeFixture();
+  try {
+    // While DSH may still be mounting its sign-in service, nothing is answered.
+    const early = fakeContext({ withConnection: false });
+    apply(early.ctx, { root: fx.root });
+    assert.equal((await call(early.routes, 'GET', 'overview', { cookie: false })).status, 503);
+    // A profile that has no sign-in service at all is answered on this computer only.
+    const h = fakeContext({ withConnection: false });
+    apply(h.ctx, { root: fx.root, authGraceMs: 0 });
+    assert.equal((await call(h.routes, 'GET', 'overview', { cookie: false })).status, 200);
+    assert.equal((await call(h.routes, 'GET', 'overview', { cookie: false, headers: { host: 'atlas.attacker.example:3000' } })).status, 403);
+    const none = fakeContext();
+    apply(none.ctx, { root: '' });
+    assert.equal(none.routes.size, 0);
+    const settings = normalizeConfig({ root: '/r', writeIndex: true, guard: true, maxAgeSeconds: 2 });
+    assert.deepEqual(Object.keys(settings).sort(), ['authGraceMs', 'exclude', 'excludePaths', 'knowledge', 'library', 'maxAgeSeconds', 'proxy', 'request', 'root', 'stateDir', 'web']);
+    assert.equal(settings.authGraceMs, 30000);
+    assert.equal(settings.web, true);
+    assert.equal(settings.request, undefined, 'a YAML config cannot supply a request function');
+    assert.equal(normalizeConfig({ root: '/r', web: false }).web, false);
+  } finally {
+    await fx.cleanup();
+  }
+});

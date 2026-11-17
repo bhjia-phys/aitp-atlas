@@ -1,0 +1,60 @@
+{
+  "name": "aitp-atlas",
+  "version": "0.5.0",
+  "description": "AITP Atlas for DeepSeek Harness: one workspace to learn, explore and research physics over AITP notes — the research universe, what waits on you and what is running (agent teams with Oh-My-BBFF), papers and lectures from arXiv and INSPIRE into the library, PDFs with selectable text, LaTeX built beside its PDF with SyncTeX and citations, review of what a discussion changed, search and learning views.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Bohan Jia",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhjia-phys/aitp-atlas.git"
+  },
+  "homepage": "https://github.com/bhjia-phys/aitp-atlas#readme",
+  "bugs": {
+    "url": "https://github.com/bhjia-phys/aitp-atlas/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "aitp",
+    "research",
+    "physics"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "client.js",
+    "vendor/pdfjs/*",
+    "cordis.patch.yml",
+    "README.md",
+    "DESIGN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node build-client.mjs",
+    "test": "node build-client.mjs --check && node --test test/atlas.test.mjs test/host.test.mjs test/client.test.mjs test/web.test.mjs test/latex.test.mjs test/review.test.mjs",
+    "test:dsh": "node test/dsh-e2e.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    },
+    "compatibility": {
+      "dsh": "^0.2.2-rc.1"
+    }
+  }
+}

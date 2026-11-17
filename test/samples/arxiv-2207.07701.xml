@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/PRUJZ4Xo9BwPWdl6q+KcG0uRfhA</id>
+  <title>arXiv Query: search_query=&amp;id_list=2207.07701&amp;start=0&amp;max_results=10</title>
+  <updated>2026-11-16T23:05:31Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=10&amp;id_list=2207.07701" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2207.07701v2</id>
+    <title>Krylov complexity from integrability to chaos</title>
+    <updated>2022-08-10T20:45:42Z</updated>
+    <link href="https://arxiv.org/abs/2207.07701v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2207.07701v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We apply a notion of quantum complexity, called "Krylov complexity", to study the evolution of systems from integrability to chaos. For this purpose we investigate the integrable XXZ spin chain, enriched with an integrability breaking deformation that allows one to interpolate between integrable and chaotic behavior. K-complexity can act as a probe of the integrable or chaotic nature of the underlying system via its late-time saturation value that is suppressed in the integrable phase and increases as the system is driven to the chaotic phase. We furthermore ascribe the (under-)saturation of the late-time bound to the amount of disorder present in the Lanczos sequence, by mapping the complexity evolution to an auxiliary off-diagonal Anderson hopping model. We compare the late-time saturation of K-complexity in the chaotic phase with that of random matrix ensembles and find that the chaotic system indeed approaches the RMT behavior in the appropriate symmetry class. We investigate the dependence of the results on the two key ingredients of K-complexity: the dynamics of the Hamiltonian and the character of the operator whose time dependence is followed.</summary>
+    <category term="hep-th" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cond-mat.str-el" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="quant-ph" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-07-15T18:51:13Z</published>
+    <arxiv:comment>18 pages + appendices; v2: Minor corrections + added references</arxiv:comment>
+    <arxiv:primary_category term="hep-th"/>
+    <author>
+      <name>E. Rabinovici</name>
+    </author>
+    <author>
+      <name>A. Sánchez-Garrido</name>
+    </author>
+    <author>
+      <name>R. Shir</name>
+    </author>
+    <author>
+      <name>J. Sonner</name>
+    </author>
+    <arxiv:doi>10.1007/JHEP07(2022)151</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1007/JHEP07(2022)151" title="doi"/>
+  </entry>
+</feed>
