@@ -3,7 +3,8 @@
 // reader that turns into an editor, PDFs page by page, figures, notebooks, data
 // and folders. Selected text can be handed to an AI session.
 
-const editorDirty = { current: false };
+/** Unsaved edits, per pane: leaving one pane never asks about the other's. */
+const editorDirty = { main: false, side: false };
 const TYPE_LABEL = { markdown: 'Note', pdf: 'PDF', tex: 'LaTeX', bib: 'Bibliography', code: 'Code', notebook: 'Notebook', image: 'Figure', video: 'Video', audio: 'Audio', table: 'Table', text: 'Text', folder: 'Folder', other: 'File' };
 
 function DocView({ path, overview: ov, go, flash, version, edit, created, anchor, anchorAt }) {
@@ -49,7 +50,7 @@ function DocFrame({ path, type, ov, go, flash, navigate, data, editing, children
     };
   }, [path, type, Boolean(data)]);
   const owner = (data && data.owner) || (info && info.owner) || fileOwner || null;
-  const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : '#9db8ff';
+  const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--link)';
   const title = (data && data.title) || baseName(path) || path;
   const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
   if (owner) crumbs.push({ label: shortTitle(owner.title, 34), dot: color, go: { view: 'doc', path: owner.file } });
@@ -191,7 +192,8 @@ function NotebookView({ text, path }) {
 }
 
 /** PDF pages drawn by PDF.js inside Atlas, rendered as they scroll into view. */
-function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick }) {
+/** `src` reads the PDF from elsewhere (a paper through Atlas's web route); `path` still names it. */
+function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageClick }) {
   const [doc, setDoc] = useState(null);
   const onPageRef = useRef(onPage);
   onPageRef.current = onPage;
@@ -200,6 +202,7 @@ function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick })
   const [zoom, setZoom] = useState(1);
   const [width, setWidth] = useState(760);
   const box = useRef(null);
+  const pane = usePaneName();
   useEffect(() => {
     let cancelled = false;
     let task = null;
@@ -207,7 +210,7 @@ function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick })
     setError(null);
     loadPdfjs()
       .then((lib) => {
-        task = lib.getDocument({ url: rawUrl(path), withCredentials: true });
+        task = lib.getDocument({ url: src || rawUrl(path), withCredentials: true });
         return task.promise;
       })
       .then((d) => {
@@ -226,7 +229,7 @@ function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick })
       cancelled = true;
       if (task) task.destroy();
     };
-  }, [path]);
+  }, [path, src]);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
@@ -250,8 +253,9 @@ function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick })
         }
       }
       if (page && onPageRef.current) onPageRef.current(page);
-      const focus = focusStore.get();
-      if (page && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...focus, page: String(page) });
+      const all = focusStore.get();
+      const focus = all[pane];
+      if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, [pane]: { ...focus, page: String(page) } });
     }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
     el.querySelectorAll('.atlas-pdf-page').forEach((p) => io.observe(p));
     return () => io.disconnect();
@@ -306,7 +310,8 @@ function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick })
   }, [doc, anchor, anchorAt, aspect]);
   if (error) {
     return h('div', { className: 'atlas-panel' }, h('p', null, 'This PDF could not be shown here: ', String(error.message || error)),
-      h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
+      src ? h(Button, { icon: 'external', onClick: () => window.open(path, '_blank', 'noopener') }, 'Open in the browser')
+        : h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
   }
   return h('div', { className: cx('atlas-pdf', onPageClick && 'is-synced'), ref: box, onClick: onBoxClick },
     h('div', { className: 'atlas-pdf-bar' },
@@ -377,8 +382,21 @@ function PdfPage({ doc, number, width, aspect = 1.294 }) {
     h('span', { className: 'atlas-pdf-num' }, number));
 }
 
-/** The paper beside its PDF, while one is open: what "Keep in note" adds to. */
-const readingStore = externalStore({ pdf: '', map: '', at: 0 });
+/** For each library PDF open now, its paper map: what "Keep in note" adds to (the page and the side panel each hold one). */
+const readingStore = externalStore({ maps: {}, at: 0 });
+
+/** The reading note of an open PDF: `{ pdf, map }` (map '' when the paper has none yet), or null. */
+function readingOf(reading, pdf) {
+  const map = reading && reading.maps ? reading.maps[pathKey(pdf)] : undefined;
+  return map === undefined ? null : { pdf, map };
+}
+
+function setReading(pdf, map) {
+  const maps = { ...readingStore.get().maps };
+  if (map === null) delete maps[pathKey(pdf)];
+  else maps[pathKey(pdf)] = map;
+  readingStore.set({ maps, at: Date.now() });
+}
 
 /** A PDF, and beside it the reading note when the PDF is a paper of the library. */
 function PdfLayout({ path, flash, go, navigate, anchor, anchorAt }) {
@@ -418,9 +436,9 @@ function PaperAside({ paper, path, go, flash, navigate, topics }) {
   const version = (paper.versions || []).find((v) => String(path).replace(/\\/g, '/').includes(`/${v}/`)) || (paper.versions || [])[0] || '';
   const edition = version ? version.replace(/_/, '/') : paper.key;
   useEffect(() => {
-    readingStore.set({ pdf: path, map: paper.map || '', at: Date.now() });
+    setReading(path, paper.map || '');
     return () => {
-      if (readingStore.get().pdf === path) readingStore.set({ pdf: '', map: '', at: Date.now() });
+      if (readingOf(readingStore.get(), path)) setReading(path, null);
     };
   }, [path, paper.map]);
   const start = async (event) => {
@@ -429,7 +447,7 @@ function PaperAside({ paper, path, go, flash, navigate, topics }) {
     try {
       const m = /^(.*?)(v\d+)?$/.exec(edition);
       const made = await api('paper-map', { method: 'POST', body: { id: paper.key, version: (m && m[2]) || '', why, topic } });
-      readingStore.set({ pdf: path, map: made.file, at: Date.now() });
+      setReading(path, made.file);
       flash(made.existed ? 'The paper map already exists.' : 'Started the paper map; passages you keep go into its “Your reading”.');
     } catch (error) {
       flash(error.message);
@@ -438,7 +456,8 @@ function PaperAside({ paper, path, go, flash, navigate, topics }) {
     }
   };
   const discuss = () => actions.ask(focusContext({ doc: { type: 'pdf', title: paper.title || paper.key, path } }), 'ask', 'Read this paper with me: start from its paper map if it has one, tell me what it establishes and where it compresses, and wait for my questions.', 'Read ' + (paper.title ? shortTitle(paper.title, 40) : paper.key));
-  const map = reading.map && reading.pdf === path ? reading.map : paper.map;
+  const current = readingOf(reading, path);
+  const map = current && current.map ? current.map : paper.map;
   const users = (paper.usedBy || []).filter((t) => t && t.file);
   return h('aside', { className: 'atlas-paper-aside', 'aria-label': 'Reading note' },
     h('h2', null, 'Reading note'),
@@ -503,12 +522,13 @@ function Editor({ data, go, flash, created, onSaved }) {
   const [preview, setPreview] = useState(() => storageGet('editor-preview', true));
   const [shown, setShown] = useState(original);
   const area = useRef(null);
+  const pane = usePaneName();
   const dirty = text !== base.text;
   const isMarkdown = data.type === 'markdown';
   useEffect(() => {
-    editorDirty.current = dirty;
+    editorDirty[pane] = dirty;
     const warn = (e) => {
-      if (editorDirty.current) {
+      if (editorDirty.main || editorDirty.side) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -517,7 +537,7 @@ function Editor({ data, go, flash, created, onSaved }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   useEffect(() => () => {
-    editorDirty.current = false;
+    editorDirty[pane] = false;
   }, []);
   useEffect(() => {
     const timer = setTimeout(() => setShown(text), 250);
@@ -529,7 +549,7 @@ function Editor({ data, go, flash, created, onSaved }) {
       const res = await api('save', { method: 'POST', body: { path: data.path, text, mtimeMs: base.mtimeMs, overwrite: Boolean(overwrite) } });
       setBase({ text, mtimeMs: res.mtimeMs });
       setStatus({ kind: 'saved', at: Date.now() });
-      editorDirty.current = false;
+      editorDirty[pane] = false;
       if (onSaved) onSaved();
     } catch (error) {
       if (error.status === 409 && error.body && error.body.conflict) setStatus({ kind: 'conflict' });
@@ -579,7 +599,7 @@ function Editor({ data, go, flash, created, onSaved }) {
       h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
       isMarkdown ? h(Button, { quiet: true, onClick: () => { setPreview(!preview); storageSet('editor-preview', !preview); } }, preview ? 'Hide preview' : 'Show preview') : null,
       h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, statusText),
-      h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty.current = false; done(); } } }, 'Done')),
+      h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; done(); } } }, 'Done')),
     h('div', { className: cx('atlas-editor-split', isMarkdown && preview && 'has-preview') },
       h('textarea', { ref: area, className: 'atlas-editor-text', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
       isMarkdown && preview ? h('div', { className: 'atlas-editor-preview atlas-reading' }, h(Markdown, { text: shown.replace(/^---\n[\s\S]*?\n---\n/, ''), baseFile: data.path })) : null,

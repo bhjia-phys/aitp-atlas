@@ -132,6 +132,11 @@ function joinPath(dir, rel) {
   return lead + out.filter((p, i) => p !== '' || i === 0).join(sep).replace(/^[\\/]+/, '');
 }
 
+/** A path as Atlas compares paths: forward slashes, no trailing slash, case folded (Windows and WSL shares). */
+function pathKey(file) {
+  return String(file || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 function dirOf(file) {
   return String(file || '').replace(/[\\/][^\\/]*$/, '');
 }
@@ -162,13 +167,16 @@ function typeOf(file) {
 const READ_HERE = new Set(['markdown', 'pdf', 'tex', 'bib', 'notebook', 'image', 'video', 'audio', 'table', 'text', 'code', 'folder']);
 const EDIT_HERE = new Set(['md', 'markdown', 'tex', 'bib', 'txt']);
 
-// Directions take the validated dark categorical slots in the root note's order; past eight, they share "other".
-const DIRECTION_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767'];
-const OTHER_COLOR = '#898781';
 function directionColor(ov, slug) {
   const index = ov && ov.directions ? ov.directions.findIndex((d) => d.slug === slug) : -1;
-  return index >= 0 && index < DIRECTION_COLORS.length ? DIRECTION_COLORS[index] : OTHER_COLOR;
+  const slots = DIRECTION_SLOTS[activeBase] || DIRECTION_SLOTS.night;
+  return index >= 0 && index < slots.length ? slots[index] : otherColor();
 }
+/** The color of what lies beyond the directions, in the theme being drawn. */
+function otherColor() {
+  return OTHER_SLOT[activeBase] || OTHER_SLOT.night;
+}
+
 /** A topic's direction: its own, or the nearest ancestor's. */
 function topicDirection(ov, id) {
   for (let t = ov.topics[id]; t; t = t.parent !== null && t.parent !== undefined ? ov.topics[t.parent] : null) {

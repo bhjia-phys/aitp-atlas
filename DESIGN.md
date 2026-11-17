@@ -140,3 +140,40 @@ running, agent teams with Oh-My-BBFF), Discover and add (arXiv, INSPIRE, lecture
 with selectable PDF text and page links, LaTeX built beside its PDF with SyncTeX and citations,
 review of what a discussion changed, Search and Learn. This repository starts at 0.5; the earlier
 versions are described here, not kept in its history.
+
+## 0.6 (2026-11-17): beside the page, day and night
+
+**Files open beside the page.** Opening a note or a PDF used to replace the page, so following a
+reference lost the place it came from. Now every file opens in a side panel and the page stays; topics
+and the other places still fill the page, because they are where one works rather than what one
+consults. One rule decides (`paneFor`): another view, a place, or *Open as the page* fills the page; a
+section of the document already open stays in its pane, as does a jump inside a LaTeX workspace
+(SyncTeX, a problem line); links inside documents and every other file open beside. DSH's own right
+sidebar was considered and set aside: it belongs to a chat session, and its preview has none of Atlas's
+reading (links opening notes at a section or PDFs at a page, passages asked about or kept in a paper
+map, reading notes).
+
+What used to be single now belongs to a pane: the focus a discussion is told about (with what is open
+in the other pane, as *Open beside it*), unsaved edits, the paper map *Keep in note* writes to, and a
+topic's section ids. With a discussion open too, the three stand side by side while the page keeps at
+least 420 px (`sideLayout`); below that the file and the discussion become two tabs that keep their
+state, laid out over the same column so DSH's conversation is never remounted.
+
+**Day and night.** Every color is a token (`client/05-theme.js`); the stylesheet has no literal colors
+but paper white and video black. Night keeps the observatory's exact values; day is a light sky with
+dark ink, the direction colors are the validated light steps of the same categorical palette (four sit
+below 3:1 on the light surface, so a direction is always named beside its color), and the status steps
+are the same in both. Auto follows DSH's appearance, which DSH's presenter marks as
+`body[data-ds-dark-theme]` and `html { color-scheme }`. The config can name the default (`theme`) and
+add themes (`themes`), each a base theme with token overrides; the client keeps only known tokens with
+color values, so a config cannot inject CSS.
+
+**Papers beside the page.** A note's link to a paper (arXiv, a DOI, an INSPIRE record) used to leave
+DSH for a browser. It now opens beside the page as the paper: its metadata and, for arXiv, its PDF,
+fetched through Atlas and its proxy on the click and kept in memory only (`web/pdf`; the last four).
+A paper the library has opens as the library's copy. *Add to the library* asks for the topic the paper
+is for, preset to the topic being read; the library stays one shelf by edition (`arxiv/<id>v<n>/`), so
+"filing" a paper means its paper map's "Why I'm reading it" line names the topic, and *By topic* counts
+that link beside the topics whose notes cite the paper. No folder per subject: a paper serves several
+topics, and the citation and the reading note are where that is said.
+

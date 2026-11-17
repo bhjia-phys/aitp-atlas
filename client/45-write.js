@@ -49,6 +49,7 @@ function texOutline(text) {
 }
 
 function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
+  const pane = usePaneName();
   const original = data.raw !== undefined ? data.raw : data.body;
   const [text, setText] = useState(original);
   const [base, setBase] = useState({ text: original, mtimeMs: data.mtimeMs });
@@ -69,10 +70,10 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
   const dirty = text !== base.text;
 
   useEffect(() => {
-    editorDirty.current = dirty;
+    editorDirty[pane] = dirty;
   }, [dirty]);
   useEffect(() => () => {
-    editorDirty.current = false;
+    editorDirty[pane] = false;
   }, []);
   useEffect(() => {
     let live = true;
@@ -118,7 +119,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
       const res = await api('save', { method: 'POST', body: { path: data.path, text: textRef.current, mtimeMs: base.mtimeMs, overwrite: Boolean(overwrite) } });
       setBase({ text: textRef.current, mtimeMs: res.mtimeMs });
       setStatus({ kind: 'saved', at: Date.now() });
-      editorDirty.current = false;
+      editorDirty[pane] = false;
       return true;
     } catch (error) {
       if (error.status === 409 && error.body && error.body.conflict) setStatus({ kind: 'conflict' });
@@ -170,7 +171,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     try {
       const r = await api('latex/sync/edit', { query: { pdf, page, x: x.toFixed(2), y: y.toFixed(2), engine: chosen.id } });
       if (samePath(r.file, data.path)) goToLine(r.line);
-      else go({ view: 'doc', path: r.file, edit: true, anchor: 'L' + r.line });
+      else go({ view: 'doc', path: r.file, edit: true, anchor: 'L' + r.line, stay: true });
     } catch (error) {
       flash(error.message);
     }
@@ -232,8 +233,8 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
         : h('span', { className: 'atlas-muted' }, engines.list ? engines.error || 'No TeX installation found' : 'Looking for TeX…'),
       h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, [statusText, builtText].filter(Boolean).join(' · ')),
       h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
-      h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty.current = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
-    main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true }) }, baseName(main)), ': Build builds that document.') : null,
+      h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
+    main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
     h('div', { className: 'atlas-write-split' },
       h('div', { className: 'atlas-write-source' },
         h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
@@ -290,7 +291,7 @@ function ProblemList({ built, current, goToLine, go }) {
   if (built.problems.length === 0) return h(Empty, null, `No problems: ${plural(built.pages, 'page')}, built with ${built.label}.`);
   const open = (p) => {
     if (!p.file || samePath(p.file, current)) goToLine(p.line || 1);
-    else go({ view: 'doc', path: p.file, edit: true, anchor: 'L' + (p.line || 1) });
+    else go({ view: 'doc', path: p.file, edit: true, anchor: 'L' + (p.line || 1), stay: true });
   };
   return h('ul', { className: 'atlas-problems' }, built.problems.map((p, i) => h('li', { key: i, className: 'is-' + p.severity },
     h('span', { className: 'atlas-problem-kind' }, p.severity),

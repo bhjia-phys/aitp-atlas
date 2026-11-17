@@ -28,6 +28,10 @@ const ICONS = {
   learn: 'M3.5 7.5l8.5-4 8.5 4-8.5 4zM7 9.4v4.6c0 1.7 2.3 3.2 5 3.2s5-1.5 5-3.2V9.4M20.5 7.5v5.5',
   search: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zM15.4 15.4L20 20',
   team: 'M9 11a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM3.5 19.5c0-3 2.4-5 5.5-5s5.5 2 5.5 5M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.8c1.8.6 3 2.3 3 4.7',
+  sun: 'M12 8.3a3.7 3.7 0 1 0 0 7.4a3.7 3.7 0 0 0 0-7.4zM12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M5.5 18.5L7 17M17 7l1.5-1.5',
+  moon: 'M19.6 14.6A7.8 7.8 0 0 1 9.4 4.4a7.8 7.8 0 1 0 10.2 10.2z',
+  contrast: 'M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM12 3.5v17M12 7.5h4.5M12 11.5h7M12 15.5h5.5',
+  expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7',
 };
 
 function Icon({ name, size = 16, title }) {
@@ -46,12 +50,12 @@ function Chip({ children, title, dot, tone }) {
     children);
 }
 
-const STATUS_DOT = { concluded: '#0ca30c', done: '#0ca30c', agreed: '#0ca30c', waiting: '#fab219', blocked: '#d03b3b', active: '#9db8ff', running: '#9db8ff', proposed: '#aeb6cf' };
+const STATUS_DOT = { concluded: 'var(--status-done)', done: 'var(--status-done)', agreed: 'var(--status-done)', waiting: 'var(--status-waiting)', blocked: 'var(--status-blocked)', active: 'var(--status-active)', running: 'var(--status-active)', proposed: 'var(--status-proposed)' };
 /** A status word with a marker; the color never carries the meaning alone. */
 function StatusTag({ status }) {
   if (!status) return null;
   const key = Object.keys(STATUS_DOT).find((k) => String(status).toLowerCase().startsWith(k));
-  return h(Chip, { dot: key ? STATUS_DOT[key] : '#7c86a5' }, status);
+  return h(Chip, { dot: key ? STATUS_DOT[key] : 'var(--status-other)' }, status);
 }
 
 function Button({ onClick, children, primary, disabled, title, small, icon, quiet }) {
@@ -191,7 +195,8 @@ function useMarkdownDelegate(baseFile, onNavigate) {
           onNavigate({ path: rel ? joinPath(dirOf(baseFile), rel) : baseFile, anchor });
         }
         : undefined,
-      openExternalLink: (url) => window.open(url, '_blank', 'noopener'),
+      // A paper's web address opens beside the page (read in Atlas); any other site in the browser.
+      openExternalLink: (url) => (onNavigate && paperLink(url) ? onNavigate({ url }) : window.open(url, '_blank', 'noopener')),
       fileImages: {
         resolve: (target) => (typeOf(fileOf(target)) === 'image' ? rawUrl(fileOf(target)) : undefined),
         labels: { loading: 'Loading the figure…', failed: 'The figure could not be loaded' },
@@ -199,6 +204,17 @@ function useMarkdownDelegate(baseFile, onNavigate) {
     };
   }, [baseFile, onNavigate]);
 }
+
+/**
+ * The strings DSH's Markdown renderer needs: a code block's copy and wrap controls, and the heading of
+ * footnotes. DSH's own views pass theirs; without them any note with a fenced code block or a footnote
+ * failed to draw ("Cannot read properties of undefined (reading 'code')"). One constant keeps the
+ * memoized renderer from redrawing.
+ */
+const MARKDOWN_LABELS = {
+  code: { copyLabel: 'Copy', copiedLabel: 'Copied', toolbarLabels: { codeLabel: 'Code', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines' } },
+  footnotes: 'Footnotes',
+};
 
 /** Markdown with equations, rendered by DSH; relative links and figures resolve against `baseFile`. */
 function Markdown({ text, baseFile, onNavigate, compact }) {
@@ -211,7 +227,8 @@ function Markdown({ text, baseFile, onNavigate, compact }) {
     event.preventDefault();
     event.stopPropagation();
     if (/^https?:/i.test(href)) {
-      window.open(href, '_blank', 'noopener');
+      if (onNavigate && paperLink(href)) onNavigate({ url: href });
+      else window.open(href, '_blank', 'noopener');
       return;
     }
     if (href.startsWith(API)) return;
@@ -236,7 +253,7 @@ function Markdown({ text, baseFile, onNavigate, compact }) {
         h('img', { src: piece.src, alt: piece.alt, loading: 'lazy', title: onNavigate ? 'Open the figure' : piece.alt, onClick: onNavigate ? () => onNavigate({ path: piece.file, anchor: '' }) : undefined }));
     }
     if (!primitives.MarkdownText) return h('div', { key: i, className: 'atlas-plain' }, piece.text);
-    const rendered = h(primitives.MarkdownText, { text: piece.text, variant: 'body', omitHtml: true });
+    const rendered = h(primitives.MarkdownText, { text: piece.text, variant: 'body', omitHtml: true, labels: MARKDOWN_LABELS });
     return h(Boundary, { key: i }, delegate && primitives.MarkdownDelegateProvider ? h(primitives.MarkdownDelegateProvider, delegate, rendered) : rendered);
   });
   return h('div', { className: cx('atlas-markdown', compact && 'is-compact'), onClickCapture: onClick }, body);
@@ -388,9 +405,10 @@ function AskMenu({ asks, label }) {
       document.removeEventListener('keydown', close);
     };
   }, [open]);
+  const pane = React.useContext(PaneContext);
   const run = (a) => {
     setOpen(false);
-    actions.ask(focusContext(focusStore.get()), 'ask', a.prompt, a.label);
+    actions.ask(focusContext(paneFocus(focusStore.get(), pane)), 'ask', a.prompt, a.label);
   };
   const first = asks[0];
   return h('div', { className: 'atlas-ask', ref: box },

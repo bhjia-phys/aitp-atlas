@@ -10,7 +10,8 @@ to what you are looking at. The reasoning is in [DESIGN.md](DESIGN.md).
 ## What you see
 
 Open **Atlas** from the left sidebar. The top bar holds four places (Universe, Activity, Library,
-Learn), Search (`/`), Add (`+`) and Ask (Ctrl+J).
+Learn), Search (`/`), Add (`+`), Ask (Ctrl+J) and the theme: **Auto** follows DSH's own appearance,
+**Day** and **Night** stay put.
 
 - **Universe**: a star chart of the root `research.md`. Each direction is a colored sector in the
   root's order; topics are stars on the inner ring, branches on the outer rings; a star glows when
@@ -27,6 +28,12 @@ Learn), Search (`/`), Add (`+`) and Ask (Ctrl+J).
   a passage can be asked about or kept; LaTeX, BibTeX, code, tables, notebooks, images, video and
   folders. A link opens its target at the place it names: a heading, an `<a id>` anchor, a line
   (`#L849`), or a PDF page (`paper.pdf#page=13`).
+- **Beside the page**: a file you open (a link in a note, a topic's contents, the Library, Search,
+  Learn) opens in a panel beside the page, which stays where it was. Links inside the panel open
+  there too, with Back; *Open as the page* moves the file into the page. Topics and the other
+  places fill the page as before. With a discussion open as well, page, file and discussion stand
+  side by side; when the window cannot fit three columns, the file and the discussion share the
+  side as two tabs. A discussion started from either is told what is open beside it.
 - **Library**: the **Shelf**, **By topic**, the **Knowledge index**, and **Discover and add**.
 - **Learn**: a topic's question, its reading route (from the note's own route section or the route
   note it links; stages whose paper is in the library open its PDF here), and a concept map drawn
@@ -55,10 +62,18 @@ Learn), Search (`/`), Add (`+`) and Ask (Ctrl+J).
   transcript you supply (timestamps let a note link a moment); Atlas downloads no video. **Files**
   dropped here (papers, slides, notes) go to the topic's `readings/` or `library/files/`.
 
-Nothing is downloaded until you press Add, and nothing existing is overwritten.
+Nothing is saved until you press Add (reading a paper beside a note fetches its PDF without keeping
+it), and nothing existing is overwritten.
 
 ## Reading and writing
 
+- **A paper a note cites** by its web address (arXiv, a DOI or an INSPIRE record) opens beside the
+  page instead of in a browser: its details and, for arXiv, the PDF itself, read through Atlas and
+  not saved. *Add to the library*, with **For** set to the topic it serves (preset to the one you are
+  reading), downloads the edition with its TeX source and starts its paper map, whose "Why I'm
+  reading it" names that topic; the library's copy then opens in its place. A paper the library has
+  opens as the library's copy. The Library's *By topic* lists a paper under the topics whose notes
+  cite it and the topic its paper map is for. Other sites still open in the browser.
 - **A library paper** opens with its reading note beside the PDF: *Keep in note* adds a selected
   passage to the paper map's "Your reading" with a link to its page, and those page links open the
   PDF there. *Start a reading note* creates the map if there is none.
@@ -101,7 +116,7 @@ passage kept in a paper map; a citation added to a `.bib`; a reverted edit; the 
 `library/discover.json`. LaTeX builds leave their products beside the source, as LaTeX does.
 Every request passes DSH's own browser sign-in.
 
-It asks arXiv and INSPIRE only for what you look up, search or add, carrying identifiers and search
+It asks arXiv and INSPIRE only for what you look up, search, read or add, carrying identifiers and search
 words, never your files. Requests go through the proxy in `HTTPS_PROXY`/`HTTP_PROXY` (with
 `NO_PROXY`), or the one the config names; `web: false` stops them all.
 
@@ -129,7 +144,18 @@ whole config, so restate every field you change):
     # web: false             # no requests to arXiv or INSPIRE
     # proxy: http://127.0.0.1:7890
     # stateDir: C:/Users/you/.aitp-atlas   # copies kept for review (this is the default)
+    # theme: auto             # auto (DSH's appearance), day, night, or a name from `themes`
+    # themes:                 # your own themes: a base theme and the tokens it changes
+    #   sepia:
+    #     base: day
+    #     label: Sepia
+    #     tokens: { sky-0: '#f4ecd8', panel: '#fbf6ea', ink-1: '#3b2f2f', link: '#8a4b14' }
 ```
+
+The theme tokens are listed in `client/05-theme.js` (`sky-0`, `panel`, `ink-1`…`ink-3`, `link`, `gold`,
+the `status-*` dots and the `*-rgb` tints); a value must be a color (`#hex`, `rgb()`, `hsl()`), or
+`r, g, b` for an `-rgb` token. Anything else is ignored. The top bar's theme button walks Auto, Day,
+Night and then your own themes, and remembers the choice per window.
 
 `knowledge` defaults to the folder of the `index.md` that the root note links to, then
 `../knowledge`; `library` defaults to `<knowledge>/library`. Agent teams need DSH's Agent Teams;

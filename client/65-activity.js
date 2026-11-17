@@ -9,10 +9,6 @@ function isWaiting(status) {
   return /^waiting on (the )?(researcher|learner|you)\b/i.test(String(status || '').trim());
 }
 
-function pathKey(file) {
-  return String(file || '').replace(/\\/g, '/').toLowerCase();
-}
-
 /** Plain text of a thread's entry, without its lead, status and date: the start of what it says. */
 function entrySummary(th, max = 220) {
   const text = entryBody(th)
@@ -205,7 +201,7 @@ function ActivityView({ overview: ov, go }) {
   const { groups, others } = useMemo(() => activityGroups(index, rows), [index, rows]);
   const topicColor = (topic) => {
     const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
-    return t ? directionColor(ov, topicDirection(ov, t.id)) : '#9db8ff';
+    return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--link)';
   };
   const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
   return h('div', { className: 'atlas-page is-wide atlas-activity' },

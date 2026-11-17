@@ -138,6 +138,11 @@ window.__ModuleLoader__.load({
       return lead + out.filter((p, i) => p !== '' || i === 0).join(sep).replace(/^[\\/]+/, '');
     }
 
+    /** A path as Atlas compares paths: forward slashes, no trailing slash, case folded (Windows and WSL shares). */
+    function pathKey(file) {
+      return String(file || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    }
+
     function dirOf(file) {
       return String(file || '').replace(/[\\/][^\\/]*$/, '');
     }
@@ -168,13 +173,16 @@ window.__ModuleLoader__.load({
     const READ_HERE = new Set(['markdown', 'pdf', 'tex', 'bib', 'notebook', 'image', 'video', 'audio', 'table', 'text', 'code', 'folder']);
     const EDIT_HERE = new Set(['md', 'markdown', 'tex', 'bib', 'txt']);
 
-    // Directions take the validated dark categorical slots in the root note's order; past eight, they share "other".
-    const DIRECTION_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767'];
-    const OTHER_COLOR = '#898781';
     function directionColor(ov, slug) {
       const index = ov && ov.directions ? ov.directions.findIndex((d) => d.slug === slug) : -1;
-      return index >= 0 && index < DIRECTION_COLORS.length ? DIRECTION_COLORS[index] : OTHER_COLOR;
+      const slots = DIRECTION_SLOTS[activeBase] || DIRECTION_SLOTS.night;
+      return index >= 0 && index < slots.length ? slots[index] : otherColor();
     }
+    /** The color of what lies beyond the directions, in the theme being drawn. */
+    function otherColor() {
+      return OTHER_SLOT[activeBase] || OTHER_SLOT.night;
+    }
+
     /** A topic's direction: its own, or the nearest ancestor's. */
     function topicDirection(ov, id) {
       for (let t = ov.topics[id]; t; t = t.parent !== null && t.parent !== undefined ? ov.topics[t.parent] : null) {
@@ -252,6 +260,166 @@ window.__ModuleLoader__.load({
       return api('open', { method: 'POST', body: { path: file } });
     }
 
+    // ===== client/05-theme.js
+    // ------------------------------------------------------------------ themes ---
+    // Every color Atlas draws is a named token. Two themes ship: night (the
+    // observatory, as Atlas always looked) and day. The config can define more
+    // (`themes:`, each a base theme plus token overrides) and pick the default
+    // (`theme: auto | day | night | <name>`); the top bar switches per window.
+    // Auto follows DSH's own appearance, which its presenter marks on the page.
+
+    const THEME_RGB = {
+      night: {
+        accent: '157, 184, 255', panel: '16, 23, 43', gold: '255, 210, 122', sky: '7, 11, 22', shadow: '0, 0, 0', glow: '220, 230, 255',
+        'nebula-a': '70, 92, 190', 'nebula-b': '124, 66, 170', 'gold-2': '255, 220, 150', 'gold-3': '255, 190, 70', warn: '250, 178, 25',
+        'panel-0': '11, 16, 32', 'panel-1': '13, 19, 38', 'panel-2': '21, 30, 56', 'panel-3': '26, 36, 68', deep: '5, 7, 15',
+        danger: '208, 59, 59', line: '140, 160, 230', idle: '93, 104, 144', ins: '80, 200, 120', blue: '57, 135, 229',
+        del: '255, 110, 110', 'del-2': '255, 143, 143', 'ink-3': '138, 148, 179',
+      },
+      day: {
+        accent: '36, 87, 197', panel: '255, 255, 255', gold: '154, 98, 0', sky: '245, 246, 250', shadow: '20, 28, 56', glow: '36, 87, 197',
+        'nebula-a': '110, 140, 230', 'nebula-b': '170, 130, 220', 'gold-2': '154, 98, 0', 'gold-3': '176, 110, 0', warn: '196, 128, 0',
+        'panel-0': '250, 251, 253', 'panel-1': '248, 249, 252', 'panel-2': '243, 245, 250', 'panel-3': '232, 236, 245', deep: '227, 231, 240',
+        danger: '198, 40, 40', line: '40, 60, 120', idle: '120, 128, 155', ins: '26, 127, 55', blue: '36, 87, 197',
+        del: '220, 60, 50', 'del-2': '200, 50, 40', 'ink-3': '91, 101, 132',
+      },
+    };
+
+    const THEME_COLORS = {
+      night: {
+        'sky-0': '#070b16', 'sky-1': '#0b1020', panel: '#10172b', 'panel-2': '#151e38', 'panel-3': '#1b2648',
+        line: 'rgba(140, 160, 230, .14)', 'line-2': 'rgba(140, 160, 230, .28)',
+        'ink-0': '#fff', 'ink-1': '#e8ebf5', 'ink-2': '#aeb6cf', 'ink-3': '#8a94b3', link: '#9db8ff', gold: '#ffd27a',
+        'on-accent': '#0a0f1f', 'on-gold': '#0a0f1f', 'mark-bg': '#ffd27a', 'mark-ink': '#0a0f1f',
+        'accent-a': '#c6d6ff', 'accent-b': '#9db8ff', 'accent-a-hover': '#d6e2ff', 'accent-b-hover': '#adc4ff',
+        'danger-ink': '#ffb4b4', 'danger-ink-2': '#ff9b9b', 'danger-ink-3': '#f2a7a7',
+        idle: '#5d6890', good: '#0ca30c', 'code-key': '#9db8ff', 'code-math': '#ffd27a', 'code-comment': '#7c86a5',
+        'del-ink': '#ff8f8f', 'del-text': '#ffd0d0', 'ins-ink': '#6fd58f', 'ins-text': '#d2f7de',
+        'checker-a': '#121a30', 'checker-b': '#0e1528', deep: '#05070f',
+        'input-major': '#18213d', bubble: '#1d2848', selector: '#222e52',
+        'status-active': '#9db8ff', 'status-proposed': '#aeb6cf', 'status-waiting': '#fab219', 'status-blocked': '#d03b3b', 'status-done': '#0ca30c', 'status-other': '#7c86a5',
+      },
+      day: {
+        'sky-0': '#f5f6fa', 'sky-1': '#eceff6', panel: '#ffffff', 'panel-2': '#f3f5fa', 'panel-3': '#e8ecf5',
+        line: 'rgba(40, 60, 120, .14)', 'line-2': 'rgba(40, 60, 120, .26)',
+        'ink-0': '#05070f', 'ink-1': '#161c30', 'ink-2': '#3e4766', 'ink-3': '#5b6584', link: '#2457c5', gold: '#9a6200',
+        'on-accent': '#ffffff', 'on-gold': '#ffffff', 'mark-bg': '#ffe08a', 'mark-ink': '#241a00',
+        'accent-a': '#3d72e3', 'accent-b': '#2457c5', 'accent-a-hover': '#4b7fec', 'accent-b-hover': '#2c62d6',
+        'danger-ink': '#b42318', 'danger-ink-2': '#b42318', 'danger-ink-3': '#b42318',
+        idle: '#9aa2bb', good: '#12852f', 'code-key': '#1f5fbf', 'code-math': '#8a5a00', 'code-comment': '#6b7390',
+        'del-ink': '#c0362c', 'del-text': '#7a1a12', 'ins-ink': '#1a7f37', 'ins-text': '#0d4a1f',
+        'checker-a': '#eef1f7', 'checker-b': '#e2e7f1', deep: '#e3e7f0',
+        'input-major': '#ffffff', bubble: '#eef2fa', selector: '#e2e8f6',
+        // The status steps are fixed across themes (they ship with a label, never color alone).
+        'status-active': '#2f6fe0', 'status-proposed': '#7c86a5', 'status-waiting': '#fab219', 'status-blocked': '#d03b3b', 'status-done': '#0ca30c', 'status-other': '#8b93ad',
+      },
+    };
+
+    /** Every token of a theme, as CSS custom properties name → value (rgb tokens hold "r, g, b"). */
+    const THEME_TOKENS = Object.fromEntries(Object.keys(THEME_COLORS).map((base) => [base, {
+      ...THEME_COLORS[base],
+      ...Object.fromEntries(Object.entries(THEME_RGB[base]).map(([k, v]) => [k + '-rgb', v])),
+      'shadow-k': base === 'day' ? '.3' : '1',
+    }]));
+    const TOKEN_NAMES = new Set(Object.keys(THEME_TOKENS.night));
+
+    // Directions take the validated categorical slots in the root note's order (dark steps at night,
+    // light steps by day); past eight, they share "other". By day four slots sit below 3:1 on the
+    // surface, so a direction is always named beside its color.
+    const DIRECTION_SLOTS = {
+      night: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767'],
+      day: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
+    };
+    const OTHER_SLOT = { night: '#898781', day: '#8a8578' };
+    /** The star chart's sun, sky and starfield. */
+    const UNIVERSE_COLORS = {
+      night: { coreA: '#fff4d6', coreB: '#ffd27a', coreC: '#ff9f43', nebula: '#2a3a78', nebulaEdge: '#0b1020', field: '#dfe6ff', coreDot: '#fff6dd', root: '#fff0c2' },
+      day: { coreA: '#fff1c4', coreB: '#f2b84b', coreC: '#e8873a', nebula: '#c9d4f5', nebulaEdge: '#f5f6fa', field: '#7d89b3', coreDot: '#e09a2b', root: '#b7791f' },
+    };
+    const THEME_LABEL = { auto: 'Auto (follows DSH)', day: 'Day', night: 'Night' };
+    const THEME_ICON = { auto: 'contrast', day: 'sun', night: 'moon' };
+
+    /** The base theme being drawn; the shell sets it before each render so colors chosen in code match. */
+    let activeBase = 'night';
+
+    /** The theme to draw: `mode` (auto, day, night or a configured name) against DSH's appearance and the config's themes. */
+    function resolveTheme(mode, dshDark, themes) {
+      const custom = themes && mode && Object.prototype.hasOwnProperty.call(themes, mode) ? themes[mode] : null;
+      if (custom) return { name: mode, base: custom.base, label: custom.label, tokens: custom.tokens };
+      const base = mode === 'day' || mode === 'night' ? mode : dshDark === false ? 'day' : 'night';
+      return { name: mode === 'day' || mode === 'night' ? mode : 'auto', base, label: THEME_LABEL[mode] || THEME_LABEL.auto, tokens: {} };
+    }
+
+    /** A token value the config may set: a color for color tokens, "r, g, b" for rgb tokens, a number for shadow-k. */
+    function safeToken(name, value) {
+      const v = String(value === undefined || value === null ? '' : value).trim();
+      if (name.endsWith('-rgb')) return /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/.test(v) && v.split(',').every((n) => Number(n) <= 255);
+      if (name === 'shadow-k') return /^(0|1|2)?(\.\d+)?$/.test(v) && v !== '' && Number(v) <= 2;
+      return /^#[0-9a-f]{3,8}$/i.test(v) || /^(rgb|hsl)a?\(\s*[0-9.,%\s/]+\)$/i.test(v);
+    }
+
+    /** The config's themes, kept only where every name and value is safe CSS: unknown tokens and odd values are dropped. */
+    function cleanThemes(raw) {
+      const out = {};
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+      for (const [name, def] of Object.entries(raw)) {
+        if (!/^[a-z][a-z0-9-]{0,30}$/i.test(name) || THEME_LABEL[name] || !def || typeof def !== 'object') continue;
+        const tokens = {};
+        for (const [key, value] of Object.entries(def.tokens || {})) if (TOKEN_NAMES.has(key) && safeToken(key, value)) tokens[key] = String(value).trim();
+        out[name] = { base: def.base === 'day' ? 'day' : 'night', label: typeof def.label === 'string' && def.label.trim() ? def.label.trim().slice(0, 40) : name, tokens };
+      }
+      return out;
+    }
+
+    /** The order the theme button walks: auto, day, night, then the config's own themes. */
+    function themeCycle(themes) {
+      return ['auto', 'day', 'night', ...Object.keys(themes || {})];
+    }
+
+    /** Inline custom properties for a configured theme's overrides. */
+    function themeStyle(theme) {
+      const style = {};
+      for (const [key, value] of Object.entries((theme && theme.tokens) || {})) style['--' + key] = value;
+      return style;
+    }
+
+    /** The token blocks of both shipped themes; a configured theme overrides them inline on the root. */
+    function themeCss() {
+      return Object.entries(THEME_TOKENS).map(([base, tokens]) =>
+        `.atlas-root[data-theme-base="${base}"] { color-scheme: ${base === 'day' ? 'light' : 'dark'}; ${Object.entries(tokens).map(([k, v]) => `--${k}: ${v};`).join(' ')} }`).join('\n');
+    }
+
+    /** Whether DSH shows its dark appearance: its presenter sets body[data-ds-dark-theme] and html's color-scheme. */
+    function dshIsDark() {
+      if (typeof document === 'undefined') return true;
+      const body = document.body;
+      if (body && body.hasAttribute('data-ds-dark-theme')) return !/^(false|0|no|light)$/i.test(body.getAttribute('data-ds-dark-theme') || '');
+      const scheme = String(document.documentElement.style.colorScheme || '').trim();
+      if (scheme === 'dark') return true;
+      if (scheme === 'light') return false;
+      return !(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    }
+
+    const themeModeStore = externalStore(null, 'theme-mode');
+    const dshThemeStore = externalStore(true);
+    let dshThemeWatched = false;
+
+    /** Follow DSH's appearance while Atlas is open (it can change from DSH's settings at any time). */
+    function watchDshTheme() {
+      if (dshThemeWatched || typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+      dshThemeWatched = true;
+      const update = () => {
+        const dark = dshIsDark();
+        if (dark !== dshThemeStore.get()) dshThemeStore.set(dark);
+      };
+      update();
+      const watch = new MutationObserver(update);
+      if (document.body) watch.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] });
+      watch.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+      const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+      if (media && media.addEventListener) media.addEventListener('change', update);
+    }
+
     // ===== client/10-ui.js
     // --------------------------------------------------------------- shared UI ---
 
@@ -283,6 +451,10 @@ window.__ModuleLoader__.load({
       learn: 'M3.5 7.5l8.5-4 8.5 4-8.5 4zM7 9.4v4.6c0 1.7 2.3 3.2 5 3.2s5-1.5 5-3.2V9.4M20.5 7.5v5.5',
       search: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zM15.4 15.4L20 20',
       team: 'M9 11a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM3.5 19.5c0-3 2.4-5 5.5-5s5.5 2 5.5 5M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.8c1.8.6 3 2.3 3 4.7',
+      sun: 'M12 8.3a3.7 3.7 0 1 0 0 7.4a3.7 3.7 0 0 0 0-7.4zM12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M5.5 18.5L7 17M17 7l1.5-1.5',
+      moon: 'M19.6 14.6A7.8 7.8 0 0 1 9.4 4.4a7.8 7.8 0 1 0 10.2 10.2z',
+      contrast: 'M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM12 3.5v17M12 7.5h4.5M12 11.5h7M12 15.5h5.5',
+      expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7',
     };
 
     function Icon({ name, size = 16, title }) {
@@ -301,12 +473,12 @@ window.__ModuleLoader__.load({
         children);
     }
 
-    const STATUS_DOT = { concluded: '#0ca30c', done: '#0ca30c', agreed: '#0ca30c', waiting: '#fab219', blocked: '#d03b3b', active: '#9db8ff', running: '#9db8ff', proposed: '#aeb6cf' };
+    const STATUS_DOT = { concluded: 'var(--status-done)', done: 'var(--status-done)', agreed: 'var(--status-done)', waiting: 'var(--status-waiting)', blocked: 'var(--status-blocked)', active: 'var(--status-active)', running: 'var(--status-active)', proposed: 'var(--status-proposed)' };
     /** A status word with a marker; the color never carries the meaning alone. */
     function StatusTag({ status }) {
       if (!status) return null;
       const key = Object.keys(STATUS_DOT).find((k) => String(status).toLowerCase().startsWith(k));
-      return h(Chip, { dot: key ? STATUS_DOT[key] : '#7c86a5' }, status);
+      return h(Chip, { dot: key ? STATUS_DOT[key] : 'var(--status-other)' }, status);
     }
 
     function Button({ onClick, children, primary, disabled, title, small, icon, quiet }) {
@@ -446,7 +618,8 @@ window.__ModuleLoader__.load({
               onNavigate({ path: rel ? joinPath(dirOf(baseFile), rel) : baseFile, anchor });
             }
             : undefined,
-          openExternalLink: (url) => window.open(url, '_blank', 'noopener'),
+          // A paper's web address opens beside the page (read in Atlas); any other site in the browser.
+          openExternalLink: (url) => (onNavigate && paperLink(url) ? onNavigate({ url }) : window.open(url, '_blank', 'noopener')),
           fileImages: {
             resolve: (target) => (typeOf(fileOf(target)) === 'image' ? rawUrl(fileOf(target)) : undefined),
             labels: { loading: 'Loading the figure…', failed: 'The figure could not be loaded' },
@@ -454,6 +627,17 @@ window.__ModuleLoader__.load({
         };
       }, [baseFile, onNavigate]);
     }
+
+    /**
+     * The strings DSH's Markdown renderer needs: a code block's copy and wrap controls, and the heading of
+     * footnotes. DSH's own views pass theirs; without them any note with a fenced code block or a footnote
+     * failed to draw ("Cannot read properties of undefined (reading 'code')"). One constant keeps the
+     * memoized renderer from redrawing.
+     */
+    const MARKDOWN_LABELS = {
+      code: { copyLabel: 'Copy', copiedLabel: 'Copied', toolbarLabels: { codeLabel: 'Code', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines' } },
+      footnotes: 'Footnotes',
+    };
 
     /** Markdown with equations, rendered by DSH; relative links and figures resolve against `baseFile`. */
     function Markdown({ text, baseFile, onNavigate, compact }) {
@@ -466,7 +650,8 @@ window.__ModuleLoader__.load({
         event.preventDefault();
         event.stopPropagation();
         if (/^https?:/i.test(href)) {
-          window.open(href, '_blank', 'noopener');
+          if (onNavigate && paperLink(href)) onNavigate({ url: href });
+          else window.open(href, '_blank', 'noopener');
           return;
         }
         if (href.startsWith(API)) return;
@@ -491,7 +676,7 @@ window.__ModuleLoader__.load({
             h('img', { src: piece.src, alt: piece.alt, loading: 'lazy', title: onNavigate ? 'Open the figure' : piece.alt, onClick: onNavigate ? () => onNavigate({ path: piece.file, anchor: '' }) : undefined }));
         }
         if (!primitives.MarkdownText) return h('div', { key: i, className: 'atlas-plain' }, piece.text);
-        const rendered = h(primitives.MarkdownText, { text: piece.text, variant: 'body', omitHtml: true });
+        const rendered = h(primitives.MarkdownText, { text: piece.text, variant: 'body', omitHtml: true, labels: MARKDOWN_LABELS });
         return h(Boundary, { key: i }, delegate && primitives.MarkdownDelegateProvider ? h(primitives.MarkdownDelegateProvider, delegate, rendered) : rendered);
       });
       return h('div', { className: cx('atlas-markdown', compact && 'is-compact'), onClickCapture: onClick }, body);
@@ -643,9 +828,10 @@ window.__ModuleLoader__.load({
           document.removeEventListener('keydown', close);
         };
       }, [open]);
+      const pane = React.useContext(PaneContext);
       const run = (a) => {
         setOpen(false);
-        actions.ask(focusContext(focusStore.get()), 'ask', a.prompt, a.label);
+        actions.ask(focusContext(paneFocus(focusStore.get(), pane)), 'ask', a.prompt, a.label);
       };
       const first = asks[0];
       return h('div', { className: 'atlas-ask', ref: box },
@@ -714,7 +900,7 @@ window.__ModuleLoader__.load({
       };
       const sectors = ov.directions.map((d) => ({ key: d.slug, label: d.heading, color: directionColor(ov, d.slug), ids: d.topics }));
       const beyond = [...ov.other, ...ov.unreached];
-      if (beyond.length) sectors.push({ key: '__beyond', label: 'Beyond the directions', color: OTHER_COLOR, ids: beyond });
+      if (beyond.length) sectors.push({ key: '__beyond', label: 'Beyond the directions', color: otherColor(), ids: beyond });
       const weightOf = (s) => Math.max(0.9, s.ids.reduce((sum, id) => sum + leaves(id), 0));
       const total = sectors.reduce((sum, s) => sum + weightOf(s), 0) || 1;
       const gap = sectors.length > 1 ? 0.045 : 0;
@@ -825,14 +1011,15 @@ window.__ModuleLoader__.load({
       };
       const gradients = [...new Set(layout.stars.map((s) => s.color))];
       const open = (s) => go({ view: 'doc', path: s.t.file });
+      const sky = UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night;
       return h('div', { className: 'atlas-chart', ref: box },
         h('svg', { viewBox: `0 0 ${CHART.size} ${CHART.size}`, role: 'group', 'aria-label': `Star chart of ${plural(ov.counts.topics, 'topic')} in ${plural(ov.directions.length, 'direction')}`, onMouseLeave: () => setHover(null) },
           h('defs', null,
-            h('radialGradient', { id: 'atlas-core' }, h('stop', { offset: '0', stopColor: '#fff4d6', stopOpacity: 0.95 }), h('stop', { offset: '0.35', stopColor: '#ffd27a', stopOpacity: 0.55 }), h('stop', { offset: '1', stopColor: '#ff9f43', stopOpacity: 0 })),
-            h('radialGradient', { id: 'atlas-nebula', cx: '50%', cy: '50%', r: '50%' }, h('stop', { offset: '0', stopColor: '#2a3a78', stopOpacity: 0.35 }), h('stop', { offset: '1', stopColor: '#0b1020', stopOpacity: 0 })),
+            h('radialGradient', { id: 'atlas-core' }, h('stop', { offset: '0', stopColor: sky.coreA, stopOpacity: 0.95 }), h('stop', { offset: '0.35', stopColor: sky.coreB, stopOpacity: 0.55 }), h('stop', { offset: '1', stopColor: sky.coreC, stopOpacity: 0 })),
+            h('radialGradient', { id: 'atlas-nebula', cx: '50%', cy: '50%', r: '50%' }, h('stop', { offset: '0', stopColor: sky.nebula, stopOpacity: 0.35 }), h('stop', { offset: '1', stopColor: sky.nebulaEdge, stopOpacity: 0 })),
             gradients.map((color, i) => h('radialGradient', { key: color, id: `atlas-glow-${i}` }, h('stop', { offset: '0', stopColor: color, stopOpacity: 0.9 }), h('stop', { offset: '1', stopColor: color, stopOpacity: 0 })))),
           h('circle', { cx: c, cy: c, r: r * 1.12, fill: 'url(#atlas-nebula)' }),
-          h('g', { className: 'atlas-starfield', 'aria-hidden': true }, field.map((f, i) => h('circle', { key: i, cx: f.x, cy: f.y, r: f.r, fill: '#dfe6ff', opacity: f.o }))),
+          h('g', { className: 'atlas-starfield', 'aria-hidden': true }, field.map((f, i) => h('circle', { key: i, cx: f.x, cy: f.y, r: f.r, fill: sky.field, opacity: f.o }))),
           h('g', { className: 'atlas-grid', 'aria-hidden': true },
             rings.slice(0, 3).map((k) => h('circle', { key: k, cx: c, cy: c, r: r * k, fill: 'none' })),
             Array.from({ length: 12 }, (_, i) => {
@@ -858,7 +1045,7 @@ window.__ModuleLoader__.load({
           h('g', { className: 'atlas-spokes', 'aria-hidden': true }, layout.stars.filter((s) => s.depth === 0).map((s) => h('line', { key: s.id, x1: c, y1: c, x2: s.x, y2: s.y, className: cx('atlas-spoke', faded(s) && 'is-faded') }))),
           h('g', { className: 'atlas-core', role: 'button', tabIndex: 0, 'aria-label': `Root note: ${ov.title}`, onClick: () => go({ view: 'doc', path: ov.rootFile }), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go({ view: 'doc', path: ov.rootFile }); } } },
             h('circle', { cx: c, cy: c, r: 44, fill: 'url(#atlas-core)' }),
-            h('circle', { cx: c, cy: c, r: 9, fill: '#fff6dd' }),
+            h('circle', { cx: c, cy: c, r: 9, fill: sky.coreDot }),
             h('title', null, ov.title)),
           h('g', { className: 'atlas-stars' }, layout.stars.map((s) => {
             const gi = gradients.indexOf(s.color);
@@ -933,7 +1120,7 @@ window.__ModuleLoader__.load({
             activity.length === 0 ? h(Empty, null, 'No dated Current work entries yet.') : null,
             h('ol', null, activity.map((e, i) => {
               const t = ov.topics[e.id];
-              const color = e.id === '' ? '#fff0c2' : directionColor(ov, topicDirection(ov, e.id));
+              const color = e.id === '' ? (UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night).root : directionColor(ov, topicDirection(ov, e.id));
               return h('li', { key: i }, h('button', { type: 'button', className: 'atlas-pulse-row', onClick: () => t && go({ view: 'doc', path: t.file }) },
                 h('span', { className: 'atlas-pulse-mark', style: { background: color } }),
                 h('span', { className: 'atlas-date' }, e.date),
@@ -948,7 +1135,7 @@ window.__ModuleLoader__.load({
             onMouseEnter: () => setFocusSector(d.slug), onMouseLeave: () => setFocusSector(null), onFocus: () => setFocusSector(d.slug), onBlur: () => setFocusSector(null),
             onClick: () => { const el = document.getElementById('atlas-dir-' + d.slug); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
           }, h('span', { className: 'atlas-dot', style: { background: directionColor(ov, d.slug) } }), h('span', null, d.heading.replace(/^\d+\.\s*/, '')), h('span', { className: 'atlas-count' }, d.topics.length))),
-          ov.other.length + ov.unreached.length ? h('span', { className: 'atlas-legend-item is-static' }, h('span', { className: 'atlas-dot', style: { background: OTHER_COLOR } }), 'Beyond the directions') : null,
+          ov.other.length + ov.unreached.length ? h('span', { className: 'atlas-legend-item is-static' }, h('span', { className: 'atlas-dot', style: { background: otherColor() } }), 'Beyond the directions') : null,
           h('span', { className: 'atlas-legend-note' }, 'Brightness: Current work in the last week, month, quarter · dashed ring: not linked')),
         ov.directions.map((d) => h(DirectionSection, { key: d.slug, d, ov, go, words, navigate })),
         h(TopicGroup, { title: 'Other topics', note: 'Linked from the root, outside its directions.', ids: ov.other, ov, go, words }),
@@ -987,7 +1174,7 @@ window.__ModuleLoader__.load({
     function TopicGroup({ title, note, ids, ov, go, words }) {
       const list = ids.filter((id) => matches(words, ...subtreeText(ov, id)));
       if (list.length === 0) return null;
-      return h('section', { className: 'atlas-direction is-quiet', style: { '--dir': OTHER_COLOR } },
+      return h('section', { className: 'atlas-direction is-quiet', style: { '--dir': otherColor() } },
         h('header', { className: 'atlas-direction-head' }, h('span', { className: 'atlas-direction-bar', 'aria-hidden': true }), h('div', null, h('h2', null, title), h('p', { className: 'atlas-direction-lead' }, note))),
         h('div', { className: 'atlas-cards' }, list.map((id) => h(TopicCard, { key: id, t: ov.topics[id], ov, go }))));
     }
@@ -1005,7 +1192,7 @@ window.__ModuleLoader__.load({
         t.latest ? h('span', { className: 'atlas-card-latest' }, t.latest.status ? h(StatusTag, { status: t.latest.status }) : null, h('span', { className: 'atlas-card-thread' }, t.latest.name)) : null,
         h('span', { className: 'atlas-card-foot' },
           h('span', { className: 'atlas-card-counts' }, COUNT_ORDER.filter(([k]) => counts[k]).map(([k, icon]) => h('span', { key: k, title: `${counts[k]} ${k}` }, h(Icon, { name: GROUP_ICON[k] || icon, size: 13 }), counts[k]))),
-          t.reached ? null : h(Chip, { dot: '#fab219' }, 'unlinked'),
+          t.reached ? null : h(Chip, { dot: 'var(--status-waiting)' }, 'unlinked'),
           h('span', { className: 'atlas-date', title: t.dated === 'entry' ? 'Newest Current work entry' : 'When the note last changed' }, t.date)));
     }
 
@@ -1014,13 +1201,20 @@ window.__ModuleLoader__.load({
     // One topic as a workspace: what the root says, the opening, Current work as a
     // timeline, the account, and everything the note cites, sorted by kind.
 
-    /** Links inside notes: what Atlas can show opens here, the rest with the system's app. */
+    /** Links inside notes: what Atlas can show opens beside the page (a link), the rest with the system's app. */
     function useNavigate(go, flash) {
-      return useCallback(({ path, anchor }) => {
+      const pane = usePaneName();
+      return useCallback(({ path, anchor, url }) => {
+        // A paper's web address: read it beside the page, offered for the topic in view.
+        if (url) {
+          const focus = paneFocus(focusStore.get(), pane);
+          go({ view: 'paper', url, topic: focus.topic ? focus.topic.path : '' });
+          return;
+        }
         if (!path) return;
-        if (READ_HERE.has(typeOf(path))) go({ view: 'doc', path, anchor });
+        if (READ_HERE.has(typeOf(path))) go({ view: 'doc', path, anchor, link: true });
         else openFile(path).then(() => flash('Opened with the system app.')).catch((error) => flash(error.message));
-      }, [go, flash]);
+      }, [go, flash, pane]);
     }
 
     /** The opening (before the first `##`) and the `##` sections of a note. */
@@ -1054,6 +1248,8 @@ window.__ModuleLoader__.load({
       const parts = useMemo(() => splitNote(data.body), [data.body]);
       const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
       const [reveal, setReveal] = useState({ key: '', n: 0 });
+      // Section ids are per pane: the same topic can be open as the page and beside it.
+      const sec = usePaneName() === 'side' ? 'atlas-side-sec-' : 'atlas-sec-';
       // A link to a section of this note: the opening, Current work, or an account fold opened and scrolled to.
       useEffect(() => {
         if (!anchor) return undefined;
@@ -1062,16 +1258,16 @@ window.__ModuleLoader__.load({
         const section = target.section >= 0 ? parts.sections[target.section] : null;
         if (section && !/^current work/i.test(section.heading)) setReveal((r) => ({ key: section.key, n: r.n + 1 }));
         const timer = setTimeout(() => {
-          if (!section) return revealElement(document.getElementById('atlas-sec-opening'));
-          if (/^current work/i.test(section.heading)) return revealElement(document.getElementById('atlas-sec-current'));
-          const box = document.getElementById('atlas-sec-' + section.index);
+          if (!section) return revealElement(document.getElementById(sec + 'opening'));
+          if (/^current work/i.test(section.heading)) return revealElement(document.getElementById(sec + 'current'));
+          const box = document.getElementById(sec + section.index);
           const inner = target.sub > 0 && box ? nthHeading(box.querySelector('.atlas-fold-body'), target.sub - 1) : null;
           return revealElement(inner || box);
         }, 140);
         return () => clearTimeout(timer);
-      }, [anchor, anchorAt, data.body, parts]);
+      }, [anchor, anchorAt, data.body, parts, sec]);
       const dirSlug = t.directionSlug || topicDirection(ov, t.id);
-      const color = t.isRoot ? '#ffd27a' : directionColor(ov, dirSlug);
+      const color = t.isRoot ? 'var(--gold)' : directionColor(ov, dirSlug);
       const [creating, setCreating] = useState(false);
       usePublishFocus({ kind: 'topic', topic: { id: t.id, title: t.title || 'Root note', path: data.path } }, [data.path, t.title]);
       const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
@@ -1095,7 +1291,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'atlas-path' }, data.shown),
             h('span', { className: 'atlas-date' }, 'changed ' + dateOf(data.mtimeMs)),
             facts.map((f) => h('span', { key: f, className: 'atlas-meta-fact' }, f)),
-            t.reached ? null : h(Chip, { dot: '#fab219', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
+            t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
           h('div', { className: 'atlas-actions' },
             h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
             data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
@@ -1106,12 +1302,12 @@ window.__ModuleLoader__.load({
         h(PendingEdits, { path: data.path, at: data.mtimeMs }),
         h('div', { className: 'atlas-topic-grid' },
           h('main', { className: 'atlas-topic-main' },
-            parts.opening ? h('section', { className: 'atlas-opening', id: 'atlas-sec-opening' }, h(Markdown, { text: parts.opening, baseFile: data.path, onNavigate: navigate })) : null,
-            h(ThreadList, { threads: t.threads, baseFile: data.path, navigate, domId: 'atlas-sec-current' }),
+            parts.opening ? h('section', { className: 'atlas-opening', id: sec + 'opening' }, h(Markdown, { text: parts.opening, baseFile: data.path, onNavigate: navigate })) : null,
+            h(ThreadList, { threads: t.threads, baseFile: data.path, navigate, domId: sec + 'current' }),
             account.length > 0
               ? h('section', { className: 'atlas-section' },
                 h('h2', null, 'The account', h('span', { className: 'atlas-count' }, plural(account.length, 'section'))),
-                account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: 'atlas-sec-' + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
+                account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: sec + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
               : null),
           h('aside', { className: 'atlas-topic-side', 'aria-label': 'What this topic holds' },
             h(Discussions, { match: (d) => Boolean(d.context.topic && d.context.topic.path === data.path) }),
@@ -1134,7 +1330,10 @@ window.__ModuleLoader__.load({
     function ContentItem({ item, navigate }) {
       const missing = item.exists === false;
       const onClick = () => {
-        if (item.url) window.open(item.url, '_blank', 'noopener');
+        if (item.url) {
+          if (paperLink(item.url)) navigate({ url: item.url });
+          else window.open(item.url, '_blank', 'noopener');
+        }
         else if (!missing) navigate({ path: item.path, anchor: item.anchor });
       };
       return h('button', { type: 'button', className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
@@ -1142,7 +1341,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'atlas-item-text' },
           h('span', { className: 'atlas-item-label' }, item.label),
           h('span', { className: 'atlas-item-sub' }, item.shown, item.section ? ` · § ${item.section}` : '', item.count > 1 ? ` · cited ${item.count}×` : '')),
-        missing ? h(Chip, { dot: '#d03b3b' }, 'missing') : item.url ? h(Icon, { name: 'external', size: 13 }) : null);
+        missing ? h(Chip, { dot: 'var(--status-blocked)' }, 'missing') : item.url ? h(Icon, { name: 'external', size: 13 }) : null);
     }
 
     /** Current work entries, newest first, as a timeline: thread, status, date, then the entry as written. */
@@ -1210,7 +1409,8 @@ window.__ModuleLoader__.load({
     // reader that turns into an editor, PDFs page by page, figures, notebooks, data
     // and folders. Selected text can be handed to an AI session.
 
-    const editorDirty = { current: false };
+    /** Unsaved edits, per pane: leaving one pane never asks about the other's. */
+    const editorDirty = { main: false, side: false };
     const TYPE_LABEL = { markdown: 'Note', pdf: 'PDF', tex: 'LaTeX', bib: 'Bibliography', code: 'Code', notebook: 'Notebook', image: 'Figure', video: 'Video', audio: 'Audio', table: 'Table', text: 'Text', folder: 'Folder', other: 'File' };
 
     function DocView({ path, overview: ov, go, flash, version, edit, created, anchor, anchorAt }) {
@@ -1256,7 +1456,7 @@ window.__ModuleLoader__.load({
         };
       }, [path, type, Boolean(data)]);
       const owner = (data && data.owner) || (info && info.owner) || fileOwner || null;
-      const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : '#9db8ff';
+      const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--link)';
       const title = (data && data.title) || baseName(path) || path;
       const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
       if (owner) crumbs.push({ label: shortTitle(owner.title, 34), dot: color, go: { view: 'doc', path: owner.file } });
@@ -1398,7 +1598,8 @@ window.__ModuleLoader__.load({
     }
 
     /** PDF pages drawn by PDF.js inside Atlas, rendered as they scroll into view. */
-    function PdfView({ path, flash, anchor, anchorAt, marker, onPage, onPageClick }) {
+    /** `src` reads the PDF from elsewhere (a paper through Atlas's web route); `path` still names it. */
+    function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageClick }) {
       const [doc, setDoc] = useState(null);
       const onPageRef = useRef(onPage);
       onPageRef.current = onPage;
@@ -1407,6 +1608,7 @@ window.__ModuleLoader__.load({
       const [zoom, setZoom] = useState(1);
       const [width, setWidth] = useState(760);
       const box = useRef(null);
+      const pane = usePaneName();
       useEffect(() => {
         let cancelled = false;
         let task = null;
@@ -1414,7 +1616,7 @@ window.__ModuleLoader__.load({
         setError(null);
         loadPdfjs()
           .then((lib) => {
-            task = lib.getDocument({ url: rawUrl(path), withCredentials: true });
+            task = lib.getDocument({ url: src || rawUrl(path), withCredentials: true });
             return task.promise;
           })
           .then((d) => {
@@ -1433,7 +1635,7 @@ window.__ModuleLoader__.load({
           cancelled = true;
           if (task) task.destroy();
         };
-      }, [path]);
+      }, [path, src]);
       useLayoutEffect(() => {
         const el = box.current;
         if (!el || typeof ResizeObserver === 'undefined') return undefined;
@@ -1457,8 +1659,9 @@ window.__ModuleLoader__.load({
             }
           }
           if (page && onPageRef.current) onPageRef.current(page);
-          const focus = focusStore.get();
-          if (page && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...focus, page: String(page) });
+          const all = focusStore.get();
+          const focus = all[pane];
+          if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, [pane]: { ...focus, page: String(page) } });
         }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
         el.querySelectorAll('.atlas-pdf-page').forEach((p) => io.observe(p));
         return () => io.disconnect();
@@ -1513,7 +1716,8 @@ window.__ModuleLoader__.load({
       }, [doc, anchor, anchorAt, aspect]);
       if (error) {
         return h('div', { className: 'atlas-panel' }, h('p', null, 'This PDF could not be shown here: ', String(error.message || error)),
-          h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
+          src ? h(Button, { icon: 'external', onClick: () => window.open(path, '_blank', 'noopener') }, 'Open in the browser')
+            : h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
       }
       return h('div', { className: cx('atlas-pdf', onPageClick && 'is-synced'), ref: box, onClick: onBoxClick },
         h('div', { className: 'atlas-pdf-bar' },
@@ -1584,8 +1788,21 @@ window.__ModuleLoader__.load({
         h('span', { className: 'atlas-pdf-num' }, number));
     }
 
-    /** The paper beside its PDF, while one is open: what "Keep in note" adds to. */
-    const readingStore = externalStore({ pdf: '', map: '', at: 0 });
+    /** For each library PDF open now, its paper map: what "Keep in note" adds to (the page and the side panel each hold one). */
+    const readingStore = externalStore({ maps: {}, at: 0 });
+
+    /** The reading note of an open PDF: `{ pdf, map }` (map '' when the paper has none yet), or null. */
+    function readingOf(reading, pdf) {
+      const map = reading && reading.maps ? reading.maps[pathKey(pdf)] : undefined;
+      return map === undefined ? null : { pdf, map };
+    }
+
+    function setReading(pdf, map) {
+      const maps = { ...readingStore.get().maps };
+      if (map === null) delete maps[pathKey(pdf)];
+      else maps[pathKey(pdf)] = map;
+      readingStore.set({ maps, at: Date.now() });
+    }
 
     /** A PDF, and beside it the reading note when the PDF is a paper of the library. */
     function PdfLayout({ path, flash, go, navigate, anchor, anchorAt }) {
@@ -1625,9 +1842,9 @@ window.__ModuleLoader__.load({
       const version = (paper.versions || []).find((v) => String(path).replace(/\\/g, '/').includes(`/${v}/`)) || (paper.versions || [])[0] || '';
       const edition = version ? version.replace(/_/, '/') : paper.key;
       useEffect(() => {
-        readingStore.set({ pdf: path, map: paper.map || '', at: Date.now() });
+        setReading(path, paper.map || '');
         return () => {
-          if (readingStore.get().pdf === path) readingStore.set({ pdf: '', map: '', at: Date.now() });
+          if (readingOf(readingStore.get(), path)) setReading(path, null);
         };
       }, [path, paper.map]);
       const start = async (event) => {
@@ -1636,7 +1853,7 @@ window.__ModuleLoader__.load({
         try {
           const m = /^(.*?)(v\d+)?$/.exec(edition);
           const made = await api('paper-map', { method: 'POST', body: { id: paper.key, version: (m && m[2]) || '', why, topic } });
-          readingStore.set({ pdf: path, map: made.file, at: Date.now() });
+          setReading(path, made.file);
           flash(made.existed ? 'The paper map already exists.' : 'Started the paper map; passages you keep go into its “Your reading”.');
         } catch (error) {
           flash(error.message);
@@ -1645,7 +1862,8 @@ window.__ModuleLoader__.load({
         }
       };
       const discuss = () => actions.ask(focusContext({ doc: { type: 'pdf', title: paper.title || paper.key, path } }), 'ask', 'Read this paper with me: start from its paper map if it has one, tell me what it establishes and where it compresses, and wait for my questions.', 'Read ' + (paper.title ? shortTitle(paper.title, 40) : paper.key));
-      const map = reading.map && reading.pdf === path ? reading.map : paper.map;
+      const current = readingOf(reading, path);
+      const map = current && current.map ? current.map : paper.map;
       const users = (paper.usedBy || []).filter((t) => t && t.file);
       return h('aside', { className: 'atlas-paper-aside', 'aria-label': 'Reading note' },
         h('h2', null, 'Reading note'),
@@ -1710,12 +1928,13 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = useState(() => storageGet('editor-preview', true));
       const [shown, setShown] = useState(original);
       const area = useRef(null);
+      const pane = usePaneName();
       const dirty = text !== base.text;
       const isMarkdown = data.type === 'markdown';
       useEffect(() => {
-        editorDirty.current = dirty;
+        editorDirty[pane] = dirty;
         const warn = (e) => {
-          if (editorDirty.current) {
+          if (editorDirty.main || editorDirty.side) {
             e.preventDefault();
             e.returnValue = '';
           }
@@ -1724,7 +1943,7 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('beforeunload', warn);
       }, [dirty]);
       useEffect(() => () => {
-        editorDirty.current = false;
+        editorDirty[pane] = false;
       }, []);
       useEffect(() => {
         const timer = setTimeout(() => setShown(text), 250);
@@ -1736,7 +1955,7 @@ window.__ModuleLoader__.load({
           const res = await api('save', { method: 'POST', body: { path: data.path, text, mtimeMs: base.mtimeMs, overwrite: Boolean(overwrite) } });
           setBase({ text, mtimeMs: res.mtimeMs });
           setStatus({ kind: 'saved', at: Date.now() });
-          editorDirty.current = false;
+          editorDirty[pane] = false;
           if (onSaved) onSaved();
         } catch (error) {
           if (error.status === 409 && error.body && error.body.conflict) setStatus({ kind: 'conflict' });
@@ -1786,7 +2005,7 @@ window.__ModuleLoader__.load({
           h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
           isMarkdown ? h(Button, { quiet: true, onClick: () => { setPreview(!preview); storageSet('editor-preview', !preview); } }, preview ? 'Hide preview' : 'Show preview') : null,
           h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, statusText),
-          h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty.current = false; done(); } } }, 'Done')),
+          h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; done(); } } }, 'Done')),
         h('div', { className: cx('atlas-editor-split', isMarkdown && preview && 'has-preview') },
           h('textarea', { ref: area, className: 'atlas-editor-text', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
           isMarkdown && preview ? h('div', { className: 'atlas-editor-preview atlas-reading' }, h(Markdown, { text: shown.replace(/^---\n[\s\S]*?\n---\n/, ''), baseFile: data.path })) : null,
@@ -1866,6 +2085,7 @@ window.__ModuleLoader__.load({
     }
 
     function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
+      const pane = usePaneName();
       const original = data.raw !== undefined ? data.raw : data.body;
       const [text, setText] = useState(original);
       const [base, setBase] = useState({ text: original, mtimeMs: data.mtimeMs });
@@ -1886,10 +2106,10 @@ window.__ModuleLoader__.load({
       const dirty = text !== base.text;
 
       useEffect(() => {
-        editorDirty.current = dirty;
+        editorDirty[pane] = dirty;
       }, [dirty]);
       useEffect(() => () => {
-        editorDirty.current = false;
+        editorDirty[pane] = false;
       }, []);
       useEffect(() => {
         let live = true;
@@ -1935,7 +2155,7 @@ window.__ModuleLoader__.load({
           const res = await api('save', { method: 'POST', body: { path: data.path, text: textRef.current, mtimeMs: base.mtimeMs, overwrite: Boolean(overwrite) } });
           setBase({ text: textRef.current, mtimeMs: res.mtimeMs });
           setStatus({ kind: 'saved', at: Date.now() });
-          editorDirty.current = false;
+          editorDirty[pane] = false;
           return true;
         } catch (error) {
           if (error.status === 409 && error.body && error.body.conflict) setStatus({ kind: 'conflict' });
@@ -1987,7 +2207,7 @@ window.__ModuleLoader__.load({
         try {
           const r = await api('latex/sync/edit', { query: { pdf, page, x: x.toFixed(2), y: y.toFixed(2), engine: chosen.id } });
           if (samePath(r.file, data.path)) goToLine(r.line);
-          else go({ view: 'doc', path: r.file, edit: true, anchor: 'L' + r.line });
+          else go({ view: 'doc', path: r.file, edit: true, anchor: 'L' + r.line, stay: true });
         } catch (error) {
           flash(error.message);
         }
@@ -2049,8 +2269,8 @@ window.__ModuleLoader__.load({
             : h('span', { className: 'atlas-muted' }, engines.list ? engines.error || 'No TeX installation found' : 'Looking for TeX…'),
           h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, [statusText, builtText].filter(Boolean).join(' · ')),
           h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
-          h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty.current = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
-        main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true }) }, baseName(main)), ': Build builds that document.') : null,
+          h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
+        main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
         h('div', { className: 'atlas-write-split' },
           h('div', { className: 'atlas-write-source' },
             h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
@@ -2107,7 +2327,7 @@ window.__ModuleLoader__.load({
       if (built.problems.length === 0) return h(Empty, null, `No problems: ${plural(built.pages, 'page')}, built with ${built.label}.`);
       const open = (p) => {
         if (!p.file || samePath(p.file, current)) goToLine(p.line || 1);
-        else go({ view: 'doc', path: p.file, edit: true, anchor: 'L' + (p.line || 1) });
+        else go({ view: 'doc', path: p.file, edit: true, anchor: 'L' + (p.line || 1), stay: true });
       };
       return h('ul', { className: 'atlas-problems' }, built.problems.map((p, i) => h('li', { key: i, className: 'is-' + p.severity },
         h('span', { className: 'atlas-problem-kind' }, p.severity),
@@ -2192,6 +2412,123 @@ window.__ModuleLoader__.load({
               h('span', { className: 'atlas-cite-meta' }, [shortAuthors(e.authors), e.year, `arXiv:${e.id}`].filter(Boolean).join(' · ')),
               h('span', { className: 'atlas-chip' }, busy === e.id ? 'adding…' : 'cite')))))) : null,
         !entries.length && !library.length && !web ? h(Empty, null, q ? 'Nothing matches here; search arXiv instead.' : 'Type to find a reference.') : null);
+    }
+
+    // ===== client/47-paper.js
+    // ----------------------------------------------------------------- papers ---
+    // A paper a note cites by its web address (arXiv, a DOI, an INSPIRE record) opens beside the page
+    // instead of in a browser: its details, and for arXiv its PDF read through Atlas (fetched on the
+    // researcher's click, never saved). One step adds it to the library for the topic it serves, with
+    // a paper map that says so; the library's copy then opens in its place. A paper the library has
+    // opens as the library's copy, with its reading note.
+
+    /** A link to a paper Atlas can look up: arXiv (abs, pdf, html), a DOI, or an INSPIRE record; otherwise null. */
+    function paperLink(url) {
+      let u;
+      try {
+        u = new URL(String(url || ''));
+      } catch {
+        return null;
+      }
+      if (!/^https?:$/.test(u.protocol)) return null;
+      const host = u.hostname.replace(/^www\./, '').toLowerCase();
+      if (host === 'arxiv.org' || host === 'export.arxiv.org') {
+        const m = /^\/(?:abs|pdf|html)\/([a-z-]+(?:\.[a-z]{2})?\/\d{7}|\d{4}\.\d{4,5})(v\d+)?(?:\.pdf)?\/?$/i.exec(u.pathname);
+        return m ? { kind: 'arxiv', id: m[1], version: m[2] || '', q: m[1] + (m[2] || ''), label: `arXiv ${m[1]}${m[2] || ''}` } : null;
+      }
+      if (host === 'doi.org' || host === 'dx.doi.org') {
+        let doi = '';
+        try {
+          doi = decodeURIComponent(u.pathname.slice(1));
+        } catch {
+          doi = u.pathname.slice(1);
+        }
+        return /^10\.\d{4,9}\/\S+$/.test(doi) ? { kind: 'doi', doi, q: url, label: `DOI ${doi}` } : null;
+      }
+      if (host === 'inspirehep.net') {
+        const m = /^\/(?:api\/)?literature\/(\d+)/.exec(u.pathname);
+        return m ? { kind: 'inspire', recid: m[1], q: url, label: `INSPIRE ${m[1]}` } : null;
+      }
+      return null;
+    }
+
+    /** The topics a paper can be filed for, root first, branches under their topic's name. */
+    function topicChoices(ov) {
+      const all = Object.values((ov && ov.topics) || {}).filter((t) => t && t.file && t.id !== '');
+      const name = (t) => {
+        const chain = [];
+        for (let cur = t; cur && cur.id !== ''; cur = cur.parent !== undefined && cur.parent !== null ? ov.topics[cur.parent] : null) chain.unshift(shortTitle(cur.title, 36));
+        return chain.join(' › ');
+      };
+      return all.map((t) => ({ file: t.file, label: name(t) })).sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    function PaperRefView({ url, topic, overview: ov, go, flash, anchor, anchorAt }) {
+      const ref = paperLink(url) || { kind: 'url', q: url, label: url };
+      const { data, error, loading } = useApi('web/lookup', { q: ref.q }, ref.q);
+      if (loading && !data) return h(Loading, { label: `Looking up ${ref.label}…` });
+      if (error) {
+        return h('div', { className: 'atlas-page' },
+          h('div', { className: 'atlas-error', role: 'alert' }, h('span', null, error.message), h(TextButton, { onClick: () => window.open(url, '_blank', 'noopener') }, 'Open in the browser')));
+      }
+      // Already in the library: the library's copy, with its reading note.
+      if (data.inLibrary && data.inLibrary.pdf) return h(DocView, { path: data.inLibrary.pdf, overview: ov, go, flash, anchor, anchorAt });
+      const readable = data.kind === 'arxiv';
+      const cited = data.mentionedBy || [];
+      const authors = data.authors || [];
+      const byline = [authors.slice(0, 6).join(', ') + (authors.length > 6 ? ', et al.' : ''), data.year || '', data.journal || ''].filter(Boolean).join(' · ');
+      const preferred = [topic, ...cited.map((t) => t.file)].find((f) => f && topicChoices(ov).some((c) => pathKey(c.file) === pathKey(f))) || '';
+      return h('div', { className: 'atlas-page is-wide atlas-doc atlas-ref' },
+        h('header', { className: 'atlas-doc-head' },
+          h('p', { className: 'atlas-kicker' }, h(Icon, { name: 'paper', size: 14 }), readable ? `arXiv ${data.id}${data.version} · not in your library` : 'Paper · not in your library'),
+          h('h1', null, data.title || ref.label),
+          byline ? h('p', { className: 'atlas-lede' }, byline) : null,
+          h('div', { className: 'atlas-meta' },
+            data.inspire && data.inspire.citations ? h('span', null, plural(data.inspire.citations, 'citation') + ' on INSPIRE') : null,
+            cited.length ? h('span', null, 'Cited in ', cited.map((t, i) => h('span', { key: t.file }, i ? ', ' : '', h(TextButton, { onClick: () => go({ view: 'doc', path: t.file }) }, shortTitle(t.title, 44))))) : null),
+          readable ? h(AddToLibrary, { entry: data, ov, preferred, go, flash }) : null,
+          h('div', { className: 'atlas-actions' },
+            h(Button, { quiet: true, icon: 'external', onClick: () => window.open(readable ? `https://arxiv.org/abs/${data.id}${data.version}` : url, '_blank', 'noopener') }, readable ? 'Open on arXiv' : 'Open in the browser'))),
+        data.summary ? h(Fold, { id: 'abstract:' + ref.q, title: 'Abstract' }, () => h('p', { className: 'atlas-ref-abstract' }, data.summary)) : null,
+        readable
+          ? h(PaperPdf, { url, src: `${API}/web/pdf?id=${encodeURIComponent(data.id + data.version)}`, title: data.title || ref.label, flash, anchor, anchorAt })
+          : h(Empty, null, 'This record has no arXiv edition, so it cannot be read inside Atlas.'));
+    }
+
+    /** The arXiv PDF, read through Atlas; what the ask bar and the selection tools see as "this PDF". */
+    function PaperPdf({ url, src, title, flash, anchor, anchorAt }) {
+      usePublishFocus({ kind: 'doc', topic: null, doc: { type: 'pdf', title: String(title), path: url } }, [url, title]);
+      return h(PdfView, { path: url, src, flash, anchor, anchorAt });
+    }
+
+    /** Add the edition to the library for a topic: the PDF and its TeX source, and a paper map that says which topic it is for. */
+    function AddToLibrary({ entry, ov, preferred, go, flash }) {
+      const choices = useMemo(() => topicChoices(ov), [ov]);
+      const [forTopic, setForTopic] = useState(preferred || '');
+      const [why, setWhy] = useState('');
+      const [busy, setBusy] = useState(false);
+      const add = async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        try {
+          const r = await api('web/add', { method: 'POST', body: { id: entry.id, version: entry.version, source: true, note: true, why: why.trim(), topic: forTopic, meta: entry } });
+          const chosen = choices.find((c) => c.file === forTopic);
+          flash(`Added ${r.id}${r.version} to the library${chosen ? `, for ${chosen.label}` : ''}; its paper map is started.`);
+          go({ view: 'doc', path: r.pdf, stay: true });
+        } catch (error) {
+          flash(error.message);
+        } finally {
+          setBusy(false);
+        }
+      };
+      return h('form', { className: 'atlas-ref-add', onSubmit: add },
+        h('span', { className: 'atlas-label' }, 'Add to the library'),
+        h('label', { className: 'atlas-ref-for' }, h('span', null, 'For'),
+          h('select', { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic this paper is for' },
+            h('option', { value: '' }, 'No topic yet'),
+            choices.map((c) => h('option', { key: c.file, value: c.file }, c.label)))),
+        h('input', { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value), placeholder: 'Why you are reading it (optional)', 'aria-label': 'Why you are reading it' }),
+        h('button', { type: 'submit', className: 'atlas-button is-primary is-small', disabled: busy }, busy ? 'Adding…' : 'Add'));
     }
 
     // ===== client/50-library.js
@@ -2299,7 +2636,7 @@ window.__ModuleLoader__.load({
           h('ul', { className: 'atlas-items' },
             lib.map((p) => h('li', { key: p.key }, h('button', { type: 'button', className: 'atlas-item', onClick: () => go({ view: 'doc', path: p.pdf || p.map }) }, h(Icon, { name: 'paper', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, p.title || p.key), h('span', { className: 'atlas-item-sub' }, `${p.key} · in the library`))))),
             t.pdfs.map((pdf, i) => h('li', { key: 'pdf' + i }, h('button', { type: 'button', className: 'atlas-item', onClick: () => navigate({ path: pdf.path }) }, h(Icon, { name: 'paper', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, pdf.label), h('span', { className: 'atlas-item-sub' }, baseName(pdf.path) + ' · in the topic'))))),
-            outside.map((id) => h('li', { key: 'ax' + id }, h('button', { type: 'button', className: 'atlas-item', onClick: () => window.open(`https://arxiv.org/abs/${id}`, '_blank', 'noopener') }, h(Icon, { name: 'web', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, 'arXiv ' + id), h('span', { className: 'atlas-item-sub' }, 'cited, not in the library')), h(Icon, { name: 'external', size: 13 }))))));
+            outside.map((id) => h('li', { key: 'ax' + id }, h('button', { type: 'button', className: 'atlas-item', onClick: () => go({ view: 'paper', url: `https://arxiv.org/abs/${id}`, topic: t.file }) }, h(Icon, { name: 'web', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, 'arXiv ' + id), h('span', { className: 'atlas-item-sub' }, 'cited, not in the library')), h(Icon, { name: 'external', size: 13 }))))));
       }));
     }
 
@@ -2318,9 +2655,9 @@ window.__ModuleLoader__.load({
 
     function supportDot(support) {
       const s = String(support || '').toLowerCase();
-      if (/confirm/.test(s)) return '#0ca30c';
-      if (/provisional|awaiting|unreviewed|pending|unchecked/.test(s)) return '#fab219';
-      return '#7c86a5';
+      if (/confirm/.test(s)) return 'var(--status-done)';
+      if (/provisional|awaiting|unreviewed|pending|unchecked/.test(s)) return 'var(--status-waiting)';
+      return 'var(--status-other)';
     }
 
     function EntryRow({ e, go, navigate }) {
@@ -2957,23 +3294,60 @@ window.__ModuleLoader__.load({
       return store;
     }
 
-    // The discussion index and the view in focus.
+    // The discussion index, and what is in view: one focus per pane (the page, and the file beside
+    // it), and which of the two was used last.
     const threadStore = externalStore([], 'threads');
-    const focusStore = externalStore({ kind: 'universe' });
+    const focusStore = externalStore({ main: { kind: 'universe' }, side: null, active: 'main' });
+    /** Which pane a component sits in: the page ('main'), the file beside it ('side'), or the shell around both ('global'). */
+    const PaneContext = React.createContext('global');
+
+    function usePaneName() {
+      return React.useContext(PaneContext) === 'side' ? 'side' : 'main';
+    }
+
+    /** What a pane shows (the shell asks for the pane used last), with what the other pane holds beside it. */
+    function paneFocus(all, pane) {
+      const name = pane === 'side' || pane === 'main' ? pane : all.active === 'side' && all.side ? 'side' : 'main';
+      const own = (name === 'side' ? all.side : all.main) || { kind: 'universe' };
+      const beside = besideOf(own, name === 'side' ? all.main : all.side);
+      return beside ? { ...own, beside } : own;
+    }
+
+    /** The other pane's document or topic, unless this pane already names it. */
+    function besideOf(own, other) {
+      if (!other) return null;
+      const item = other.doc && !(other.topic && pathKey(other.doc.path) === pathKey(other.topic.path))
+        ? { label: TYPE_LABEL[other.doc.type] || 'Document', title: other.doc.title || baseName(other.doc.path), path: other.doc.path }
+        : other.topic ? { label: other.topic.id === '' ? 'Root note' : 'Topic', title: other.topic.title, path: other.topic.path } : null;
+      if (!item) return null;
+      return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
+    }
+
+    function setActivePane(pane) {
+      const all = focusStore.get();
+      if (all.active !== pane) focusStore.set({ ...all, active: pane });
+    }
+
+    function clearSidePane() {
+      focusStore.set({ ...focusStore.get(), side: null, active: 'main' });
+    }
 
     function useThreadIndex() {
       return React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
     }
 
     function useFocus() {
-      return React.useSyncExternalStore(focusStore.subscribe, focusStore.get);
+      const pane = React.useContext(PaneContext);
+      const all = React.useSyncExternalStore(focusStore.subscribe, focusStore.get);
+      return useMemo(() => paneFocus(all, pane), [all, pane]);
     }
 
     /** Views say what they show; the ask bar, the chips and Ctrl+J read it. */
     function usePublishFocus(value, deps) {
+      const pane = usePaneName();
       useEffect(() => {
-        focusStore.set(value);
-      }, deps);
+        focusStore.set({ ...focusStore.get(), [pane]: value });
+      }, [pane, ...deps]);
     }
 
     function patchThread(id, patch) {
@@ -3019,6 +3393,7 @@ window.__ModuleLoader__.load({
         section: extra.section || '',
         lines: extra.lines || '',
         selection: extra.selection || '',
+        ...(focus.beside ? { beside: focus.beside } : {}),
       };
     }
 
@@ -3034,6 +3409,7 @@ window.__ModuleLoader__.load({
       if (c.section) lines.push(`- Section: ${c.section}`);
       if (c.lines) lines.push(`- Lines: ${c.lines}`);
       if (c.page) lines.push(`- Page: ${c.page}`);
+      if (c.beside) lines.push(`- Open beside it: ${c.beside.label}: ${c.beside.title} — ${c.beside.path}`);
       if (c.selection) {
         lines.push('- Selected passage:');
         for (const line of String(c.selection).split('\n').slice(0, 80)) lines.push(`  > ${line}`);
@@ -3050,6 +3426,7 @@ window.__ModuleLoader__.load({
       if (c.section) chips.push({ label: '§', text: shortTitle(c.section, 34), title: c.section });
       if (c.lines) chips.push({ label: 'Lines', text: c.lines });
       if (c.page) chips.push({ label: 'Page', text: c.page });
+      if (c.beside) chips.push({ label: 'Beside', text: shortTitle(c.beside.title, 26), title: c.beside.path });
       if (c.selection) chips.push({ label: 'Passage', text: shortTitle(c.selection.replace(/\s+/g, ' '), 38), title: c.selection, accent: true });
       return chips;
     }
@@ -3242,10 +3619,10 @@ window.__ModuleLoader__.load({
       return String(text || '').replace(/​/g, '').trim();
     }
 
-    /** What is selected now: text in the reader, or a range in the editor. */
+    /** What is selected now inside `main` (a pane's scroller): text in the reader, or a range in the editor. */
     function captureSelection(main) {
       const active = document.activeElement;
-      if (active && active.tagName === 'TEXTAREA' && active.classList.contains('atlas-editor-text') && active.selectionEnd > active.selectionStart) {
+      if (active && active.tagName === 'TEXTAREA' && active.classList.contains('atlas-editor-text') && active.selectionEnd > active.selectionStart && (!main || main.contains(active))) {
         const value = active.value;
         const before = value.slice(0, active.selectionStart);
         const first = before.split('\n').length;
@@ -3308,7 +3685,7 @@ window.__ModuleLoader__.load({
 
     const COMPANION_MIN = 340;
 
-    function Companion({ threadId, pending, onClose, flash, width, onWidth }) {
+    function Companion({ threadId, pending, onClose, flash, width, onWidth, tabs, hidden }) {
       const threads = useThreadIndex();
       const rows = useSessionRows();
       const focus = useFocus();
@@ -3354,24 +3731,11 @@ window.__ModuleLoader__.load({
         if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
         else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
       };
-      const startResize = (event) => {
-        event.preventDefault();
-        const startX = event.clientX;
-        const startW = width;
-        const host = event.currentTarget.closest('.atlas-body');
-        const max = host ? host.clientWidth * 0.66 : 900;
-        const move = (e) => onWidth(Math.round(Math.min(max, Math.max(COMPANION_MIN, startW + (startX - e.clientX)))), false);
-        const up = (e) => {
-          window.removeEventListener('pointermove', move);
-          window.removeEventListener('pointerup', up);
-          onWidth(Math.round(Math.min(max, Math.max(COMPANION_MIN, startW + (startX - e.clientX)))), true);
-        };
-        window.addEventListener('pointermove', move);
-        window.addEventListener('pointerup', up);
-      };
+      const startResize = columnResizer(width, onWidth, COMPANION_MIN, 0.66);
       const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-      return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion', style: { '--companion-w': width + 'px' } },
+      return h('aside', { className: cx('atlas-companion', hidden && 'is-hidden'), 'aria-label': 'Discussion', 'aria-hidden': hidden || undefined, style: { '--companion-w': width + 'px' } },
         h('div', { className: 'atlas-companion-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the discussion pane', onPointerDown: startResize }),
+        tabs ? h('div', { className: 'atlas-companion-tabs' }, tabs) : null,
         h('header', { className: 'atlas-companion-head' },
           h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
           h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
@@ -3476,7 +3840,8 @@ window.__ModuleLoader__.load({
       }, [container.current]);
       if (!pick) return null;
       const context = focusContext(focus, pick);
-      const keepable = Boolean(pick.page && reading.map && focus.doc && samePath(reading.pdf, focus.doc.path));
+      const current = focus.doc ? readingOf(reading, focus.doc.path) : null;
+      const keepable = Boolean(pick.page && current && current.map);
       const done = () => {
         setPick(null);
         setAsking(false);
@@ -3499,7 +3864,7 @@ window.__ModuleLoader__.load({
             ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
             actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
             actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
-            keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(reading, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
+            keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
           ]);
     }
 
@@ -3518,7 +3883,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'atlas-item-label' }, threadLabel(t)),
           h('span', { className: 'atlas-item-sub' }, [where, ago(t.created)].filter(Boolean).join(' · '))),
         t.kind === 'team' ? h(Chip, { title: 'An agent team: the lead and its members' }, 'team') : null,
-        running ? h(Chip, { dot: '#9db8ff' }, 'working') : null);
+        running ? h(Chip, { dot: 'var(--status-active)' }, 'working') : null);
     }
 
     /** The discussions about a topic (its documents included), or across the research. */
@@ -3563,10 +3928,6 @@ window.__ModuleLoader__.load({
     /** A Current work disposition that waits on the researcher's decision. */
     function isWaiting(status) {
       return /^waiting on (the )?(researcher|learner|you)\b/i.test(String(status || '').trim());
-    }
-
-    function pathKey(file) {
-      return String(file || '').replace(/\\/g, '/').toLowerCase();
     }
 
     /** Plain text of a thread's entry, without its lead, status and date: the start of what it says. */
@@ -3761,7 +4122,7 @@ window.__ModuleLoader__.load({
       const { groups, others } = useMemo(() => activityGroups(index, rows), [index, rows]);
       const topicColor = (topic) => {
         const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
-        return t ? directionColor(ov, topicDirection(ov, t.id)) : '#9db8ff';
+        return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--link)';
       };
       const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
       return h('div', { className: 'atlas-page is-wide atlas-activity' },
@@ -4084,10 +4445,98 @@ window.__ModuleLoader__.load({
 
     // ===== client/70-shell.js
     // ------------------------------------------------------------------- shell ---
-    // Three places, the Universe, Activity and the Library; every document opens
-    // inside them, and a discussion with the AI opens in the companion pane beside them.
+    // Four places (the Universe, Activity, the Library, Learn) and the topics fill the page; a file
+    // opens beside it in the side panel, so the page stays where it was. A discussion with the AI
+    // opens in the companion pane. With a file and a discussion both open they stand side by side,
+    // or, when the window cannot fit three columns, share the side as two tabs.
 
     const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn']];
+    const SIDE_MIN = 360;
+    const MAIN_MIN = 420;
+
+    /**
+     * Which pane a navigation belongs in, opened from pane `from` ('main' or 'side') whose current
+     * entry is `here`. Places (another view, a topic, the root note, a page made full) fill the page;
+     * a section of the document already open stays where it is, as does a jump inside a LaTeX
+     * workspace (`stay`); links inside documents and every other file open beside the page.
+     */
+    function paneFor(next, from, here, isPlace) {
+      if (next && next.view === 'paper') return next.full ? 'main' : 'side';
+      if (!next || next.back || next.view !== 'doc' || !next.path || next.full) return 'main';
+      if (here && here.view === 'doc' && here.path && pathKey(here.path) === pathKey(next.path)) return from;
+      if (next.stay) return from;
+      if (!next.link && isPlace(next.path)) return 'main';
+      return 'side';
+    }
+
+    /** Columns when the page keeps at least MAIN_MIN beside the file and the discussion; tabs otherwise. */
+    function sideLayout({ width, side, discussion, sideWidth, companionWidth }) {
+      if (!side || !discussion) return 'columns';
+      return width - sideWidth - companionWidth >= MAIN_MIN ? 'columns' : 'tabs';
+    }
+
+    /** The files that are places in Atlas: the root note and every topic's note. */
+    function placeKeys(ov) {
+      const keys = new Set();
+      if (!ov) return keys;
+      if (ov.rootFile) keys.add(pathKey(ov.rootFile));
+      for (const t of Object.values(ov.topics || {})) if (t && t.file) keys.add(pathKey(t.file));
+      return keys;
+    }
+
+    /** One entry of the side panel as a key: a paper by its address, a file by its path. */
+    function sideKey(entry) {
+      return entry.url ? 'url:' + entry.url : pathKey(entry.path);
+    }
+
+    /** The side panel's name for an entry: a paper by its identifier, a file as `sideLabel` says. */
+    function sideTitle(ov, entry) {
+      return entry.url ? (paperLink(entry.url) || { label: entry.url }).label : sideLabel(ov, entry.path);
+    }
+
+    /** What the side panel calls a file: a topic's note by its topic (every one is research.md), anything else by its name. */
+    function sideLabel(ov, path) {
+      const key = pathKey(path);
+      if (ov && ov.rootFile && pathKey(ov.rootFile) === key) return shortTitle(ov.title || 'Root note', 40);
+      for (const t of Object.values((ov && ov.topics) || {})) if (t && t.file && pathKey(t.file) === key) return shortTitle(t.title, 40);
+      return baseName(path) || path;
+    }
+
+    /** Drag the left edge of a right-hand column to resize it (up to `share` of the body). */
+    function columnResizer(width, onWidth, min, share = 0.7) {
+      return (event) => {
+        event.preventDefault();
+        const startX = event.clientX;
+        const host = event.currentTarget.closest('.atlas-body');
+        const max = host ? host.clientWidth * share : 900;
+        const clamp = (x) => Math.round(Math.min(max, Math.max(min, width + (startX - x))));
+        const move = (e) => onWidth(clamp(e.clientX), false);
+        const up = (e) => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          onWidth(clamp(e.clientX), true);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      };
+    }
+
+    /** The file beside the page: its own header (back, name or tabs, open as the page, close) and scroller. */
+    function SidePane({ entry, overview, go, flash, version, width, onWidth, canBack, onBack, onClose, onFull, tabs, hidden, scrollRef }) {
+      const type = entry.url ? 'pdf' : typeOf(entry.path);
+      return h('aside', { className: cx('atlas-side', hidden && 'is-hidden'), 'aria-label': 'Beside the page', 'aria-hidden': hidden || undefined, style: { '--side-w': width + 'px' }, onPointerDownCapture: () => setActivePane('side') },
+        h('div', { className: 'atlas-pane-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the side panel', onPointerDown: columnResizer(width, onWidth, SIDE_MIN) }),
+        h('header', { className: 'atlas-side-head' },
+          canBack ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Back to the previous file', 'aria-label': 'Back to the previous file', onClick: onBack }, h(Icon, { name: 'back', size: 15 })) : null,
+          tabs || h('span', { className: 'atlas-side-title', title: entry.url || entry.path }, h(Icon, { name: TYPE_ICON[type] || 'note', size: 15 }), h('span', null, sideTitle(overview, entry))),
+          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open it as the page instead', 'aria-label': 'Open as the page', onClick: onFull }, h(Icon, { name: 'expand', size: 15 })),
+          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the side panel', 'aria-label': 'Close the side panel', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
+        h('div', { className: 'atlas-side-body', ref: scrollRef },
+          h(PaneContext.Provider, { value: 'side' },
+            h(Boundary, { key: entry.url || entry.path }, !overview ? h(Loading)
+              : entry.url ? h(PaperRefView, { key: entry.url, url: entry.url, topic: entry.topic, overview, go, flash, anchor: entry.anchor, anchorAt: entry.at })
+                : h(DocView, { key: entry.path + (entry.edit ? ':edit' : ''), overview, go, flash, version, path: entry.path, edit: entry.edit, created: entry.created, anchor: entry.anchor, anchorAt: entry.at })))));
+    }
 
     function AtlasApp() {
       const [version, setVersion] = useState(0);
@@ -4103,18 +4552,46 @@ window.__ModuleLoader__.load({
       const [last, setLast] = useState(() => storageGet('companion-last', null));
       const [askBar, setAskBar] = useState(null);
       const [paneWidth, setPaneWidth] = useState(() => storageGet('companion-width', 440));
+      const [side, setSide] = useState(() => {
+        const saved = storageGet('side', null);
+        if (saved && saved.url) return { url: saved.url, topic: saved.topic || '', anchor: '', at: Date.now(), edit: false, created: false };
+        return saved && saved.path ? { path: saved.path, anchor: saved.anchor || '', at: Date.now(), edit: false, created: false } : null;
+      });
+      const [sideBack, setSideBack] = useState(false);
+      const [sideWidth, setSideWidth] = useState(() => storageGet('side-width', 560));
+      const [sideTab, setSideTab] = useState('file');
+      const [bodyWidth, setBodyWidth] = useState(0);
       const routeRef = useRef(route);
       const historyRef = useRef([]);
+      const sideRef = useRef(side);
+      const sideHistory = useRef([]);
       const scroller = useRef(null);
+      const sideScroller = useRef(null);
       const bodyRef = useRef(null);
       const rootRef = useRef(null);
       const ovRef = useRef(null);
       const threadRef = useRef(thread);
+      const placesRef = useRef(new Set());
       ovRef.current = overview.data;
+      placesRef.current = useMemo(() => placeKeys(overview.data), [overview.data]);
 
-      const go = useCallback((next) => {
-        if (editorDirty.current && !window.confirm('Leave without saving your changes?')) return;
-        editorDirty.current = false;
+      // The theme: this window's choice, else the config's, else auto (DSH's own appearance).
+      const appearance = overview.data && overview.data.appearance;
+      const themes = useMemo(() => cleanThemes(appearance && appearance.themes), [appearance]);
+      const storedMode = React.useSyncExternalStore(themeModeStore.subscribe, themeModeStore.get);
+      const dshDark = React.useSyncExternalStore(dshThemeStore.subscribe, dshThemeStore.get);
+      useEffect(() => watchDshTheme(), []);
+      const cycle = themeCycle(themes);
+      const mode = cycle.includes(storedMode) ? storedMode : appearance && cycle.includes(appearance.theme) ? appearance.theme : 'auto';
+      const theme = resolveTheme(mode, dshDark, themes);
+      activeBase = theme.base;
+      const nextMode = cycle[(cycle.indexOf(mode) + 1) % cycle.length];
+      const modeLabel = (m) => (themes[m] ? themes[m].label : THEME_LABEL[m]);
+
+      // The page: places, with its own history (the top bar's Back).
+      const goMain = useCallback((next) => {
+        if (editorDirty.main && !window.confirm('Leave without saving your changes?')) return;
+        editorDirty.main = false;
         if (next.back) {
           const prev = historyRef.current.pop();
           setCanBack(historyRef.current.length > 0);
@@ -4133,13 +4610,70 @@ window.__ModuleLoader__.load({
         routeRef.current = next;
         setRoute(next);
         storageSet('route', { ...next, edit: false, created: false });
+        setActivePane('main');
         if (scroller.current && !(samePage && next.anchor)) scroller.current.scrollTop = 0;
       }, []);
+
+      // The file beside the page, with its own history (the panel's Back).
+      const showSide = (entry) => {
+        sideRef.current = entry;
+        setSide(entry);
+        storageSet('side', !entry ? null : entry.url ? { url: entry.url, topic: entry.topic } : { path: entry.path, anchor: entry.anchor });
+      };
+      const openSide = useCallback((next) => {
+        const cur = sideRef.current;
+        const entry = next.view === 'paper'
+          ? { url: next.url, topic: next.topic || '', anchor: next.anchor || '', at: Date.now(), edit: false, created: false }
+          : { path: next.path, anchor: next.anchor || '', at: Date.now(), edit: Boolean(next.edit), created: Boolean(next.created) };
+        if (!cur || sideKey(cur) !== sideKey(entry)) {
+          if (editorDirty.side && !window.confirm('Leave the file beside the page without saving your changes?')) return;
+          editorDirty.side = false;
+          if (cur) {
+            sideHistory.current = [...sideHistory.current.slice(-30), { ...cur, edit: false, created: false }];
+            setSideBack(true);
+          }
+          if (sideScroller.current) sideScroller.current.scrollTop = 0;
+        }
+        showSide(entry);
+        setSideTab('file');
+        setActivePane('side');
+      }, []);
+      const sideGoBack = useCallback(() => {
+        if (editorDirty.side && !window.confirm('Leave without saving your changes?')) return;
+        editorDirty.side = false;
+        const prev = sideHistory.current.pop();
+        setSideBack(sideHistory.current.length > 0);
+        if (prev) showSide({ ...prev, at: Date.now() });
+      }, []);
+      const closeSide = useCallback(() => {
+        if (editorDirty.side && !window.confirm('Close the file without saving your changes?')) return false;
+        editorDirty.side = false;
+        sideHistory.current = [];
+        setSideBack(false);
+        showSide(null);
+        clearSidePane();
+        return true;
+      }, []);
+
+      /** Each pane's `go`: the same request lands in the page or beside it, by `paneFor`. */
+      const navigator = useCallback((from) => (next) => {
+        const cur = sideRef.current;
+        const here = from === 'side' ? (cur ? (cur.url ? { view: 'paper', url: cur.url } : { view: 'doc', path: cur.path }) : null) : routeRef.current;
+        if (paneFor(next, from, here, (p) => placesRef.current.has(pathKey(p))) === 'side') openSide(next);
+        else goMain(next && next.full ? { ...next, full: undefined } : next);
+      }, [goMain, openSide]);
+      const go = useMemo(() => navigator('main'), [navigator]);
+      const goSide = useMemo(() => navigator('side'), [navigator]);
+      const openAsPage = useCallback(() => {
+        const cur = sideRef.current;
+        if (cur && closeSide()) goMain(cur.url ? { view: 'paper', url: cur.url, topic: cur.topic } : { view: 'doc', path: cur.path, anchor: cur.anchor });
+      }, [closeSide, goMain]);
 
       /** The companion shows one discussion, a discussion being started, or nothing. */
       const showThread = useCallback((next) => {
         threadRef.current = next;
         setThread(next);
+        if (next) setSideTab('discussion');
         if (!next || next.id) storageSet('companion', next || null);
         if (next && next.id) {
           setLast(next.id);
@@ -4172,7 +4706,18 @@ window.__ModuleLoader__.load({
       const current = thread && thread.id ? thread.id : null;
       const actionValue = useMemo(() => ({ ...actions, current }), [actions, current]);
       const closeAsk = useCallback(() => setAskBar(null), []);
-      const openAsk = useCallback(() => setAskBar(captureSelection(scroller.current)), []);
+      // The ask bar takes the selection from whichever pane holds it (and that pane's focus).
+      const openAsk = useCallback(() => {
+        const beside = sideScroller.current ? captureSelection(sideScroller.current) : {};
+        if (beside.selection) {
+          setActivePane('side');
+          setAskBar(beside);
+          return;
+        }
+        const here = captureSelection(scroller.current);
+        if (here.selection) setActivePane('main');
+        setAskBar(here);
+      }, []);
 
       // Ctrl+J asks about what is on screen (and what is selected); DSH keeps Ctrl+K for its session search.
       useEffect(() => {
@@ -4207,13 +4752,23 @@ window.__ModuleLoader__.load({
 
       // A direction anchor on the Universe scrolls to its section once drawn.
       useEffect(() => {
-        if (route.view !== 'home' || !route.anchor) return;
+        if (route.view !== 'home' || !route.anchor) return undefined;
         const timer = setTimeout(() => {
           const el = document.getElementById('atlas-dir-' + route.anchor);
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 60);
         return () => clearTimeout(timer);
       }, [route, overview.data]);
+
+      // The body's width decides between columns and tabs.
+      useLayoutEffect(() => {
+        const el = bodyRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return undefined;
+        const ro = new ResizeObserver(() => setBodyWidth(el.clientWidth));
+        ro.observe(el);
+        setBodyWidth(el.clientWidth);
+        return () => ro.disconnect();
+      }, []);
 
       let body;
       if (overview.loading && !overview.data) body = h(Loading);
@@ -4225,6 +4780,7 @@ window.__ModuleLoader__.load({
         else if (route.view === 'activity') body = h(ActivityView, props);
         else if (route.view === 'search') body = h(SearchView, { ...props, q: route.q, at: route.at });
         else if (route.view === 'learn') body = h(LearnView, { ...props, path: route.path });
+        else if (route.view === 'paper' && route.url) body = h(PaperRefView, { ...props, key: route.url, url: route.url, topic: route.topic });
         else if (route.view === 'team') body = h(TeamView, { ...props, key: (route.path || '') + ':' + (route.thread || ''), path: route.path, thread: route.thread });
         else body = h(UniverseView, props);
       }
@@ -4232,8 +4788,19 @@ window.__ModuleLoader__.load({
       const waiting = overview.data ? waitingItems(overview.data).length : 0;
       const filtering = route.view === 'home' || route.view === 'library';
       const open = Boolean(thread && (thread.id || thread.pending));
+      const tabbed = sideLayout({ width: bodyWidth || Infinity, side: Boolean(side), discussion: open, sideWidth, companionWidth: paneWidth }) === 'tabs';
+      const rightWidth = tabbed ? sideWidth : (side ? sideWidth : 0) + (open ? paneWidth : 0);
+      const setSideWidthSaved = (w, save) => {
+        setSideWidth(w);
+        if (save) storageSet('side-width', w);
+      };
+      const tabs = tabbed ? h('div', { className: 'atlas-tabs', role: 'tablist', 'aria-label': 'Beside the page' },
+        h('button', { type: 'button', role: 'tab', 'aria-selected': sideTab === 'file', className: cx('atlas-tab', sideTab === 'file' && 'is-on'), title: side.url || side.path, onClick: () => setSideTab('file') },
+          h(Icon, { name: TYPE_ICON[side.url ? 'pdf' : typeOf(side.path)] || 'note', size: 14 }), h('span', null, sideTitle(overview.data, side))),
+        h('button', { type: 'button', role: 'tab', 'aria-selected': sideTab === 'discussion', className: cx('atlas-tab', sideTab === 'discussion' && 'is-on'), onClick: () => setSideTab('discussion') },
+          h(Icon, { name: 'spark', size: 14 }), h('span', null, 'Discussion'))) : null;
       return h(AtlasActions.Provider, { value: actionValue },
-        h('div', { className: cx('atlas-root', open && 'has-companion'), ref: rootRef },
+        h('div', { className: cx('atlas-root', open && 'has-companion'), 'data-theme-base': theme.base, 'data-theme': theme.name, style: themeStyle(theme), ref: rootRef },
           h('header', { className: 'atlas-top' },
             h('button', { type: 'button', className: 'atlas-brand', onClick: () => go({ view: 'home' }), title: 'The research universe' }, h(AtlasIcon), h('span', null, 'Atlas')),
             h('nav', { className: 'atlas-nav', 'aria-label': 'Atlas' },
@@ -4247,73 +4814,75 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', className: 'atlas-icon-button', title: 'Search your notes, knowledge and papers (/)', 'aria-label': 'Search', onClick: () => go({ view: 'search', at: Date.now() }) }, h(Icon, { name: 'search' })),
               h('button', { type: 'button', className: 'atlas-icon-button', title: 'Add a paper, a lecture or files', 'aria-label': 'Add a paper, a lecture or files', onClick: () => go({ view: 'library', tab: 'discover', add: Date.now() }) }, h(Icon, { name: 'plus' })),
               !open && last ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Show the last discussion', 'aria-label': 'Show the last discussion', onClick: () => showThread({ id: last }) }, h(Icon, { name: 'panel' })) : null,
+              h('button', { type: 'button', className: 'atlas-icon-button', title: `Theme: ${modeLabel(mode)}. Click for ${modeLabel(nextMode)}.`, 'aria-label': `Theme: ${modeLabel(mode)}`, onClick: () => themeModeStore.set(nextMode) }, h(Icon, { name: THEME_ICON[mode] || (theme.base === 'day' ? 'sun' : 'moon') })),
               h('button', { type: 'button', className: cx('atlas-icon-button', overview.loading && 'is-busy'), title: 'Read the files again', 'aria-label': 'Read the files again', onClick: () => setVersion(Date.now()) }, h(Icon, { name: 'refresh' })))),
           h(Flash, { message }),
-          h('div', { className: cx('atlas-body', open && 'has-companion'), ref: bodyRef, style: open ? { '--companion-w': paneWidth + 'px' } : undefined },
-            h('main', { className: 'atlas-main', ref: scroller }, h(Boundary, null, body)),
+          h('div', { className: cx('atlas-body', (side || open) && 'has-right', open && 'has-companion', tabbed && 'is-tabbed'), ref: bodyRef, style: { '--right-w': rightWidth + 'px', '--tab-w': sideWidth + 'px' } },
+            h('main', { className: 'atlas-main', ref: scroller, onPointerDownCapture: () => setActivePane('main') }, h(PaneContext.Provider, { value: 'main' }, h(Boundary, null, body))),
+            side ? h(SidePane, { entry: side, overview: overview.data, go: goSide, flash, version, width: sideWidth, onWidth: setSideWidthSaved, canBack: sideBack, onBack: sideGoBack, onClose: closeSide, onFull: openAsPage, tabs, hidden: tabbed && sideTab !== 'file', scrollRef: sideScroller }) : null,
             open ? h(Boundary, null, h(Companion, {
               threadId: thread.id,
               pending: Boolean(thread.pending),
               onClose: () => showThread(null),
               flash,
-              width: paneWidth,
-              onWidth: (w, save) => {
+              tabs,
+              hidden: tabbed && sideTab !== 'discussion',
+              width: tabbed ? sideWidth : paneWidth,
+              onWidth: tabbed ? setSideWidthSaved : (w, save) => {
                 setPaneWidth(w);
                 if (save) storageSet('companion-width', w);
               },
             })) : null,
-            h(SelectionTools, { container: scroller, host: bodyRef }),
+            h(PaneContext.Provider, { value: 'main' }, h(SelectionTools, { container: scroller, host: bodyRef })),
+            side ? h(PaneContext.Provider, { value: 'side' }, h(SelectionTools, { container: sideScroller, host: bodyRef })) : null,
             askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null)));
     }
 
     // ===== client/80-styles.js
     // ------------------------------------------------------------------ styles ---
-    // A night observatory: deep sky, starlight ink, one color per direction (the
-    // validated dark categorical slots), serif for what is read, sans for controls.
+    // Two themes over one set of tokens (05-theme.js): the night observatory and day. One
+    // color per direction (the validated categorical slots), serif for what is read, sans for controls.
 
     const STYLES = `
     .atlas-root {
-      --sky-0: #070b16; --sky-1: #0b1020; --panel: #10172b; --panel-2: #151e38; --panel-3: #1b2648;
-      --line: rgba(140, 160, 230, .14); --line-2: rgba(140, 160, 230, .28);
-      --ink-1: #e8ebf5; --ink-2: #aeb6cf; --ink-3: #8a94b3; --link: #9db8ff; --gold: #ffd27a;
-      --dir: #9db8ff;
+      --dir: var(--link);
       --serif: "Iowan Old Style", "Charter", "Cambria", "Georgia", serif;
       --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
       --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
       --dsw-alias-label-primary: var(--ink-1); --dsw-alias-label-secondary: var(--ink-2); --dsw-alias-label-tertiary: var(--ink-3);
       --dsw-alias-bg-base: var(--panel); --dsw-alias-bg-layer-1: var(--panel-2); --dsw-alias-bg-layer-2: var(--panel-3);
       --dsw-alias-border-l1: var(--line); --dsw-alias-border-l2: var(--line-2); --dsw-alias-brand-primary: var(--link);
-      --dsw-alias-interactive-bg-hover: rgba(157, 184, 255, .08);
-      /* DSH's embedded conversation (input box, message bubbles, menus) in the same sky, whatever DSH's theme. */
-      --dsw-specific-input-major: #18213d; --dsw-specific-bubble: #1d2848; --dsw-specific-selector: #222e52;
-      --dsw-alias-border-l3: rgba(157, 184, 255, .2); --dsw-alias-border-l4: rgba(157, 184, 255, .26);
+      --dsw-alias-interactive-bg-hover: rgba(var(--accent-rgb), .08);
+      /* DSH's embedded conversation (input box, message bubbles, menus) in Atlas's theme, whatever DSH's. */
+      --dsw-specific-input-major: var(--input-major); --dsw-specific-bubble: var(--bubble); --dsw-specific-selector: var(--selector);
+      --dsw-alias-border-l3: rgba(var(--accent-rgb), .2); --dsw-alias-border-l4: rgba(var(--accent-rgb), .26);
       --dsw-alias-label-caption: var(--ink-3); --dsw-alias-separator-primary: var(--line);
-      --dsw-alias-scrollbar-bg-l2: rgba(157, 184, 255, .22); --dsw-alias-scrollbar-hover-l2: rgba(157, 184, 255, .34);
-      --dsw-elevation-stroke-color: rgba(157, 184, 255, .22);
-      color-scheme: dark; container-type: inline-size;
+      --dsw-alias-scrollbar-bg-l2: rgba(var(--accent-rgb), .22); --dsw-alias-scrollbar-hover-l2: rgba(var(--accent-rgb), .34);
+      --dsw-elevation-stroke-color: rgba(var(--accent-rgb), .22);
+      container-type: inline-size;
       display: flex; flex-direction: column; height: 100%; min-height: 0;
-      background: radial-gradient(1100px 520px at 78% -12%, rgba(70, 92, 190, .20), transparent 62%), radial-gradient(900px 520px at -8% 108%, rgba(124, 66, 170, .14), transparent 60%), var(--sky-0);
+      background: radial-gradient(1100px 520px at 78% -12%, rgba(var(--nebula-a-rgb), .20), transparent 62%), radial-gradient(900px 520px at -8% 108%, rgba(var(--nebula-b-rgb), .14), transparent 60%), var(--sky-0);
       color: var(--ink-1); font: 14px/1.55 var(--sans);
     }
     .atlas-root *, .atlas-root *::before, .atlas-root *::after { box-sizing: border-box; }
     .atlas-icon { flex: none; }
 
     /* ---- top bar ---- */
-    .atlas-top { display: flex; align-items: center; gap: 14px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: rgba(7, 11, 22, .72); backdrop-filter: blur(10px); flex: none; }
+    .atlas-top { display: flex; align-items: center; gap: 14px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: rgba(var(--sky-rgb), .72); backdrop-filter: blur(10px); flex: none; }
     .atlas-brand { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; color: var(--ink-1); font: 600 15px var(--sans); letter-spacing: .02em; cursor: pointer; padding: 4px 6px; border-radius: 8px; }
     .atlas-brand svg { color: var(--gold); }
     .atlas-nav { display: flex; gap: 2px; }
     .atlas-nav-item { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--ink-2); padding: 6px 11px; border-radius: 8px; font: inherit; cursor: pointer; }
-    .atlas-nav-item:hover { color: var(--ink-1); background: rgba(157, 184, 255, .08); }
-    .atlas-nav-item.is-on { color: var(--ink-1); background: rgba(157, 184, 255, .13); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .atlas-nav-item:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .08); }
+    .atlas-nav-item.is-on { color: var(--ink-1); background: rgba(var(--accent-rgb), .13); box-shadow: inset 0 0 0 1px var(--line-2); }
     .atlas-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 1 320px; }
-    .atlas-input { width: 100%; font: inherit; color: var(--ink-1); background: rgba(16, 23, 43, .9); border: 1px solid var(--line-2); border-radius: 9px; padding: 6px 11px; }
+    .atlas-input { width: 100%; font: inherit; color: var(--ink-1); background: rgba(var(--panel-rgb), .9); border: 1px solid var(--line-2); border-radius: 9px; padding: 6px 11px; }
     .atlas-input::placeholder { color: var(--ink-3); }
-    .atlas-input:focus { outline: 2px solid rgba(157, 184, 255, .55); outline-offset: 0; }
+    .atlas-input:focus { outline: 2px solid rgba(var(--accent-rgb), .55); outline-offset: 0; }
     .atlas-icon-button { flex: none; display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); cursor: pointer; }
-    .atlas-icon-button:hover { color: var(--ink-1); background: rgba(157, 184, 255, .1); }
+    .atlas-icon-button:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .1); }
     .atlas-icon-button.is-busy svg { animation: atlas-spin 1.1s linear infinite; }
-    .atlas-main { flex: 1; min-height: 0; overflow-y: auto; scrollbar-color: rgba(157, 184, 255, .25) transparent; }
+    .atlas-main { flex: 1; min-height: 0; overflow-y: auto; scrollbar-color: rgba(var(--accent-rgb), .25) transparent; }
 
     /* ---- page frame ---- */
     .atlas-page { max-width: 980px; margin: 0 auto; padding: 22px 28px 80px; }
@@ -4334,27 +4903,27 @@ window.__ModuleLoader__.load({
     .atlas-section > h2, .atlas-root-sections > h2, .atlas-side-block > h2, .atlas-pulse > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font: 600 13px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
 
     /* ---- buttons, chips, links ---- */
-    .atlas-button { display: inline-flex; align-items: center; gap: 7px; font: 500 13px var(--sans); color: var(--ink-1); background: rgba(157, 184, 255, .07); border: 1px solid var(--line-2); border-radius: 9px; padding: 6px 13px; cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
-    .atlas-button:hover:not(:disabled) { background: rgba(157, 184, 255, .14); border-color: rgba(157, 184, 255, .45); }
+    .atlas-button { display: inline-flex; align-items: center; gap: 7px; font: 500 13px var(--sans); color: var(--ink-1); background: rgba(var(--accent-rgb), .07); border: 1px solid var(--line-2); border-radius: 9px; padding: 6px 13px; cursor: pointer; transition: background .15s, border-color .15s, box-shadow .15s; }
+    .atlas-button:hover:not(:disabled) { background: rgba(var(--accent-rgb), .14); border-color: rgba(var(--accent-rgb), .45); }
     .atlas-button:disabled { opacity: .45; cursor: default; }
-    .atlas-button.is-primary { color: #0a0f1f; background: linear-gradient(180deg, #c6d6ff, #9db8ff); border-color: transparent; box-shadow: 0 0 0 1px rgba(157, 184, 255, .3), 0 6px 22px -10px rgba(157, 184, 255, .9); }
-    .atlas-button.is-primary:hover:not(:disabled) { background: linear-gradient(180deg, #d6e2ff, #adc4ff); }
+    .atlas-button.is-primary { color: var(--on-accent); background: linear-gradient(180deg, var(--accent-a), var(--accent-b)); border-color: transparent; box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .3), 0 6px 22px -10px rgba(var(--accent-rgb), .9); }
+    .atlas-button.is-primary:hover:not(:disabled) { background: linear-gradient(180deg, var(--accent-a-hover), var(--accent-b-hover)); }
     .atlas-button.is-quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
-    .atlas-button.is-quiet:hover:not(:disabled) { color: var(--ink-1); background: rgba(157, 184, 255, .08); border-color: transparent; }
+    .atlas-button.is-quiet:hover:not(:disabled) { color: var(--ink-1); background: rgba(var(--accent-rgb), .08); border-color: transparent; }
     .atlas-button.is-small { padding: 3px 9px; font-size: 12px; border-radius: 7px; }
     .atlas-button:focus-visible, .atlas-link:focus-visible, .atlas-card:focus-visible, .atlas-item:focus-visible, .atlas-nav-item:focus-visible, .atlas-fold-head:focus-visible, .atlas-seg-item:focus-visible, .atlas-pulse-row:focus-visible, .atlas-branch:focus-visible, .atlas-legend-item:focus-visible, .atlas-paper-title:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
     .atlas-ask { position: relative; display: inline-flex; }
     .atlas-button.is-split { border-radius: 9px 0 0 9px; }
     .atlas-button.is-caret { border-radius: 0 9px 9px 0; padding: 6px 9px; margin-left: 1px; }
-    .atlas-menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 300px; padding: 6px; background: rgba(16, 23, 43, .98); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 18px 50px -12px rgba(0, 0, 0, .7); }
+    .atlas-menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 300px; padding: 6px; background: rgba(var(--panel-rgb), .98); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 18px 50px -12px rgba(var(--shadow-rgb), calc(.7 * var(--shadow-k))); }
     .atlas-menu-item { display: grid; gap: 1px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink-1); padding: 8px 10px; border-radius: 8px; cursor: pointer; font: inherit; }
-    .atlas-menu-item:hover, .atlas-menu-item:focus-visible { background: rgba(157, 184, 255, .12); outline: none; }
+    .atlas-menu-item:hover, .atlas-menu-item:focus-visible { background: rgba(var(--accent-rgb), .12); outline: none; }
     .atlas-menu-label { font-weight: 500; }
     .atlas-menu-hint { font-size: 12px; color: var(--ink-3); }
     .atlas-link { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--link); font: inherit; padding: 0; cursor: pointer; text-align: left; }
     .atlas-link:hover { text-decoration: underline; text-underline-offset: 3px; }
-    .atlas-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; line-height: 1.7; padding: 0 9px; border-radius: 999px; white-space: nowrap; color: var(--ink-2); background: rgba(157, 184, 255, .07); border: 1px solid var(--line); }
-    .atlas-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2px rgba(7, 11, 22, .8); }
+    .atlas-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; line-height: 1.7; padding: 0 9px; border-radius: 999px; white-space: nowrap; color: var(--ink-2); background: rgba(var(--accent-rgb), .07); border: 1px solid var(--line); }
+    .atlas-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2px rgba(var(--sky-rgb), .8); }
     .atlas-dot.is-star { width: 10px; height: 10px; }
     .atlas-linked { margin: 10px 0 0; font-size: 13px; color: var(--ink-2); }
     .atlas-linked .atlas-label { margin-right: 4px; }
@@ -4369,39 +4938,39 @@ window.__ModuleLoader__.load({
     .atlas-orbit { position: relative; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); }
     .atlas-orbit::after { content: ""; position: absolute; top: -3px; left: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 10px var(--gold); transform-origin: 3px 14px; animation: atlas-spin 1.2s linear infinite; }
     @keyframes atlas-spin { to { transform: rotate(360deg); } }
-    .atlas-error { display: flex; gap: 12px; align-items: baseline; color: #ffb4b4; background: rgba(208, 59, 59, .12); border: 1px solid rgba(208, 59, 59, .35); border-radius: 10px; padding: 10px 14px; margin: 12px 0; }
-    .atlas-flash { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 9px 20px; background: linear-gradient(90deg, rgba(157, 184, 255, .2), rgba(157, 184, 255, .06)); border-bottom: 1px solid var(--line-2); color: var(--ink-1); font-size: 13px; }
+    .atlas-error { display: flex; gap: 12px; align-items: baseline; color: var(--danger-ink); background: rgba(var(--danger-rgb), .12); border: 1px solid rgba(var(--danger-rgb), .35); border-radius: 10px; padding: 10px 14px; margin: 12px 0; }
+    .atlas-flash { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 9px 20px; background: linear-gradient(90deg, rgba(var(--accent-rgb), .2), rgba(var(--accent-rgb), .06)); border-bottom: 1px solid var(--line-2); color: var(--ink-1); font-size: 13px; }
     .atlas-flash svg { color: var(--gold); }
-    .atlas-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; background: rgba(157, 184, 255, .08); border: 1px solid var(--line-2); font-size: 13px; }
+    .atlas-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; background: rgba(var(--accent-rgb), .08); border: 1px solid var(--line-2); font-size: 13px; }
     .atlas-banner svg { color: var(--gold); }
-    .atlas-banner code { font-family: var(--mono); font-size: 12px; background: rgba(0, 0, 0, .3); padding: 2px 6px; border-radius: 6px; }
-    .atlas-banner.is-warn { background: rgba(250, 178, 25, .1); border-color: rgba(250, 178, 25, .4); }
+    .atlas-banner code { font-family: var(--mono); font-size: 12px; background: rgba(var(--shadow-rgb), calc(.3 * var(--shadow-k))); padding: 2px 6px; border-radius: 6px; }
+    .atlas-banner.is-warn { background: rgba(var(--warn-rgb), .1); border-color: rgba(var(--warn-rgb), .4); }
     .atlas-panel { padding: 18px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
-    .atlas-root kbd { font: 500 10.5px var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: rgba(7, 11, 22, .6); }
+    .atlas-root kbd { font: 500 10.5px var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: rgba(var(--sky-rgb), .6); }
     .atlas-menu-item.is-own { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; }
 
     /* ---- the page and the companion ---- */
     .atlas-body { position: relative; flex: 1; min-height: 0; display: flex; }
     .atlas-body > .atlas-main { min-width: 0; container-type: inline-size; }
-    .atlas-ask-top { display: inline-flex; align-items: center; gap: 7px; flex: none; border: 1px solid rgba(157, 184, 255, .32); background: rgba(157, 184, 255, .09); color: var(--ink-1); border-radius: 9px; padding: 5px 9px 5px 10px; font: 500 13px var(--sans); cursor: pointer; }
-    .atlas-ask-top:hover { background: rgba(157, 184, 255, .17); border-color: rgba(157, 184, 255, .5); }
+    .atlas-ask-top { display: inline-flex; align-items: center; gap: 7px; flex: none; border: 1px solid rgba(var(--accent-rgb), .32); background: rgba(var(--accent-rgb), .09); color: var(--ink-1); border-radius: 9px; padding: 5px 9px 5px 10px; font: 500 13px var(--sans); cursor: pointer; }
+    .atlas-ask-top:hover { background: rgba(var(--accent-rgb), .17); border-color: rgba(var(--accent-rgb), .5); }
     .atlas-ask-top:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
     .atlas-ask-top svg { color: var(--gold); }
-    .atlas-companion { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; width: var(--companion-w, 440px); min-width: 340px; max-width: 66%; border-left: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(16, 23, 43, .97), rgba(11, 16, 32, .99)); box-shadow: -22px 0 44px -30px rgba(0, 0, 0, .9); }
+    .atlas-companion { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; width: var(--companion-w, 440px); min-width: 340px; max-width: 66%; border-left: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(var(--panel-rgb), .97), rgba(var(--panel-0-rgb), .99)); box-shadow: -22px 0 44px -30px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))); }
     .atlas-companion-resize { position: absolute; z-index: 3; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
-    .atlas-companion-resize:hover, .atlas-companion-resize:active { background: linear-gradient(90deg, transparent 4px, rgba(157, 184, 255, .5) 4px, rgba(157, 184, 255, .5) 6px, transparent 6px); }
+    .atlas-companion-resize:hover, .atlas-companion-resize:active { background: linear-gradient(90deg, transparent 4px, rgba(var(--accent-rgb), .5) 4px, rgba(var(--accent-rgb), .5) 6px, transparent 6px); }
     .atlas-companion-head { display: flex; align-items: center; gap: 6px; padding: 9px 8px 7px 14px; flex: none; }
     .atlas-companion-head .atlas-icon-button { width: 28px; height: 28px; }
     .atlas-companion-title { flex: 1; min-width: 0; font: 600 13.5px/1.3 var(--sans); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .atlas-light { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #5d6890; box-shadow: 0 0 0 2px rgba(93, 104, 144, .2); }
-    .atlas-light.is-running { background: #9db8ff; animation: atlas-beacon 1.6s ease-out infinite; }
-    .atlas-light.is-done { background: #0ca30c; box-shadow: none; }
-    @keyframes atlas-beacon { 0% { box-shadow: 0 0 0 0 rgba(157, 184, 255, .6); } 100% { box-shadow: 0 0 0 7px rgba(157, 184, 255, 0); } }
+    .atlas-light { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--idle); box-shadow: 0 0 0 2px rgba(var(--idle-rgb), .2); }
+    .atlas-light.is-running { background: var(--link); animation: atlas-beacon 1.6s ease-out infinite; }
+    .atlas-light.is-done { background: var(--good); box-shadow: none; }
+    @keyframes atlas-beacon { 0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), .6); } 100% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0); } }
     .atlas-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 14px 9px; }
-    .atlas-ctx { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; min-width: 0; padding: 2px 8px; border-radius: 6px; background: rgba(157, 184, 255, .07); border: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+    .atlas-ctx { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; min-width: 0; padding: 2px 8px; border-radius: 6px; background: rgba(var(--accent-rgb), .07); border: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
     .atlas-ctx-label { flex: none; font-size: 10px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
     .atlas-ctx-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .atlas-ctx.is-accent { border-color: rgba(255, 210, 122, .32); background: rgba(255, 210, 122, .07); color: var(--ink-1); }
+    .atlas-ctx.is-accent { border-color: rgba(var(--gold-rgb), .32); background: rgba(var(--gold-rgb), .07); color: var(--ink-1); }
     .atlas-companion-actions { display: flex; align-items: center; gap: 14px; padding: 0 14px 9px; font-size: 12.5px; border-bottom: 1px solid var(--line); flex: none; }
     .atlas-spacer { flex: 1; }
     .atlas-companion-body, .atlas-embedded { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -4409,25 +4978,53 @@ window.__ModuleLoader__.load({
     .atlas-companion-wait { display: flex; align-items: center; gap: 12px; padding: 26px 16px; color: var(--ink-3); }
     .atlas-companion-fallback { display: grid; justify-items: start; gap: 10px; padding: 18px 16px; color: var(--ink-2); }
 
+    /* ---- the side panel: a file beside the page; with a discussion, side by side or as tabs ---- */
+    .atlas-side { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; width: var(--side-w, 560px); min-width: 360px; max-width: 70%; border-left: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(var(--panel-0-rgb), .96), rgba(var(--sky-rgb), .98)); box-shadow: -22px 0 44px -30px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))); }
+    .atlas-side-head { display: flex; align-items: center; gap: 4px; min-height: 42px; padding: 6px 6px 6px 8px; border-bottom: 1px solid var(--line); flex: none; }
+    .atlas-side-head .atlas-icon-button, .atlas-companion-tabs .atlas-icon-button { width: 28px; height: 28px; }
+    .atlas-side-title { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 7px; padding: 0 4px; font: 600 13px/1.3 var(--sans); color: var(--ink-1); white-space: nowrap; overflow: hidden; }
+    .atlas-side-title > span, .atlas-tab > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .atlas-side-body { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; scrollbar-color: rgba(var(--accent-rgb), .25) transparent; }
+    .atlas-side-body .atlas-page { max-width: none; padding: 14px 18px 60px; }
+    .atlas-side-body .atlas-page h1 { font-size: 22px; }
+    .atlas-pane-resize { position: absolute; z-index: 3; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
+    .atlas-pane-resize:hover, .atlas-pane-resize:active { background: linear-gradient(90deg, transparent 4px, rgba(var(--accent-rgb), .5) 4px, rgba(var(--accent-rgb), .5) 6px, transparent 6px); }
+    .atlas-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; }
+    .atlas-tab { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font: 500 12.5px var(--sans); cursor: pointer; white-space: nowrap; }
+    .atlas-tab:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .08); }
+    .atlas-tab.is-on { color: var(--ink-1); background: rgba(var(--accent-rgb), .13); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .atlas-companion-tabs { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; flex: none; }
+    .atlas-body.is-tabbed > .atlas-side, .atlas-body.is-tabbed > .atlas-companion { position: absolute; z-index: 25; top: 0; right: 0; bottom: 0; width: var(--tab-w, 560px); max-width: calc(100% - 28px); }
+    .atlas-body.is-tabbed > .atlas-main { margin-right: var(--tab-w, 560px); }
+    .atlas-side.is-hidden, .atlas-companion.is-hidden { visibility: hidden; pointer-events: none; }
+
+    /* ---- a paper beside the page: details, add to the library for a topic ---- */
+    .atlas-ref-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 10px 0 12px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: rgba(var(--accent-rgb), .06); }
+    .atlas-ref-add > .atlas-input { flex: 1 1 200px; width: auto; min-width: 0; }
+    .atlas-ref-for { display: inline-flex; align-items: center; gap: 7px; flex: 1 1 260px; min-width: 0; }
+    .atlas-ref-for > span { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+    .atlas-ref-for > select { flex: 1; min-width: 0; }
+    .atlas-ref-abstract { margin: 0; color: var(--ink-2); line-height: 1.6; }
+
     /* ---- asking: the ask bar and the selection tools ---- */
-    .atlas-askbar { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(660px, calc(100% - 32px)); padding: 12px 12px 10px; background: rgba(16, 23, 43, .985); border: 1px solid rgba(157, 184, 255, .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(0, 0, 0, .9), 0 0 0 4px rgba(157, 184, 255, .05); }
-    .atlas-body.has-companion > .atlas-askbar { left: calc((100% - var(--companion-w, 440px)) / 2); width: min(640px, calc(100% - var(--companion-w, 440px) - 32px)); }
+    .atlas-askbar { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(660px, calc(100% - 32px)); padding: 12px 12px 10px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))), 0 0 0 4px rgba(var(--accent-rgb), .05); }
+    .atlas-body.has-right > .atlas-askbar { left: calc((100% - var(--right-w, 0px)) / 2); width: min(640px, calc(100% - var(--right-w, 0px) - 32px)); }
     .atlas-askbar .atlas-chips { padding: 0 2px 10px; }
-    .atlas-askbar-row { display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 11px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(7, 11, 22, .7); }
-    .atlas-askbar-row:focus-within { border-color: rgba(157, 184, 255, .6); }
+    .atlas-askbar-row { display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 11px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(var(--sky-rgb), .7); }
+    .atlas-askbar-row:focus-within { border-color: rgba(var(--accent-rgb), .6); }
     .atlas-askbar-row > svg { color: var(--gold); }
     .atlas-askbar-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--ink-1); font: 15px/1.4 var(--sans); padding: 6px 0; }
     .atlas-askbar-input::placeholder, .atlas-seltools-input::placeholder { color: var(--ink-3); }
-    .atlas-askbar-error { margin: 6px 4px 0; font-size: 12.5px; color: #f2a7a7; }
+    .atlas-askbar-error { margin: 6px 4px 0; font-size: 12.5px; color: var(--danger-ink-3); }
     .atlas-askbar-moves { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
-    .atlas-move { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: rgba(157, 184, 255, .05); color: var(--ink-2); border-radius: 8px; padding: 4px 9px; font: 500 12.5px var(--sans); cursor: pointer; }
-    .atlas-move:hover, .atlas-move:focus-visible { color: var(--ink-1); background: rgba(157, 184, 255, .13); border-color: var(--line-2); outline: none; }
+    .atlas-move { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: rgba(var(--accent-rgb), .05); color: var(--ink-2); border-radius: 8px; padding: 4px 9px; font: 500 12.5px var(--sans); cursor: pointer; }
+    .atlas-move:hover, .atlas-move:focus-visible { color: var(--ink-1); background: rgba(var(--accent-rgb), .13); border-color: var(--line-2); outline: none; }
     .atlas-hint { font-size: 11.5px; color: var(--ink-3); }
-    .atlas-seltools { position: absolute; z-index: 35; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: calc(100% - 16px); padding: 3px; background: rgba(16, 23, 43, .985); border: 1px solid rgba(157, 184, 255, .36); border-radius: 10px; box-shadow: 0 14px 40px -12px rgba(0, 0, 0, .85); }
+    .atlas-seltools { position: absolute; z-index: 35; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: calc(100% - 16px); padding: 3px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .36); border-radius: 10px; box-shadow: 0 14px 40px -12px rgba(var(--shadow-rgb), calc(.85 * var(--shadow-k))); }
     .atlas-seltool { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--ink-2); padding: 4px 8px; border-radius: 7px; font: 500 12.5px var(--sans); white-space: nowrap; cursor: pointer; }
-    .atlas-seltool:hover, .atlas-seltool:focus-visible { color: var(--ink-1); background: rgba(157, 184, 255, .14); outline: none; }
-    .atlas-seltool.is-primary { color: #0a0f1f; background: linear-gradient(180deg, #c6d6ff, #9db8ff); }
-    .atlas-seltool.is-primary:hover, .atlas-seltool.is-primary:focus-visible { color: #0a0f1f; background: linear-gradient(180deg, #d6e2ff, #adc4ff); }
+    .atlas-seltool:hover, .atlas-seltool:focus-visible { color: var(--ink-1); background: rgba(var(--accent-rgb), .14); outline: none; }
+    .atlas-seltool.is-primary { color: var(--on-accent); background: linear-gradient(180deg, var(--accent-a), var(--accent-b)); }
+    .atlas-seltool.is-primary:hover, .atlas-seltool.is-primary:focus-visible { color: var(--on-accent); background: linear-gradient(180deg, var(--accent-a-hover), var(--accent-b-hover)); }
     .atlas-seltools-sep { width: 1px; align-self: stretch; margin: 3px; background: var(--line-2); }
     .atlas-seltools-ask { display: flex; align-items: center; gap: 8px; width: min(520px, calc(100vw - 48px)); padding: 0 2px 0 9px; }
     .atlas-seltools-ask > svg { color: var(--gold); }
@@ -4437,7 +5034,7 @@ window.__ModuleLoader__.load({
     .atlas-discussions .atlas-items { margin-bottom: 6px; }
     .atlas-discussions > .atlas-button { margin-top: 6px; }
     .atlas-thread-item .atlas-light { align-self: flex-start; margin-top: 6px; }
-    .atlas-thread-item.is-current { background: rgba(157, 184, 255, .1); box-shadow: inset 2px 0 0 var(--link); }
+    .atlas-thread-item.is-current { background: rgba(var(--accent-rgb), .1); box-shadow: inset 2px 0 0 var(--link); }
     .atlas-pulse .atlas-discussions { margin-top: 18px; padding: 0; background: none; border: 0; }
     .atlas-topic-side .atlas-discussions .atlas-empty { font-size: 12.5px; }
     .atlas-doc-threads .atlas-light { width: 7px; height: 7px; margin-right: 6px; }
@@ -4454,39 +5051,39 @@ window.__ModuleLoader__.load({
     .atlas-universe { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; align-items: start; margin-top: 10px; }
     .atlas-chart { position: relative; max-width: 760px; width: 100%; justify-self: center; }
     .atlas-chart svg { display: block; width: 100%; height: auto; }
-    .atlas-grid circle, .atlas-grid line { stroke: rgba(157, 184, 255, .09); stroke-width: 1; fill: none; stroke-dasharray: 2 7; }
+    .atlas-grid circle, .atlas-grid line { stroke: rgba(var(--accent-rgb), .09); stroke-width: 1; fill: none; stroke-dasharray: 2 7; }
     .atlas-sector { fill: none; stroke-width: 4; stroke-linecap: round; opacity: .9; cursor: pointer; transition: opacity .2s; }
     .atlas-sector.is-faded { opacity: .18; }
     .atlas-edge { stroke-width: 1.3; opacity: .55; transition: opacity .2s; }
-    .atlas-spoke { stroke: rgba(255, 220, 150, .12); stroke-width: 1; transition: opacity .2s; }
-    .atlas-link-arc { fill: none; stroke: rgba(220, 230, 255, .16); stroke-width: 1; transition: stroke .2s, opacity .2s; }
-    .atlas-link-arc.is-lit { stroke: rgba(255, 220, 150, .75); stroke-width: 1.4; }
+    .atlas-spoke { stroke: rgba(var(--gold-2-rgb), .12); stroke-width: 1; transition: opacity .2s; }
+    .atlas-link-arc { fill: none; stroke: rgba(var(--glow-rgb), .16); stroke-width: 1; transition: stroke .2s, opacity .2s; }
+    .atlas-link-arc.is-lit { stroke: rgba(var(--gold-2-rgb), .75); stroke-width: 1.4; }
     .atlas-star { cursor: pointer; transition: opacity .2s; outline: none; }
-    .atlas-star-ring { fill: var(--sky-1); stroke: rgba(220, 230, 255, .3); stroke-width: 1; }
-    .atlas-star.is-lit .atlas-star-ring, .atlas-star:focus-visible .atlas-star-ring { stroke: #fff; stroke-width: 2; }
+    .atlas-star-ring { fill: var(--sky-1); stroke: rgba(var(--glow-rgb), .3); stroke-width: 1; }
+    .atlas-star.is-lit .atlas-star-ring, .atlas-star:focus-visible .atlas-star-ring { stroke: var(--ink-0); stroke-width: 2; }
     .atlas-core { cursor: pointer; outline: none; }
-    .atlas-core:focus-visible circle:last-of-type { stroke: #fff; stroke-width: 2; }
+    .atlas-core:focus-visible circle:last-of-type { stroke: var(--ink-0); stroke-width: 2; }
     .atlas-chart-label text { fill: var(--ink-2); font: 500 12.5px var(--sans); }
-    .atlas-leader { stroke: rgba(220, 230, 255, .14); stroke-width: 1; stroke-dasharray: 1 4; }
+    .atlas-leader { stroke: rgba(var(--glow-rgb), .14); stroke-width: 1; stroke-dasharray: 1 4; }
     .atlas-edge.is-faded, .atlas-spoke.is-faded, .atlas-star.is-faded, .atlas-chart-label.is-faded, .atlas-link-arc.is-faded { opacity: .14; }
-    .atlas-tip { position: absolute; z-index: 10; width: 300px; padding: 12px 14px; pointer-events: none; background: rgba(13, 19, 38, .97); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 18px 50px -14px rgba(0, 0, 0, .8); display: grid; gap: 6px; }
+    .atlas-tip { position: absolute; z-index: 10; width: 300px; padding: 12px 14px; pointer-events: none; background: rgba(var(--panel-1-rgb), .97); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 18px 50px -14px rgba(var(--shadow-rgb), calc(.8 * var(--shadow-k))); display: grid; gap: 6px; }
     .atlas-tip-dir { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-3); }
     .atlas-tip-title { font: 600 15px/1.3 var(--serif); color: var(--ink-1); }
     .atlas-tip-text { font-size: 12.5px; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
     .atlas-tip-latest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-1); }
     .atlas-tip-facts { font-size: 12px; color: var(--ink-3); }
-    .atlas-pulse { padding: 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(21, 30, 56, .85), rgba(16, 23, 43, .7)); border: 1px solid var(--line); }
+    .atlas-pulse { padding: 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(var(--panel-2-rgb), .85), rgba(var(--panel-rgb), .7)); border: 1px solid var(--line); }
     .atlas-pulse ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
     .atlas-pulse-row { display: grid; grid-template-columns: 3px auto minmax(0, 1fr); grid-template-areas: "mark date topic" "mark name name" "mark status status"; column-gap: 9px; row-gap: 1px; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; padding: 7px 8px; border-radius: 9px; cursor: pointer; }
-    .atlas-pulse-row:hover { background: rgba(157, 184, 255, .08); }
+    .atlas-pulse-row:hover { background: rgba(var(--accent-rgb), .08); }
     .atlas-pulse-mark { grid-area: mark; border-radius: 2px; }
     .atlas-pulse-row .atlas-date { grid-area: date; }
     .atlas-pulse-topic { grid-area: topic; font-size: 12.5px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .atlas-pulse-name { grid-area: name; font-size: 12.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .atlas-pulse-row .atlas-chip { grid-area: status; justify-self: start; margin-top: 2px; }
     .atlas-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 16px 0 6px; }
-    .atlas-legend-item { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(16, 23, 43, .7); color: var(--ink-2); font: inherit; font-size: 12.5px; cursor: pointer; }
-    .atlas-legend-item:hover, .atlas-legend-item.is-on { color: var(--ink-1); border-color: var(--line-2); background: rgba(157, 184, 255, .1); }
+    .atlas-legend-item { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .7); color: var(--ink-2); font: inherit; font-size: 12.5px; cursor: pointer; }
+    .atlas-legend-item:hover, .atlas-legend-item.is-on { color: var(--ink-1); border-color: var(--line-2); background: rgba(var(--accent-rgb), .1); }
     .atlas-legend-item.is-static { cursor: default; }
     .atlas-legend-item .atlas-count { margin-left: 2px; }
     .atlas-legend-note { font-size: 12px; color: var(--ink-3); margin-left: 6px; }
@@ -4499,7 +5096,7 @@ window.__ModuleLoader__.load({
     .atlas-direction-lead { margin: 0; color: var(--ink-2); font-size: 13.5px; max-width: 820px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .atlas-direction.is-quiet .atlas-direction-head h2 { color: var(--ink-2); }
     .atlas-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-    .atlas-card { position: relative; display: flex; flex-direction: column; gap: 8px; text-align: left; font: inherit; color: inherit; padding: 14px 16px 12px; border-radius: 14px; cursor: pointer; background: linear-gradient(180deg, rgba(26, 36, 68, .55), rgba(16, 23, 43, .55)); border: 1px solid var(--line); transition: border-color .18s, transform .18s, box-shadow .18s; }
+    .atlas-card { position: relative; display: flex; flex-direction: column; gap: 8px; text-align: left; font: inherit; color: inherit; padding: 14px 16px 12px; border-radius: 14px; cursor: pointer; background: linear-gradient(180deg, rgba(var(--panel-3-rgb), .55), rgba(var(--panel-rgb), .55)); border: 1px solid var(--line); transition: border-color .18s, transform .18s, box-shadow .18s; }
     .atlas-card::before { content: ""; position: absolute; left: 14px; right: 14px; top: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--dir), transparent); opacity: .65; }
     .atlas-card:hover { border-color: var(--line-2); transform: translateY(-1px); box-shadow: 0 14px 40px -22px var(--dir); }
     .atlas-card-head { display: flex; align-items: center; gap: 10px; }
@@ -4516,7 +5113,7 @@ window.__ModuleLoader__.load({
     /* ---- folds ---- */
     .atlas-fold { border-top: 1px solid var(--line); }
     .atlas-fold-head { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink-1); font: 500 14px var(--sans); padding: 10px 4px; cursor: pointer; }
-    .atlas-fold-head:hover { color: #fff; }
+    .atlas-fold-head:hover { color: var(--ink-0); }
     .atlas-fold-head svg { color: var(--ink-3); }
     .atlas-fold-mark { width: 12px; color: var(--ink-3); font-size: 11px; transition: transform .15s; }
     .atlas-fold.is-open > .atlas-fold-head .atlas-fold-mark { transform: rotate(90deg); }
@@ -4531,29 +5128,29 @@ window.__ModuleLoader__.load({
     /* ---- where a link to a section lands ---- */
     .atlas-fold, .atlas-opening, .atlas-section, .atlas-markdown :is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 14px; }
     .atlas-target { border-radius: 8px; animation: atlas-target 1.8s ease-out; }
-    @keyframes atlas-target { 0% { box-shadow: 0 0 0 2px rgba(255, 210, 122, .6); background-color: rgba(255, 210, 122, .1); } 100% { box-shadow: 0 0 0 2px rgba(255, 210, 122, 0); background-color: transparent; } }
-    @media (prefers-reduced-motion: reduce) { .atlas-target { animation: none; box-shadow: 0 0 0 2px rgba(255, 210, 122, .5); } }
+    @keyframes atlas-target { 0% { box-shadow: 0 0 0 2px rgba(var(--gold-rgb), .6); background-color: rgba(var(--gold-rgb), .1); } 100% { box-shadow: 0 0 0 2px rgba(var(--gold-rgb), 0); background-color: transparent; } }
+    @media (prefers-reduced-motion: reduce) { .atlas-target { animation: none; box-shadow: 0 0 0 2px rgba(var(--gold-rgb), .5); } }
 
     /* ---- topic workspace ---- */
     .atlas-topic-head { position: relative; padding: 6px 0 4px; }
     .atlas-topic-head::before { content: ""; position: absolute; inset: -40px -60px auto -60px; height: 180px; background: radial-gradient(560px 140px at 18% 30%, color-mix(in srgb, var(--dir) 24%, transparent), transparent 70%); pointer-events: none; z-index: 0; }
     .atlas-topic-head > * { position: relative; z-index: 1; }
     .atlas-meta-fact { color: var(--ink-2); }
-    .atlas-context { display: flex; gap: 12px; align-items: baseline; margin: 8px 0 22px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); border-left: 3px solid var(--dir); background: rgba(16, 23, 43, .75); font-size: 14px; color: var(--ink-1); }
+    .atlas-context { display: flex; gap: 12px; align-items: baseline; margin: 8px 0 22px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); border-left: 3px solid var(--dir); background: rgba(var(--panel-rgb), .75); font-size: 14px; color: var(--ink-1); }
     .atlas-context .atlas-label { flex: none; }
     .atlas-topic-grid { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 34px; align-items: start; }
     .atlas-topic-side { position: sticky; top: 12px; display: grid; gap: 16px; }
-    .atlas-side-block { padding: 14px 14px 10px; border-radius: 14px; background: rgba(16, 23, 43, .78); border: 1px solid var(--line); }
+    .atlas-side-block { padding: 14px 14px 10px; border-radius: 14px; background: rgba(var(--panel-rgb), .78); border: 1px solid var(--line); }
     .atlas-side-block > h2 svg { color: var(--ink-3); }
     .atlas-side-block .atlas-fold:first-of-type { border-top: 0; }
     .atlas-side-block .atlas-fold-body { padding: 0 0 8px; }
     .atlas-branch { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; padding: 8px 8px; border-radius: 9px; cursor: pointer; }
-    .atlas-branch:hover { background: rgba(157, 184, 255, .08); }
+    .atlas-branch:hover { background: rgba(var(--accent-rgb), .08); }
     .atlas-branch-title { font-weight: 500; color: var(--ink-1); font-size: 13.5px; }
     .atlas-branch-latest { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .atlas-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
     .atlas-item { display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink-1); font: inherit; padding: 7px 8px; border-radius: 9px; cursor: pointer; }
-    .atlas-item:hover:not(:disabled) { background: rgba(157, 184, 255, .08); }
+    .atlas-item:hover:not(:disabled) { background: rgba(var(--accent-rgb), .08); }
     .atlas-item > svg { margin-top: 2px; color: var(--ink-3); }
     .atlas-item.is-missing { opacity: .55; cursor: default; }
     .atlas-item-text { display: grid; min-width: 0; flex: 1; }
@@ -4562,20 +5159,20 @@ window.__ModuleLoader__.load({
     .atlas-item .atlas-date { margin-left: auto; }
     .atlas-opening { margin-bottom: 8px; }
     .atlas-timeline { list-style: none; margin: 4px 0 0; padding: 0 0 0 18px; position: relative; }
-    .atlas-timeline::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 1px; background: linear-gradient(180deg, var(--dir), rgba(157, 184, 255, .08)); }
+    .atlas-timeline::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 1px; background: linear-gradient(180deg, var(--dir), rgba(var(--accent-rgb), .08)); }
     .atlas-thread { position: relative; padding: 4px 0 14px 10px; }
     .atlas-thread-node { position: absolute; left: -17px; top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--sky-0); border: 2px solid var(--dir); box-shadow: 0 0 8px var(--dir); }
     .atlas-thread-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 2px; }
     .atlas-thread-name { font-weight: 600; color: var(--ink-1); }
     .atlas-thread-head .atlas-date { margin-left: auto; }
-    .atlas-newnote { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px 12px; margin: 4px 0 12px; padding: 14px; border-radius: 12px; background: rgba(16, 23, 43, .9); border: 1px solid var(--line-2); max-width: 760px; }
+    .atlas-newnote { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px 12px; margin: 4px 0 12px; padding: 14px; border-radius: 12px; background: rgba(var(--panel-rgb), .9); border: 1px solid var(--line-2); max-width: 760px; }
     .atlas-newnote label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-3); }
     .atlas-newnote .atlas-seg { grid-column: 1 / -1; justify-self: start; }
     .atlas-newnote-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
     .atlas-newnote-foot .atlas-path { flex: 1; }
-    .atlas-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: rgba(7, 11, 22, .6); border: 1px solid var(--line); }
+    .atlas-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: rgba(var(--sky-rgb), .6); border: 1px solid var(--line); }
     .atlas-seg-item { display: inline-flex; align-items: center; border: 0; background: transparent; color: var(--ink-2); padding: 5px 12px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; }
-    .atlas-seg-item.is-on { color: var(--ink-1); background: rgba(157, 184, 255, .16); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .atlas-seg-item.is-on { color: var(--ink-1); background: rgba(var(--accent-rgb), .16); box-shadow: inset 0 0 0 1px var(--line-2); }
     .atlas-seg.is-tabs { margin-top: 4px; }
 
     /* ---- reading ---- */
@@ -4590,47 +5187,47 @@ window.__ModuleLoader__.load({
     .atlas-doc-head { margin-bottom: 4px; }
     .atlas-doc-body { position: relative; margin-top: 16px; }
     .atlas-reading { max-width: 860px; }
-    .atlas-source { border-radius: 12px; background: rgba(7, 11, 22, .75); border: 1px solid var(--line); padding: 14px 0; overflow-x: auto; }
+    .atlas-source { border-radius: 12px; background: rgba(var(--sky-rgb), .75); border: 1px solid var(--line); padding: 14px 0; overflow-x: auto; }
     .atlas-lines { list-style: none; counter-reset: line; margin: 0; padding: 0; font: 12.5px/1.65 var(--mono); color: var(--ink-1); }
     .atlas-lines li { counter-increment: line; position: relative; padding: 0 16px 0 5em; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .atlas-lines li::before { content: counter(line); position: absolute; left: 0; width: 3.6em; text-align: right; color: rgba(138, 148, 179, .55); }
-    .atlas-lines .k { color: #9db8ff; }
-    .atlas-lines .m { color: #ffd27a; }
-    .atlas-lines .c { color: #7c86a5; font-style: italic; }
+    .atlas-lines li::before { content: counter(line); position: absolute; left: 0; width: 3.6em; text-align: right; color: rgba(var(--ink-3-rgb), .55); }
+    .atlas-lines .k { color: var(--code-key); }
+    .atlas-lines .m { color: var(--code-math); }
+    .atlas-lines .c { color: var(--code-comment); font-style: italic; }
     .atlas-table-wrap { overflow: auto; max-height: 75vh; border-radius: 12px; border: 1px solid var(--line); }
     .atlas-table { border-collapse: collapse; font: 12.5px var(--mono); }
     .atlas-table th, .atlas-table td { padding: 5px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
     .atlas-table th { position: sticky; top: 0; background: var(--panel-2); color: var(--ink-1); }
     .atlas-notebook { display: grid; gap: 12px; max-width: 920px; }
-    .atlas-cell.is-code { border-left: 2px solid rgba(157, 184, 255, .4); padding-left: 12px; }
-    .atlas-cell-code, .atlas-cell-out { margin: 0; padding: 10px 12px; border-radius: 9px; background: rgba(7, 11, 22, .75); font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-x: auto; }
+    .atlas-cell.is-code { border-left: 2px solid rgba(var(--accent-rgb), .4); padding-left: 12px; }
+    .atlas-cell-code, .atlas-cell-out { margin: 0; padding: 10px 12px; border-radius: 9px; background: rgba(var(--sky-rgb), .75); font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-x: auto; }
     .atlas-cell-out { margin-top: 6px; color: var(--ink-2); background: transparent; border: 1px dashed var(--line); }
     .atlas-cell-img { display: block; max-width: 100%; margin-top: 8px; border-radius: 8px; background: #fff; }
-    .atlas-figure { margin: 0; display: grid; place-items: center; padding: 18px; border-radius: 14px; background: repeating-conic-gradient(#121a30 0% 25%, #0e1528 0% 50%) 50% / 22px 22px; }
+    .atlas-figure { margin: 0; display: grid; place-items: center; padding: 18px; border-radius: 14px; background: repeating-conic-gradient(var(--checker-a) 0% 25%, var(--checker-b) 0% 50%) 50% / 22px 22px; }
     .atlas-figure img { max-width: 100%; height: auto; border-radius: 6px; }
     .atlas-video { width: 100%; max-height: 75vh; border-radius: 12px; background: #000; }
-    .atlas-pdf { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 0 0 24px; border-radius: 14px; background: radial-gradient(800px 300px at 50% 0, rgba(70, 92, 190, .14), transparent 70%), #05070f; border: 1px solid var(--line); }
-    .atlas-pdf-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 14px; background: rgba(7, 11, 22, .92); border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0; }
+    .atlas-pdf { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 0 0 24px; border-radius: 14px; background: radial-gradient(800px 300px at 50% 0, rgba(var(--nebula-a-rgb), .14), transparent 70%), var(--deep); border: 1px solid var(--line); }
+    .atlas-pdf-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 14px; background: rgba(var(--sky-rgb), .92); border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0; }
     .atlas-pdf-zoom { display: inline-flex; align-items: center; gap: 4px; }
-    .atlas-pdf-page { position: relative; background: #fff; box-shadow: 0 12px 40px -14px rgba(0, 0, 0, .9); border-radius: 2px; }
+    .atlas-pdf-page { position: relative; background: #fff; box-shadow: 0 12px 40px -14px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))); border-radius: 2px; }
     .atlas-pdf-page canvas { display: block; }
     .atlas-pdf-num { position: absolute; right: -36px; bottom: 4px; font: 11px var(--mono); color: var(--ink-3); }
     .atlas-folder { display: grid; gap: 16px; max-width: 860px; }
-    .atlas-readme { padding: 14px 18px; border-radius: 14px; background: rgba(16, 23, 43, .78); border: 1px solid var(--line); }
+    .atlas-readme { padding: 14px 18px; border-radius: 14px; background: rgba(var(--panel-rgb), .78); border: 1px solid var(--line); }
 
     /* ---- editor ---- */
     .atlas-editor { display: grid; gap: 10px; }
     .atlas-editor-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 6; padding: 8px 0; background: linear-gradient(180deg, var(--sky-0) 70%, transparent); }
     .atlas-editor-status { margin-left: auto; font-size: 12.5px; color: var(--ink-3); }
     .atlas-editor-status.is-dirty { color: var(--gold); }
-    .atlas-editor-status.is-error { color: #ffb4b4; }
+    .atlas-editor-status.is-error { color: var(--danger-ink); }
     .atlas-editor-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
     .atlas-editor-split.has-preview, .atlas-editor-split:has(.atlas-tex-aside) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .atlas-editor-split:has(.atlas-tex-aside) { grid-template-columns: minmax(0, 1fr) 260px; }
-    .atlas-editor-text { width: 100%; min-height: 62vh; height: calc(100vh - 290px); resize: vertical; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(7, 11, 22, .85); color: var(--ink-1); font: 13.5px/1.7 var(--mono); tab-size: 2; caret-color: var(--gold); }
-    .atlas-editor-text:focus { outline: 2px solid rgba(157, 184, 255, .45); outline-offset: 0; }
-    .atlas-editor-preview { min-height: 62vh; height: calc(100vh - 290px); overflow-y: auto; padding: 14px 22px; border-radius: 12px; border: 1px solid var(--line); background: rgba(16, 23, 43, .55); }
-    .atlas-tex-aside { padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(16, 23, 43, .7); align-self: start; display: grid; gap: 8px; }
+    .atlas-editor-text { width: 100%; min-height: 62vh; height: calc(100vh - 290px); resize: vertical; padding: 16px 18px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(var(--sky-rgb), .85); color: var(--ink-1); font: 13.5px/1.7 var(--mono); tab-size: 2; caret-color: var(--gold); }
+    .atlas-editor-text:focus { outline: 2px solid rgba(var(--accent-rgb), .45); outline-offset: 0; }
+    .atlas-editor-preview { min-height: 62vh; height: calc(100vh - 290px); overflow-y: auto; padding: 14px 22px; border-radius: 12px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .55); }
+    .atlas-tex-aside { padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .7); align-self: start; display: grid; gap: 8px; }
     .atlas-tex-aside > h2 { margin: 0; font: 600 12px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
     .atlas-outline { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; color: var(--ink-1); }
     .atlas-outline .is-subsection { padding-left: 12px; color: var(--ink-2); }
@@ -4639,11 +5236,11 @@ window.__ModuleLoader__.load({
     /* ---- library ---- */
     .atlas-toolbar { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
     .atlas-shelf { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-    .atlas-paper { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 12px 14px; border-radius: 12px; background: rgba(16, 23, 43, .7); border: 1px solid var(--line); }
+    .atlas-paper { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 12px 14px; border-radius: 12px; background: rgba(var(--panel-rgb), .7); border: 1px solid var(--line); }
     .atlas-paper-spine { font: 600 13px var(--mono); color: var(--gold); padding-top: 2px; }
     .atlas-paper-main { display: grid; gap: 4px; min-width: 0; }
     .atlas-paper-title { border: 0; background: transparent; padding: 0; text-align: left; font: 600 15px/1.35 var(--serif); color: var(--ink-1); cursor: pointer; }
-    .atlas-paper-title:hover:not(:disabled) { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+    .atlas-paper-title:hover:not(:disabled) { color: var(--ink-0); text-decoration: underline; text-underline-offset: 3px; }
     .atlas-paper-title:disabled { cursor: default; }
     .atlas-paper-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-2); }
     .atlas-paper-actions { display: flex; gap: 6px; }
@@ -4652,7 +5249,7 @@ window.__ModuleLoader__.load({
     .atlas-bytopic .atlas-side-block > h2 { text-transform: none; letter-spacing: 0; font: 600 14.5px var(--serif); color: var(--ink-1); }
     .atlas-entries { display: grid; gap: 6px; }
     .atlas-entry { padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; }
-    .atlas-entry:hover { background: rgba(16, 23, 43, .75); border-color: var(--line); }
+    .atlas-entry:hover { background: rgba(var(--panel-rgb), .75); border-color: var(--line); }
     .atlas-entry-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
     .atlas-entry-title { font: 600 14.5px/1.35 var(--serif); color: var(--ink-1); }
     .atlas-entry-tags { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -4661,11 +5258,11 @@ window.__ModuleLoader__.load({
     .atlas-entry-foot .atlas-linked { margin: 0; font-size: 12.5px; }
 
     /* ---- activity: what waits on you, what is running, teams ---- */
-    .atlas-nav-badge { min-width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 9px; background: rgba(255, 210, 122, .16); color: var(--gold); font: 600 11px var(--sans); font-variant-numeric: tabular-nums; }
+    .atlas-nav-badge { min-width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 9px; background: rgba(var(--gold-rgb), .16); color: var(--gold); font: 600 11px var(--sans); font-variant-numeric: tabular-nums; }
     .atlas-waiting > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font: 600 13px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
-    .atlas-waiting > h2::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 10px rgba(255, 210, 122, .7); }
+    .atlas-waiting > h2::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 10px rgba(var(--gold-rgb), .7); }
     .atlas-waiting ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-    .atlas-waiting-item { padding: 12px 14px; border-radius: 12px; background: rgba(255, 210, 122, .05); border: 1px solid rgba(255, 210, 122, .22); }
+    .atlas-waiting-item { padding: 12px 14px; border-radius: 12px; background: rgba(var(--gold-rgb), .05); border: 1px solid rgba(var(--gold-rgb), .22); }
     .atlas-waiting-head { display: flex; align-items: baseline; gap: 10px; }
     .atlas-waiting-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: var(--ink-1); font: 600 14.5px/1.35 var(--serif); cursor: pointer; overflow-wrap: anywhere; }
     .atlas-waiting-title:hover { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
@@ -4680,7 +5277,7 @@ window.__ModuleLoader__.load({
     .atlas-waiting.is-compact > .atlas-link { margin-top: 8px; font-size: 12.5px; }
     .atlas-activity-group { margin: 0 0 18px; }
     .atlas-activity-group > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font: 600 14px var(--serif); color: var(--ink-1); }
-    .atlas-activity-group > ul, .atlas-activity-others { list-style: none; margin: 0; padding: 0; border-radius: 12px; border: 1px solid var(--line); background: rgba(16, 23, 43, .55); }
+    .atlas-activity-group > ul, .atlas-activity-others { list-style: none; margin: 0; padding: 0; border-radius: 12px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .55); }
     .atlas-activity-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto auto; align-items: start; gap: 12px; padding: 9px 14px; border-top: 1px solid var(--line); }
     .atlas-activity-row:first-child { border-top: 0; }
     .atlas-activity-kind { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding-top: 2px; }
@@ -4714,14 +5311,14 @@ window.__ModuleLoader__.load({
     .atlas-pdf-text > :not(.markedContent), .atlas-pdf-text .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
     .atlas-pdf-text .markedContent { display: contents; }
     .atlas-pdf-text span[role="img"] { user-select: none; cursor: default; }
-    .atlas-pdf-text ::selection { background: rgba(57, 135, 229, .32); }
+    .atlas-pdf-text ::selection { background: rgba(var(--blue-rgb), .32); }
     .atlas-pdf-text br::selection { background: transparent; }
     .atlas-pdf-text .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
     .atlas-pdf-page.atlas-target { animation: atlas-target 1.6s ease-out; }
 
     /* ---- a paper and its reading note ---- */
     .atlas-pdf-layout.has-aside { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
-    .atlas-paper-aside { position: sticky; top: 12px; display: grid; gap: 10px; padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(16, 23, 43, .78); max-height: calc(100vh - 140px); overflow: auto; }
+    .atlas-paper-aside { position: sticky; top: 12px; display: grid; gap: 10px; padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .78); max-height: calc(100vh - 140px); overflow: auto; }
     .atlas-paper-aside > h2, .atlas-paper-users > h2 { margin: 0; font: 600 12px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
     .atlas-paper-note { display: grid; gap: 8px; }
     .atlas-paper-note-title { text-align: left; font: 600 14px/1.35 var(--serif); }
@@ -4741,14 +5338,14 @@ window.__ModuleLoader__.load({
     .atlas-inline-form { display: flex; gap: 8px; align-items: center; margin: 8px 0 10px; max-width: 720px; }
     .atlas-inline-form .atlas-input { flex: 1; }
     .atlas-search-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .atlas-search-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(157, 184, 255, .07); font-size: 13px; }
+    .atlas-search-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(var(--accent-rgb), .07); font-size: 13px; }
     .atlas-search-x { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent; color: var(--ink-3); cursor: pointer; }
-    .atlas-search-x:hover { color: var(--ink-1); background: rgba(157, 184, 255, .14); }
+    .atlas-search-x:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .14); }
     .atlas-search-results { margin: 14px 0 4px; }
     .atlas-search-results > h3 { margin: 0 0 8px; font: 600 14px var(--serif); color: var(--ink-1); }
     .atlas-paper-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     .atlas-paper-cards.is-nested { margin: 8px 0 4px 14px; padding-left: 12px; border-left: 1px solid var(--line-2); }
-    .atlas-paper-card { padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(16, 23, 43, .6); }
+    .atlas-paper-card { padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .6); }
     .atlas-paper-card-head { display: flex; align-items: baseline; gap: 8px; }
     .atlas-paper-name { flex: 1; min-width: 0; color: var(--ink-1); font: 600 14.5px/1.35 var(--serif); text-decoration: none; overflow-wrap: anywhere; }
     a.atlas-paper-name:hover { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
@@ -4758,26 +5355,26 @@ window.__ModuleLoader__.load({
     .atlas-abstract > summary { cursor: pointer; color: var(--ink-3); font-size: 12.5px; }
     .atlas-abstract > p { margin: 6px 0 0; max-width: 780px; line-height: 1.55; }
     .atlas-paper-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-    .atlas-chip.is-new { color: #0a0f1f; background: var(--gold); border-color: transparent; font-weight: 600; }
+    .atlas-chip.is-new { color: var(--on-gold); background: var(--gold); border-color: transparent; font-weight: 600; }
     .atlas-cited { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
     .atlas-cited > li { padding: 8px 0; border-top: 1px solid var(--line); }
     .atlas-cited > li:first-child { border-top: 0; }
     .atlas-cited-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
     .atlas-cited-title { flex: 1 1 320px; min-width: 0; font: 600 14px/1.35 var(--serif); color: var(--ink-1); }
     .atlas-cited-count { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
-    .atlas-add { position: sticky; top: 12px; display: grid; gap: 12px; padding: 16px; border-radius: 16px; border: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(21, 30, 56, .9), rgba(16, 23, 43, .8)); }
+    .atlas-add { position: sticky; top: 12px; display: grid; gap: 12px; padding: 16px; border-radius: 16px; border: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(var(--panel-2-rgb), .9), rgba(var(--panel-rgb), .8)); }
     .atlas-add > h2 { margin: 0; font: 600 13px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
     .atlas-add-body { display: grid; gap: 10px; }
     .atlas-add-body .atlas-inline-form { margin: 0; }
     .atlas-add-note { margin: 0; font-size: 12px; color: var(--ink-3); }
-    .atlas-found { display: grid; gap: 7px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(7, 11, 22, .45); }
+    .atlas-found { display: grid; gap: 7px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(var(--sky-rgb), .45); }
     .atlas-found-title { margin: 0; font: 600 15px/1.35 var(--serif); color: var(--ink-1); }
     .atlas-found-line { margin: 0; font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
     .atlas-found-line code { font: 12px var(--mono); color: var(--ink-1); }
     .atlas-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
     .atlas-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
     .atlas-drop { position: relative; display: grid; place-items: center; gap: 6px; padding: 22px 12px; border-radius: 12px; border: 1.5px dashed var(--line-2); color: var(--ink-2); text-align: center; font-size: 13px; cursor: pointer; }
-    .atlas-drop.is-over, .atlas-drop:hover { border-color: var(--link); background: rgba(157, 184, 255, .07); color: var(--ink-1); }
+    .atlas-drop.is-over, .atlas-drop:hover { border-color: var(--link); background: rgba(var(--accent-rgb), .07); color: var(--ink-1); }
     .atlas-drop-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .atlas-dropped { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
     /* ---- write: LaTeX beside its PDF ---- */
@@ -4786,25 +5383,25 @@ window.__ModuleLoader__.load({
     .atlas-write-engine { width: auto; max-width: 320px; padding: 5px 9px; font-size: 13px; }
     .atlas-write-main { margin: 0; font-size: 12.5px; }
     .atlas-write-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; height: calc(100vh - 250px); min-height: 440px; }
-    .atlas-write-source { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(5, 7, 15, .65); }
-    .atlas-write-gutter { margin: 0; padding: 12px 8px 12px 12px; overflow: hidden; text-align: right; color: var(--ink-3); font: 12.5px/1.6 var(--mono); user-select: none; border-right: 1px solid var(--line); background: rgba(16, 23, 43, .55); min-width: 44px; }
+    .atlas-write-source { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--deep-rgb), .65); }
+    .atlas-write-gutter { margin: 0; padding: 12px 8px 12px 12px; overflow: hidden; text-align: right; color: var(--ink-3); font: 12.5px/1.6 var(--mono); user-select: none; border-right: 1px solid var(--line); background: rgba(var(--panel-rgb), .55); min-width: 44px; }
     .atlas-write-text.atlas-editor-text { height: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; outline: none; resize: none; padding: 12px; background: transparent; color: var(--ink-1); font: 12.5px/1.6 var(--mono); white-space: pre; overflow: auto; tab-size: 2; box-shadow: none; }
-    .atlas-write-side { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(16, 23, 43, .5); }
+    .atlas-write-side { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--panel-rgb), .5); }
     .atlas-write-tabs { padding: 6px; border-bottom: 1px solid var(--line); border-radius: 0; }
-    .atlas-seg-item.is-alert { color: #ff9b9b; }
+    .atlas-seg-item.is-alert { color: var(--danger-ink-2); }
     .atlas-write-pane { overflow: auto; min-height: 0; padding: 0; }
     .atlas-write-pane > .atlas-empty, .atlas-write-pane > .atlas-muted { padding: 14px; margin: 0; }
     .atlas-write-pane .atlas-pdf { border: 0; border-radius: 0; min-height: 100%; }
     .atlas-write-pane .atlas-pdf-bar { border-radius: 0; }
     .atlas-write-hint { margin: 0; padding: 8px 14px; font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--line); }
     .atlas-pdf.is-synced .atlas-pdf-page { cursor: text; }
-    .atlas-sync-mark { position: absolute; z-index: 3; pointer-events: none; border-radius: 2px; background: rgba(255, 210, 122, .30); box-shadow: 0 0 0 2px rgba(255, 190, 70, .85); animation: atlas-sync 3.2s ease-out forwards; }
+    .atlas-sync-mark { position: absolute; z-index: 3; pointer-events: none; border-radius: 2px; background: rgba(var(--gold-rgb), .30); box-shadow: 0 0 0 2px rgba(var(--gold-3-rgb), .85); animation: atlas-sync 3.2s ease-out forwards; }
     @keyframes atlas-sync { 0%, 65% { opacity: 1; } 100% { opacity: 0; } }
     .atlas-problems { list-style: none; margin: 0; padding: 8px; display: grid; gap: 4px; }
     .atlas-problems > li { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 7px 8px; border-radius: 8px; font-size: 13px; }
-    .atlas-problems > li:hover { background: rgba(157, 184, 255, .06); }
+    .atlas-problems > li:hover { background: rgba(var(--accent-rgb), .06); }
     .atlas-problem-kind { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
-    .atlas-problems > li.is-error .atlas-problem-kind { color: #ff9b9b; }
+    .atlas-problems > li.is-error .atlas-problem-kind { color: var(--danger-ink-2); }
     .atlas-problems > li.is-warning .atlas-problem-kind { color: var(--gold); }
     .atlas-problem-text { color: var(--ink-1); overflow-wrap: anywhere; }
     .atlas-write-outline { padding: 12px 14px; }
@@ -4814,40 +5411,40 @@ window.__ModuleLoader__.load({
     .atlas-cite-note { margin: 0; font-size: 12px; }
     .atlas-cite h3 { margin: 6px 0 0; font: 600 11px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
     .atlas-cite-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-    .atlas-cite-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(7, 11, 22, .4); color: inherit; font: inherit; cursor: pointer; }
-    .atlas-cite-item:hover:not(:disabled), .atlas-cite-item:focus-visible { border-color: var(--link); background: rgba(157, 184, 255, .08); outline: none; }
+    .atlas-cite-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(var(--sky-rgb), .4); color: inherit; font: inherit; cursor: pointer; }
+    .atlas-cite-item:hover:not(:disabled), .atlas-cite-item:focus-visible { border-color: var(--link); background: rgba(var(--accent-rgb), .08); outline: none; }
     .atlas-cite-item:disabled { opacity: .55; cursor: default; }
     .atlas-cite-title { grid-column: 1; font: 600 13.5px/1.35 var(--serif); color: var(--ink-1); }
     .atlas-cite-meta { grid-column: 1; font-size: 12px; color: var(--ink-3); }
     .atlas-cite-item > code, .atlas-cite-item > .atlas-chip { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 11.5px var(--mono); color: var(--ink-2); }
     /* ---- review: what a discussion changed ---- */
-    .atlas-review { flex: none; display: flex; flex-direction: column; min-height: 0; max-height: 46%; margin: 8px 12px; border-radius: 12px; border: 1px solid rgba(255, 210, 122, .38); background: rgba(255, 210, 122, .05); }
+    .atlas-review { flex: none; display: flex; flex-direction: column; min-height: 0; max-height: 46%; margin: 8px 12px; border-radius: 12px; border: 1px solid rgba(var(--gold-rgb), .38); background: rgba(var(--gold-rgb), .05); }
     .atlas-review-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: 0; background: transparent; color: var(--ink-1); font: 600 12.5px var(--sans); text-align: left; cursor: pointer; }
     .atlas-review-head:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; border-radius: 12px; }
     .atlas-review-toggle { margin-left: auto; font-weight: 500; color: var(--ink-3); }
     .atlas-review-body { display: grid; gap: 8px; min-height: 0; overflow: auto; padding: 0 12px 10px; }
     .atlas-review-body > .atlas-muted { margin: 0; font-size: 12px; }
-    .atlas-edit { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: rgba(7, 11, 22, .55); }
+    .atlas-edit { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: rgba(var(--sky-rgb), .55); }
     .atlas-edit-where { font: 600 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
     .atlas-edit-del, .atlas-edit-ins { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 6px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
     .atlas-edit-del { color: var(--ink-2); }
     .atlas-edit-ins { color: var(--ink-1); }
     .atlas-edit-sign { font: 700 13px var(--mono); }
-    .atlas-edit-del .atlas-edit-sign { color: #ff8f8f; }
-    .atlas-edit-ins .atlas-edit-sign { color: #6fd58f; }
-    .atlas-edit-del del { color: #ffd0d0; background: rgba(255, 110, 110, .2); text-decoration: line-through; text-decoration-color: rgba(255, 143, 143, .8); border-radius: 3px; }
-    .atlas-edit-ins ins { color: #d2f7de; background: rgba(80, 200, 120, .2); text-decoration: none; border-radius: 3px; }
+    .atlas-edit-del .atlas-edit-sign { color: var(--del-ink); }
+    .atlas-edit-ins .atlas-edit-sign { color: var(--ins-ink); }
+    .atlas-edit-del del { color: var(--del-text); background: rgba(var(--del-rgb), .2); text-decoration: line-through; text-decoration-color: rgba(var(--del-2-rgb), .8); border-radius: 3px; }
+    .atlas-edit-ins ins { color: var(--ins-text); background: rgba(var(--ins-rgb), .2); text-decoration: none; border-radius: 3px; }
     .atlas-edit-actions, .atlas-review-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .atlas-edit-actions { margin-top: 2px; }
     .atlas-pending { margin: 0 0 12px; }
     /* ---- search and learn ---- */
-    .atlas-search-form { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; padding: 6px 6px 6px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: rgba(16, 23, 43, .85); }
+    .atlas-search-form { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; padding: 6px 6px 6px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: rgba(var(--panel-rgb), .85); }
     .atlas-search-form > svg { color: var(--ink-3); }
     .atlas-search-form .atlas-input { flex: 1; border: 0; background: transparent; font-size: 16px; padding: 8px 4px; }
     .atlas-search-form .atlas-input:focus { outline: none; }
     .atlas-results { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 4px; }
     .atlas-result { padding: 10px 12px; border-radius: 12px; }
-    .atlas-result:hover { background: rgba(157, 184, 255, .05); }
+    .atlas-result:hover { background: rgba(var(--accent-rgb), .05); }
     .atlas-result-head { display: flex; align-items: baseline; gap: 10px; }
     .atlas-result-kind { flex: none; width: 74px; font: 600 11px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
     .atlas-result-title { min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: var(--ink-1); font: 600 15px/1.35 var(--serif); cursor: pointer; overflow-wrap: anywhere; }
@@ -4855,7 +5452,7 @@ window.__ModuleLoader__.load({
     .atlas-result-title:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 4px; }
     .atlas-result-where { margin: 2px 0 0 84px; font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
     .atlas-result-snippet { margin: 4px 0 0 84px; font-size: 13.5px; color: var(--ink-2); line-height: 1.55; overflow-wrap: anywhere; }
-    .atlas-result-snippet mark, .atlas-learn mark { color: #0a0f1f; background: var(--gold); border-radius: 3px; padding: 0 2px; }
+    .atlas-result-snippet mark, .atlas-learn mark { color: var(--mark-ink); background: var(--mark-bg); border-radius: 3px; padding: 0 2px; }
     .atlas-learn-pick { max-width: 560px; margin: 4px 0 18px; }
     .atlas-learn-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
     .atlas-learn-main h1 { margin-bottom: 14px; }
@@ -4865,17 +5462,17 @@ window.__ModuleLoader__.load({
     .atlas-route { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 14px; }
     .atlas-route .atlas-link { text-align: left; }
     .atlas-learn-foot { font-size: 12px; margin-top: 12px; }
-    .atlas-learn-side { padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); background: rgba(16, 23, 43, .6); }
+    .atlas-learn-side { padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); background: rgba(var(--panel-rgb), .6); }
     .atlas-learn-side .atlas-learn-h { margin-top: 0; }
     .atlas-concepts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     .atlas-concepts > li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-    .atlas-concept { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(157, 184, 255, .07); color: var(--ink-1); font: 500 12.5px var(--sans); cursor: pointer; }
-    .atlas-concept:hover { border-color: var(--link); background: rgba(157, 184, 255, .14); }
+    .atlas-concept { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(var(--accent-rgb), .07); color: var(--ink-1); font: 500 12.5px var(--sans); cursor: pointer; }
+    .atlas-concept:hover { border-color: var(--link); background: rgba(var(--accent-rgb), .14); }
     .atlas-concept-arrow { color: var(--ink-3); }
     .atlas-decide { display: grid; gap: 6px; margin-top: 10px; }
-    .atlas-decide-option { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(255, 210, 122, .3); background: rgba(7, 11, 22, .4); color: var(--ink-1); font: inherit; font-size: 13px; cursor: pointer; }
-    .atlas-decide-option:hover, .atlas-decide-option:focus-visible { border-color: var(--gold); background: rgba(255, 210, 122, .1); outline: none; }
-    .atlas-decide-letter { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(255, 210, 122, .18); color: var(--gold); font: 700 12px var(--sans); }
+    .atlas-decide-option { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 7px 10px; border-radius: 9px; border: 1px solid rgba(var(--gold-rgb), .3); background: rgba(var(--sky-rgb), .4); color: var(--ink-1); font: inherit; font-size: 13px; cursor: pointer; }
+    .atlas-decide-option:hover, .atlas-decide-option:focus-visible { border-color: var(--gold); background: rgba(var(--gold-rgb), .1); outline: none; }
+    .atlas-decide-letter { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(var(--gold-rgb), .18); color: var(--gold); font: 700 12px var(--sans); }
     @container (max-width: 1180px) {
       .atlas-universe { grid-template-columns: minmax(0, 1fr) 290px; }
       .atlas-topic-grid { grid-template-columns: minmax(0, 1fr) 310px; gap: 26px; }
@@ -4906,7 +5503,9 @@ window.__ModuleLoader__.load({
       .atlas-pdf-layout.has-aside { grid-template-columns: minmax(0, 1fr); }
       .atlas-paper-aside { position: static; max-height: none; }
       .atlas-companion { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; max-width: calc(100% - 28px); }
-      .atlas-body.has-companion > .atlas-askbar { left: 50%; width: min(640px, calc(100% - 32px)); }
+      .atlas-side { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; max-width: calc(100% - 28px); }
+      .atlas-body.is-tabbed > .atlas-main { margin-right: 0; }
+      .atlas-body.has-right > .atlas-askbar { left: 50%; width: min(640px, calc(100% - 32px)); }
     }
     @container (max-width: 640px) {
       .atlas-ask-top kbd { display: none; }
@@ -4923,7 +5522,7 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || document.getElementById('aitp-atlas-styles')) return;
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
-      style.textContent = STYLES;
+      style.textContent = themeCss() + '\n' + STYLES;
       document.head.appendChild(style);
     }
 

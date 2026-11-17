@@ -2,13 +2,20 @@
 // One topic as a workspace: what the root says, the opening, Current work as a
 // timeline, the account, and everything the note cites, sorted by kind.
 
-/** Links inside notes: what Atlas can show opens here, the rest with the system's app. */
+/** Links inside notes: what Atlas can show opens beside the page (a link), the rest with the system's app. */
 function useNavigate(go, flash) {
-  return useCallback(({ path, anchor }) => {
+  const pane = usePaneName();
+  return useCallback(({ path, anchor, url }) => {
+    // A paper's web address: read it beside the page, offered for the topic in view.
+    if (url) {
+      const focus = paneFocus(focusStore.get(), pane);
+      go({ view: 'paper', url, topic: focus.topic ? focus.topic.path : '' });
+      return;
+    }
     if (!path) return;
-    if (READ_HERE.has(typeOf(path))) go({ view: 'doc', path, anchor });
+    if (READ_HERE.has(typeOf(path))) go({ view: 'doc', path, anchor, link: true });
     else openFile(path).then(() => flash('Opened with the system app.')).catch((error) => flash(error.message));
-  }, [go, flash]);
+  }, [go, flash, pane]);
 }
 
 /** The opening (before the first `##`) and the `##` sections of a note. */
@@ -42,6 +49,8 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
   const parts = useMemo(() => splitNote(data.body), [data.body]);
   const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
   const [reveal, setReveal] = useState({ key: '', n: 0 });
+  // Section ids are per pane: the same topic can be open as the page and beside it.
+  const sec = usePaneName() === 'side' ? 'atlas-side-sec-' : 'atlas-sec-';
   // A link to a section of this note: the opening, Current work, or an account fold opened and scrolled to.
   useEffect(() => {
     if (!anchor) return undefined;
@@ -50,16 +59,16 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
     const section = target.section >= 0 ? parts.sections[target.section] : null;
     if (section && !/^current work/i.test(section.heading)) setReveal((r) => ({ key: section.key, n: r.n + 1 }));
     const timer = setTimeout(() => {
-      if (!section) return revealElement(document.getElementById('atlas-sec-opening'));
-      if (/^current work/i.test(section.heading)) return revealElement(document.getElementById('atlas-sec-current'));
-      const box = document.getElementById('atlas-sec-' + section.index);
+      if (!section) return revealElement(document.getElementById(sec + 'opening'));
+      if (/^current work/i.test(section.heading)) return revealElement(document.getElementById(sec + 'current'));
+      const box = document.getElementById(sec + section.index);
       const inner = target.sub > 0 && box ? nthHeading(box.querySelector('.atlas-fold-body'), target.sub - 1) : null;
       return revealElement(inner || box);
     }, 140);
     return () => clearTimeout(timer);
-  }, [anchor, anchorAt, data.body, parts]);
+  }, [anchor, anchorAt, data.body, parts, sec]);
   const dirSlug = t.directionSlug || topicDirection(ov, t.id);
-  const color = t.isRoot ? '#ffd27a' : directionColor(ov, dirSlug);
+  const color = t.isRoot ? 'var(--gold)' : directionColor(ov, dirSlug);
   const [creating, setCreating] = useState(false);
   usePublishFocus({ kind: 'topic', topic: { id: t.id, title: t.title || 'Root note', path: data.path } }, [data.path, t.title]);
   const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
@@ -83,7 +92,7 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
         h('span', { className: 'atlas-path' }, data.shown),
         h('span', { className: 'atlas-date' }, 'changed ' + dateOf(data.mtimeMs)),
         facts.map((f) => h('span', { key: f, className: 'atlas-meta-fact' }, f)),
-        t.reached ? null : h(Chip, { dot: '#fab219', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
+        t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
       h('div', { className: 'atlas-actions' },
         h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
         data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
@@ -94,12 +103,12 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
     h(PendingEdits, { path: data.path, at: data.mtimeMs }),
     h('div', { className: 'atlas-topic-grid' },
       h('main', { className: 'atlas-topic-main' },
-        parts.opening ? h('section', { className: 'atlas-opening', id: 'atlas-sec-opening' }, h(Markdown, { text: parts.opening, baseFile: data.path, onNavigate: navigate })) : null,
-        h(ThreadList, { threads: t.threads, baseFile: data.path, navigate, domId: 'atlas-sec-current' }),
+        parts.opening ? h('section', { className: 'atlas-opening', id: sec + 'opening' }, h(Markdown, { text: parts.opening, baseFile: data.path, onNavigate: navigate })) : null,
+        h(ThreadList, { threads: t.threads, baseFile: data.path, navigate, domId: sec + 'current' }),
         account.length > 0
           ? h('section', { className: 'atlas-section' },
             h('h2', null, 'The account', h('span', { className: 'atlas-count' }, plural(account.length, 'section'))),
-            account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: 'atlas-sec-' + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
+            account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: sec + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
           : null),
       h('aside', { className: 'atlas-topic-side', 'aria-label': 'What this topic holds' },
         h(Discussions, { match: (d) => Boolean(d.context.topic && d.context.topic.path === data.path) }),
@@ -122,7 +131,10 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
 function ContentItem({ item, navigate }) {
   const missing = item.exists === false;
   const onClick = () => {
-    if (item.url) window.open(item.url, '_blank', 'noopener');
+    if (item.url) {
+      if (paperLink(item.url)) navigate({ url: item.url });
+      else window.open(item.url, '_blank', 'noopener');
+    }
     else if (!missing) navigate({ path: item.path, anchor: item.anchor });
   };
   return h('button', { type: 'button', className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
@@ -130,7 +142,7 @@ function ContentItem({ item, navigate }) {
     h('span', { className: 'atlas-item-text' },
       h('span', { className: 'atlas-item-label' }, item.label),
       h('span', { className: 'atlas-item-sub' }, item.shown, item.section ? ` · § ${item.section}` : '', item.count > 1 ? ` · cited ${item.count}×` : '')),
-    missing ? h(Chip, { dot: '#d03b3b' }, 'missing') : item.url ? h(Icon, { name: 'external', size: 13 }) : null);
+    missing ? h(Chip, { dot: 'var(--status-blocked)' }, 'missing') : item.url ? h(Icon, { name: 'external', size: 13 }) : null);
 }
 
 /** Current work entries, newest first, as a timeline: thread, status, date, then the entry as written. */

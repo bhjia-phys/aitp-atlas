@@ -33,6 +33,10 @@ export function normalizeConfig(raw = {}) {
     // Where Atlas keeps its own state (copies of notes for reviewing a discussion's edits); never the research.
     stateDir: raw.stateDir ? path.resolve(String(raw.stateDir)) : '',
     proxy: raw.proxy ? String(raw.proxy) : '',
+    // Appearance: the default theme (auto follows DSH; day, night, or a name below) and themes of
+    // one's own, each a base theme with token overrides. The client keeps only safe CSS values.
+    theme: typeof raw.theme === 'string' && /^[a-z][a-z0-9-]{0,30}$/i.test(raw.theme.trim()) ? raw.theme.trim() : 'auto',
+    themes: raw.themes && typeof raw.themes === 'object' && !Array.isArray(raw.themes) ? raw.themes : {},
     // Tests replace the network; a YAML config cannot.
     request: typeof raw.request === 'function' ? raw.request : undefined,
   };

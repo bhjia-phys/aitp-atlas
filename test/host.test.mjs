@@ -74,7 +74,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/search']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
@@ -190,7 +190,9 @@ test('host: without DSH authentication only this computer is answered; no root, 
     apply(none.ctx, { root: '' });
     assert.equal(none.routes.size, 0);
     const settings = normalizeConfig({ root: '/r', writeIndex: true, guard: true, maxAgeSeconds: 2 });
-    assert.deepEqual(Object.keys(settings).sort(), ['authGraceMs', 'exclude', 'excludePaths', 'knowledge', 'library', 'maxAgeSeconds', 'proxy', 'request', 'root', 'stateDir', 'web']);
+    assert.deepEqual(Object.keys(settings).sort(), ['authGraceMs', 'exclude', 'excludePaths', 'knowledge', 'library', 'maxAgeSeconds', 'proxy', 'request', 'root', 'stateDir', 'theme', 'themes', 'web']);
+    assert.deepEqual([settings.theme, settings.themes], ['auto', {}], 'auto follows DSH unless the config names a theme');
+    assert.equal(normalizeConfig({ root: '/r', theme: 'Day; x' }).theme, 'auto', 'an odd theme name falls back to auto');
     assert.equal(settings.authGraceMs, 30000);
     assert.equal(settings.web, true);
     assert.equal(settings.request, undefined, 'a YAML config cannot supply a request function');

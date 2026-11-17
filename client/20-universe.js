@@ -33,7 +33,7 @@ function layoutUniverse(ov) {
   };
   const sectors = ov.directions.map((d) => ({ key: d.slug, label: d.heading, color: directionColor(ov, d.slug), ids: d.topics }));
   const beyond = [...ov.other, ...ov.unreached];
-  if (beyond.length) sectors.push({ key: '__beyond', label: 'Beyond the directions', color: OTHER_COLOR, ids: beyond });
+  if (beyond.length) sectors.push({ key: '__beyond', label: 'Beyond the directions', color: otherColor(), ids: beyond });
   const weightOf = (s) => Math.max(0.9, s.ids.reduce((sum, id) => sum + leaves(id), 0));
   const total = sectors.reduce((sum, s) => sum + weightOf(s), 0) || 1;
   const gap = sectors.length > 1 ? 0.045 : 0;
@@ -144,14 +144,15 @@ function StarChart({ ov, go, dim, focusSector, onFocusSector }) {
   };
   const gradients = [...new Set(layout.stars.map((s) => s.color))];
   const open = (s) => go({ view: 'doc', path: s.t.file });
+  const sky = UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night;
   return h('div', { className: 'atlas-chart', ref: box },
     h('svg', { viewBox: `0 0 ${CHART.size} ${CHART.size}`, role: 'group', 'aria-label': `Star chart of ${plural(ov.counts.topics, 'topic')} in ${plural(ov.directions.length, 'direction')}`, onMouseLeave: () => setHover(null) },
       h('defs', null,
-        h('radialGradient', { id: 'atlas-core' }, h('stop', { offset: '0', stopColor: '#fff4d6', stopOpacity: 0.95 }), h('stop', { offset: '0.35', stopColor: '#ffd27a', stopOpacity: 0.55 }), h('stop', { offset: '1', stopColor: '#ff9f43', stopOpacity: 0 })),
-        h('radialGradient', { id: 'atlas-nebula', cx: '50%', cy: '50%', r: '50%' }, h('stop', { offset: '0', stopColor: '#2a3a78', stopOpacity: 0.35 }), h('stop', { offset: '1', stopColor: '#0b1020', stopOpacity: 0 })),
+        h('radialGradient', { id: 'atlas-core' }, h('stop', { offset: '0', stopColor: sky.coreA, stopOpacity: 0.95 }), h('stop', { offset: '0.35', stopColor: sky.coreB, stopOpacity: 0.55 }), h('stop', { offset: '1', stopColor: sky.coreC, stopOpacity: 0 })),
+        h('radialGradient', { id: 'atlas-nebula', cx: '50%', cy: '50%', r: '50%' }, h('stop', { offset: '0', stopColor: sky.nebula, stopOpacity: 0.35 }), h('stop', { offset: '1', stopColor: sky.nebulaEdge, stopOpacity: 0 })),
         gradients.map((color, i) => h('radialGradient', { key: color, id: `atlas-glow-${i}` }, h('stop', { offset: '0', stopColor: color, stopOpacity: 0.9 }), h('stop', { offset: '1', stopColor: color, stopOpacity: 0 })))),
       h('circle', { cx: c, cy: c, r: r * 1.12, fill: 'url(#atlas-nebula)' }),
-      h('g', { className: 'atlas-starfield', 'aria-hidden': true }, field.map((f, i) => h('circle', { key: i, cx: f.x, cy: f.y, r: f.r, fill: '#dfe6ff', opacity: f.o }))),
+      h('g', { className: 'atlas-starfield', 'aria-hidden': true }, field.map((f, i) => h('circle', { key: i, cx: f.x, cy: f.y, r: f.r, fill: sky.field, opacity: f.o }))),
       h('g', { className: 'atlas-grid', 'aria-hidden': true },
         rings.slice(0, 3).map((k) => h('circle', { key: k, cx: c, cy: c, r: r * k, fill: 'none' })),
         Array.from({ length: 12 }, (_, i) => {
@@ -177,7 +178,7 @@ function StarChart({ ov, go, dim, focusSector, onFocusSector }) {
       h('g', { className: 'atlas-spokes', 'aria-hidden': true }, layout.stars.filter((s) => s.depth === 0).map((s) => h('line', { key: s.id, x1: c, y1: c, x2: s.x, y2: s.y, className: cx('atlas-spoke', faded(s) && 'is-faded') }))),
       h('g', { className: 'atlas-core', role: 'button', tabIndex: 0, 'aria-label': `Root note: ${ov.title}`, onClick: () => go({ view: 'doc', path: ov.rootFile }), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go({ view: 'doc', path: ov.rootFile }); } } },
         h('circle', { cx: c, cy: c, r: 44, fill: 'url(#atlas-core)' }),
-        h('circle', { cx: c, cy: c, r: 9, fill: '#fff6dd' }),
+        h('circle', { cx: c, cy: c, r: 9, fill: sky.coreDot }),
         h('title', null, ov.title)),
       h('g', { className: 'atlas-stars' }, layout.stars.map((s) => {
         const gi = gradients.indexOf(s.color);
@@ -252,7 +253,7 @@ function UniverseView({ overview: ov, go, filter, flash }) {
         activity.length === 0 ? h(Empty, null, 'No dated Current work entries yet.') : null,
         h('ol', null, activity.map((e, i) => {
           const t = ov.topics[e.id];
-          const color = e.id === '' ? '#fff0c2' : directionColor(ov, topicDirection(ov, e.id));
+          const color = e.id === '' ? (UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night).root : directionColor(ov, topicDirection(ov, e.id));
           return h('li', { key: i }, h('button', { type: 'button', className: 'atlas-pulse-row', onClick: () => t && go({ view: 'doc', path: t.file }) },
             h('span', { className: 'atlas-pulse-mark', style: { background: color } }),
             h('span', { className: 'atlas-date' }, e.date),
@@ -267,7 +268,7 @@ function UniverseView({ overview: ov, go, filter, flash }) {
         onMouseEnter: () => setFocusSector(d.slug), onMouseLeave: () => setFocusSector(null), onFocus: () => setFocusSector(d.slug), onBlur: () => setFocusSector(null),
         onClick: () => { const el = document.getElementById('atlas-dir-' + d.slug); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
       }, h('span', { className: 'atlas-dot', style: { background: directionColor(ov, d.slug) } }), h('span', null, d.heading.replace(/^\d+\.\s*/, '')), h('span', { className: 'atlas-count' }, d.topics.length))),
-      ov.other.length + ov.unreached.length ? h('span', { className: 'atlas-legend-item is-static' }, h('span', { className: 'atlas-dot', style: { background: OTHER_COLOR } }), 'Beyond the directions') : null,
+      ov.other.length + ov.unreached.length ? h('span', { className: 'atlas-legend-item is-static' }, h('span', { className: 'atlas-dot', style: { background: otherColor() } }), 'Beyond the directions') : null,
       h('span', { className: 'atlas-legend-note' }, 'Brightness: Current work in the last week, month, quarter · dashed ring: not linked')),
     ov.directions.map((d) => h(DirectionSection, { key: d.slug, d, ov, go, words, navigate })),
     h(TopicGroup, { title: 'Other topics', note: 'Linked from the root, outside its directions.', ids: ov.other, ov, go, words }),
@@ -306,7 +307,7 @@ function subtreeText(ov, id) {
 function TopicGroup({ title, note, ids, ov, go, words }) {
   const list = ids.filter((id) => matches(words, ...subtreeText(ov, id)));
   if (list.length === 0) return null;
-  return h('section', { className: 'atlas-direction is-quiet', style: { '--dir': OTHER_COLOR } },
+  return h('section', { className: 'atlas-direction is-quiet', style: { '--dir': otherColor() } },
     h('header', { className: 'atlas-direction-head' }, h('span', { className: 'atlas-direction-bar', 'aria-hidden': true }), h('div', null, h('h2', null, title), h('p', { className: 'atlas-direction-lead' }, note))),
     h('div', { className: 'atlas-cards' }, list.map((id) => h(TopicCard, { key: id, t: ov.topics[id], ov, go }))));
 }
@@ -324,6 +325,6 @@ function TopicCard({ t, ov, go }) {
     t.latest ? h('span', { className: 'atlas-card-latest' }, t.latest.status ? h(StatusTag, { status: t.latest.status }) : null, h('span', { className: 'atlas-card-thread' }, t.latest.name)) : null,
     h('span', { className: 'atlas-card-foot' },
       h('span', { className: 'atlas-card-counts' }, COUNT_ORDER.filter(([k]) => counts[k]).map(([k, icon]) => h('span', { key: k, title: `${counts[k]} ${k}` }, h(Icon, { name: GROUP_ICON[k] || icon, size: 13 }), counts[k]))),
-      t.reached ? null : h(Chip, { dot: '#fab219' }, 'unlinked'),
+      t.reached ? null : h(Chip, { dot: 'var(--status-waiting)' }, 'unlinked'),
       h('span', { className: 'atlas-date', title: t.dated === 'entry' ? 'Newest Current work entry' : 'When the note last changed' }, t.date)));
 }

@@ -102,7 +102,7 @@ function ByTopic({ data, ov, go, words, navigate }) {
       h('ul', { className: 'atlas-items' },
         lib.map((p) => h('li', { key: p.key }, h('button', { type: 'button', className: 'atlas-item', onClick: () => go({ view: 'doc', path: p.pdf || p.map }) }, h(Icon, { name: 'paper', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, p.title || p.key), h('span', { className: 'atlas-item-sub' }, `${p.key} · in the library`))))),
         t.pdfs.map((pdf, i) => h('li', { key: 'pdf' + i }, h('button', { type: 'button', className: 'atlas-item', onClick: () => navigate({ path: pdf.path }) }, h(Icon, { name: 'paper', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, pdf.label), h('span', { className: 'atlas-item-sub' }, baseName(pdf.path) + ' · in the topic'))))),
-        outside.map((id) => h('li', { key: 'ax' + id }, h('button', { type: 'button', className: 'atlas-item', onClick: () => window.open(`https://arxiv.org/abs/${id}`, '_blank', 'noopener') }, h(Icon, { name: 'web', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, 'arXiv ' + id), h('span', { className: 'atlas-item-sub' }, 'cited, not in the library')), h(Icon, { name: 'external', size: 13 }))))));
+        outside.map((id) => h('li', { key: 'ax' + id }, h('button', { type: 'button', className: 'atlas-item', onClick: () => go({ view: 'paper', url: `https://arxiv.org/abs/${id}`, topic: t.file }) }, h(Icon, { name: 'web', size: 15 }), h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, 'arXiv ' + id), h('span', { className: 'atlas-item-sub' }, 'cited, not in the library')), h(Icon, { name: 'external', size: 13 }))))));
   }));
 }
 
@@ -121,9 +121,9 @@ function KnowledgeIndex({ data, go, words, navigate, flash }) {
 
 function supportDot(support) {
   const s = String(support || '').toLowerCase();
-  if (/confirm/.test(s)) return '#0ca30c';
-  if (/provisional|awaiting|unreviewed|pending|unchecked/.test(s)) return '#fab219';
-  return '#7c86a5';
+  if (/confirm/.test(s)) return 'var(--status-done)';
+  if (/provisional|awaiting|unreviewed|pending|unchecked/.test(s)) return 'var(--status-waiting)';
+  return 'var(--status-other)';
 }
 
 function EntryRow({ e, go, navigate }) {

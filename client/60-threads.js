@@ -34,23 +34,60 @@ function externalStore(initial, key) {
   return store;
 }
 
-// The discussion index and the view in focus.
+// The discussion index, and what is in view: one focus per pane (the page, and the file beside
+// it), and which of the two was used last.
 const threadStore = externalStore([], 'threads');
-const focusStore = externalStore({ kind: 'universe' });
+const focusStore = externalStore({ main: { kind: 'universe' }, side: null, active: 'main' });
+/** Which pane a component sits in: the page ('main'), the file beside it ('side'), or the shell around both ('global'). */
+const PaneContext = React.createContext('global');
+
+function usePaneName() {
+  return React.useContext(PaneContext) === 'side' ? 'side' : 'main';
+}
+
+/** What a pane shows (the shell asks for the pane used last), with what the other pane holds beside it. */
+function paneFocus(all, pane) {
+  const name = pane === 'side' || pane === 'main' ? pane : all.active === 'side' && all.side ? 'side' : 'main';
+  const own = (name === 'side' ? all.side : all.main) || { kind: 'universe' };
+  const beside = besideOf(own, name === 'side' ? all.main : all.side);
+  return beside ? { ...own, beside } : own;
+}
+
+/** The other pane's document or topic, unless this pane already names it. */
+function besideOf(own, other) {
+  if (!other) return null;
+  const item = other.doc && !(other.topic && pathKey(other.doc.path) === pathKey(other.topic.path))
+    ? { label: TYPE_LABEL[other.doc.type] || 'Document', title: other.doc.title || baseName(other.doc.path), path: other.doc.path }
+    : other.topic ? { label: other.topic.id === '' ? 'Root note' : 'Topic', title: other.topic.title, path: other.topic.path } : null;
+  if (!item) return null;
+  return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
+}
+
+function setActivePane(pane) {
+  const all = focusStore.get();
+  if (all.active !== pane) focusStore.set({ ...all, active: pane });
+}
+
+function clearSidePane() {
+  focusStore.set({ ...focusStore.get(), side: null, active: 'main' });
+}
 
 function useThreadIndex() {
   return React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
 }
 
 function useFocus() {
-  return React.useSyncExternalStore(focusStore.subscribe, focusStore.get);
+  const pane = React.useContext(PaneContext);
+  const all = React.useSyncExternalStore(focusStore.subscribe, focusStore.get);
+  return useMemo(() => paneFocus(all, pane), [all, pane]);
 }
 
 /** Views say what they show; the ask bar, the chips and Ctrl+J read it. */
 function usePublishFocus(value, deps) {
+  const pane = usePaneName();
   useEffect(() => {
-    focusStore.set(value);
-  }, deps);
+    focusStore.set({ ...focusStore.get(), [pane]: value });
+  }, [pane, ...deps]);
 }
 
 function patchThread(id, patch) {
@@ -96,6 +133,7 @@ function focusContext(focus, extra = {}) {
     section: extra.section || '',
     lines: extra.lines || '',
     selection: extra.selection || '',
+    ...(focus.beside ? { beside: focus.beside } : {}),
   };
 }
 
@@ -111,6 +149,7 @@ function contextBlock(c) {
   if (c.section) lines.push(`- Section: ${c.section}`);
   if (c.lines) lines.push(`- Lines: ${c.lines}`);
   if (c.page) lines.push(`- Page: ${c.page}`);
+  if (c.beside) lines.push(`- Open beside it: ${c.beside.label}: ${c.beside.title} — ${c.beside.path}`);
   if (c.selection) {
     lines.push('- Selected passage:');
     for (const line of String(c.selection).split('\n').slice(0, 80)) lines.push(`  > ${line}`);
@@ -127,6 +166,7 @@ function chipsOf(c) {
   if (c.section) chips.push({ label: '§', text: shortTitle(c.section, 34), title: c.section });
   if (c.lines) chips.push({ label: 'Lines', text: c.lines });
   if (c.page) chips.push({ label: 'Page', text: c.page });
+  if (c.beside) chips.push({ label: 'Beside', text: shortTitle(c.beside.title, 26), title: c.beside.path });
   if (c.selection) chips.push({ label: 'Passage', text: shortTitle(c.selection.replace(/\s+/g, ' '), 38), title: c.selection, accent: true });
   return chips;
 }
@@ -319,10 +359,10 @@ function cleanSelection(text) {
   return String(text || '').replace(/​/g, '').trim();
 }
 
-/** What is selected now: text in the reader, or a range in the editor. */
+/** What is selected now inside `main` (a pane's scroller): text in the reader, or a range in the editor. */
 function captureSelection(main) {
   const active = document.activeElement;
-  if (active && active.tagName === 'TEXTAREA' && active.classList.contains('atlas-editor-text') && active.selectionEnd > active.selectionStart) {
+  if (active && active.tagName === 'TEXTAREA' && active.classList.contains('atlas-editor-text') && active.selectionEnd > active.selectionStart && (!main || main.contains(active))) {
     const value = active.value;
     const before = value.slice(0, active.selectionStart);
     const first = before.split('\n').length;
@@ -385,7 +425,7 @@ function EmbeddedConversation({ sessionId, onOpenChat }) {
 
 const COMPANION_MIN = 340;
 
-function Companion({ threadId, pending, onClose, flash, width, onWidth }) {
+function Companion({ threadId, pending, onClose, flash, width, onWidth, tabs, hidden }) {
   const threads = useThreadIndex();
   const rows = useSessionRows();
   const focus = useFocus();
@@ -431,24 +471,11 @@ function Companion({ threadId, pending, onClose, flash, width, onWidth }) {
     if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
     else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
   };
-  const startResize = (event) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startW = width;
-    const host = event.currentTarget.closest('.atlas-body');
-    const max = host ? host.clientWidth * 0.66 : 900;
-    const move = (e) => onWidth(Math.round(Math.min(max, Math.max(COMPANION_MIN, startW + (startX - e.clientX)))), false);
-    const up = (e) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      onWidth(Math.round(Math.min(max, Math.max(COMPANION_MIN, startW + (startX - e.clientX)))), true);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
+  const startResize = columnResizer(width, onWidth, COMPANION_MIN, 0.66);
   const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-  return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion', style: { '--companion-w': width + 'px' } },
+  return h('aside', { className: cx('atlas-companion', hidden && 'is-hidden'), 'aria-label': 'Discussion', 'aria-hidden': hidden || undefined, style: { '--companion-w': width + 'px' } },
     h('div', { className: 'atlas-companion-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the discussion pane', onPointerDown: startResize }),
+    tabs ? h('div', { className: 'atlas-companion-tabs' }, tabs) : null,
     h('header', { className: 'atlas-companion-head' },
       h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
       h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
@@ -553,7 +580,8 @@ function SelectionTools({ container, host }) {
   }, [container.current]);
   if (!pick) return null;
   const context = focusContext(focus, pick);
-  const keepable = Boolean(pick.page && reading.map && focus.doc && samePath(reading.pdf, focus.doc.path));
+  const current = focus.doc ? readingOf(reading, focus.doc.path) : null;
+  const keepable = Boolean(pick.page && current && current.map);
   const done = () => {
     setPick(null);
     setAsking(false);
@@ -576,7 +604,7 @@ function SelectionTools({ container, host }) {
         ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
         actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
         actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
-        keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(reading, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
+        keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
       ]);
 }
 
@@ -595,7 +623,7 @@ function ThreadRow({ t, row, onOpen, current }) {
       h('span', { className: 'atlas-item-label' }, threadLabel(t)),
       h('span', { className: 'atlas-item-sub' }, [where, ago(t.created)].filter(Boolean).join(' · '))),
     t.kind === 'team' ? h(Chip, { title: 'An agent team: the lead and its members' }, 'team') : null,
-    running ? h(Chip, { dot: '#9db8ff' }, 'working') : null);
+    running ? h(Chip, { dot: 'var(--status-active)' }, 'working') : null);
 }
 
 /** The discussions about a topic (its documents included), or across the research. */

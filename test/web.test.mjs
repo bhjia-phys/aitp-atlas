@@ -16,7 +16,7 @@ import { apply } from '../index.js';
 import { appendUnderHeading, arxivEntries, arxivQuery, cleanDiscover, fillPaperTemplate, momentUrl, parseIdentifier, safeJoin, unpackSource, untar } from '../lib/sources.js';
 import { createWeb, proxyFor } from '../lib/web.js';
 import http from 'node:http';
-import { makeFixture } from './fixture.mjs';
+import { makeFixture, snapshot } from './fixture.mjs';
 
 const ATOM = readFileSync(new URL('./samples/arxiv-2207.07701.xml', import.meta.url), 'utf8');
 const INSPIRE = readFileSync(new URL('./samples/inspire-2207.07701.json', import.meta.url), 'utf8');
@@ -167,7 +167,14 @@ async function call(routes, method, name, { query = '', body, type = 'applicatio
   const finished = new Promise((resolve) => res.on('finish', resolve));
   await route.handler(req, res);
   await finished;
-  return { status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null') };
+  const raw = Buffer.concat(chunks);
+  let json = null;
+  try {
+    json = JSON.parse(raw.toString('utf8') || 'null');
+  } catch {
+    json = null;
+  }
+  return { status: res.statusCode, json, raw };
 }
 
 function network() {
@@ -346,5 +353,38 @@ test('web: a configured proxy that is not running falls back to the direct route
     if (saved.NO_PROXY === undefined) delete process.env.NO_PROXY;
     if (saved.no_proxy === undefined) delete process.env.no_proxy;
     server.close();
+  }
+});
+
+test('web: a paper is read through Atlas without being saved, and a paper map files it under its topic', async () => {
+  const fx = await makeFixture();
+  try {
+    await fsp.mkdir(path.join(fx.knowledge, 'templates'), { recursive: true });
+    await fsp.writeFile(path.join(fx.knowledge, 'templates', 'paper.md'), TEMPLATE);
+    const net = network();
+    const routes = host({ root: fx.root, request: net.request });
+    const before = await snapshot(fx.base);
+    const read = await call(routes, 'GET', 'web/pdf', { query: 'id=2207.07701v2' });
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.raw, net.pdf, 'the PDF passes through unchanged');
+    const asked = net.asked.length;
+    assert.equal((await call(routes, 'GET', 'web/pdf', { query: 'id=2207.07701v2' })).status, 200);
+    assert.equal(net.asked.length, asked, 'read again from memory, not fetched again');
+    assert.deepEqual(await snapshot(fx.base), before, 'reading writes nothing');
+    assert.equal((await call(routes, 'GET', 'web/pdf', { query: 'id=not-an-id' })).status, 400);
+    const off = host({ root: fx.root, web: false, request: net.request });
+    assert.equal((await call(off, 'GET', 'web/pdf', { query: 'id=2207.07701v2' })).status, 403, 'web: false stops it');
+    // Added for the topology topic, whose note does not cite it: By topic files it there.
+    const topology = fx.file('topics/topology/research.md');
+    const added = await call(routes, 'POST', 'web/add', { body: { id: '2207.07701', version: 'v2', source: false, note: true, why: 'Operator growth', topic: topology } });
+    assert.equal(added.status, 200);
+    const map = await fsp.readFile(added.json.map.file, 'utf8');
+    assert.match(map, /\*\*Why I'm reading it\.\*\* Operator growth\. For \[[^\]]+\]\([^)]*topology\/research\.md\)/);
+    const k = (await call(routes, 'GET', 'knowledge', { query: 'fresh=1' })).json;
+    const filed = k.byTopic.find((t) => t.id === 'topology');
+    assert.ok(filed && filed.arxiv.includes('2207.07701'), JSON.stringify(k.byTopic.map((t) => [t.id, t.arxiv])));
+    assert.ok(k.papers.find((p) => p.key === '2207.07701').usedBy.some((u) => u.id === 'topology'));
+  } finally {
+    await fx.cleanup();
   }
 });
