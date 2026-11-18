@@ -44,6 +44,22 @@ test('loopback mock emits multiple Messages deltas, a fixture file and one paper
   await assert.rejects(request(model.url));
 });
 
+test('private fixture can hold two independent replies and finish them out of order', { timeout: 8000 }, async () => {
+  const model = await startModel();
+  const ask = async () => (await request(model.url + '/v1/messages', { method: 'POST', headers: { 'x-api-key': model.key } })).text();
+  const a = model.holdNext('A'), b = model.holdNext('B');
+  try {
+    let firstDone = false;
+    const first = ask().then(text => { firstDone = true; return text; }); await a.started;
+    const second = ask(); await b.started;
+    b.release(); const textB = await second;
+    assert.match(textB, /Fixture stream B begins\./); assert.match(textB, /Stream B complete\./); assert.doesNotMatch(textB, /Stream A complete/);
+    assert.equal(firstDone, false, 'A must still be held after B ends');
+    a.release(); const textA = await first;
+    assert.match(textA, /Fixture stream A begins\./); assert.match(textA, /Stream A complete\./); assert.doesNotMatch(textA, /Stream B complete/);
+  } finally { a.release(); b.release(); await model.close(); }
+});
+
 test('real DSH serves only the staged Atlas fixture and consumes the streamed mock reply', {
   skip: findRuntime() ? false : 'Installed DSH required; set DSH_EXE and, for Electron, DSH_CLI.', timeout: 180000,
 }, async () => {
@@ -79,6 +95,21 @@ test('real DSH serves only the staged Atlas fixture and consumes the streamed mo
     assert.equal(overview.library, path.join(fx.knowledge, 'library'));
     assert.equal(overview.online, false);
     assert.match(overview.topics['mc/worm'].title, /Worm algorithm/);
+    // Exercise the real DSH exact/prefix registration, not just fakeContext's route map.
+    const registryApi = `${address}/aitp-atlas/api/discussions`;
+    const writeRecord = (method, suffix, body, auth = true) => request(registryApi + suffix, { method,
+      headers: { ...(auth ? {cookie} : {}), origin: address, 'content-type':'application/json' }, body:JSON.stringify(body) });
+    assert.equal((await request(registryApi)).status, 401);
+    assert.equal((await writeRecord('PATCH','/fixture-route',{pinned:true},false)).status, 401);
+    const created = await writeRecord('POST','',{id:'fixture-route',title:'Fixture session',topic:'mc/worm',origin:'desk'});
+    assert.equal(created.status,200);assert.equal((await created.json()).discussion.topic.id,'mc/worm');
+    const patched = await writeRecord('PATCH','/fixture-route',{pinned:true});
+    assert.equal(patched.status,200);assert.equal((await patched.json()).discussion.pinned,true);
+    const imported = await writeRecord('POST','/import',{records:[{id:'fixture-import',title:'Legacy fixture record'}]});
+    assert.equal(imported.status,200);assert.equal((await imported.json()).imported,1);
+    const rows = (await (await get('/aitp-atlas/api/discussions')).json()).discussions;
+    assert.equal(rows.find(r=>r.id==='fixture-import').origin,'import');
+    assert.equal(rows.find(r=>r.id==='fixture-route').pinned,true);
     const note = overview.topics['mc/worm'].file;
     const apiNote = '/aitp-atlas/api/note?path=';
     assert.equal((await get(apiNote + encodeURIComponent(note))).status, 200);

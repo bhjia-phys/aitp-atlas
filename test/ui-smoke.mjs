@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { withPreview } from '../scripts/preview.mjs';
 
@@ -35,7 +36,9 @@ async function connect(socketUrl, report) {
   }) };
 }
 
-await withPreview(async ({url,fx,env}) => {
+// Both suites run on the same real, private browser/Host lifecycle, never a user tab.
+export async function runBrowserSmoke(flow = smokeM1) {
+  return withPreview(async ({url,fx,env,model}) => {
   const browserDir=fx.file('chromium-profile');
   // Chromium needs native OS account discovery on Windows; --user-data-dir, not an
   // invented Windows account layout, selects its fresh browser profile. No DSH/model env.
@@ -73,7 +76,40 @@ await withPreview(async ({url,fx,env}) => {
     const notice=q('button',`['继续','Continue'].includes(el.textContent.trim()) && /预览版说明|preview release|preview notice|preview version/i.test(document.body.innerText)`);
     await click(notice,'private-profile DSH preview notice');
     await click(q('button,[role="button"]',`[el.title,el.ariaLabel,el.textContent.trim()].includes('Atlas')`),'DSH sidebar Atlas');
-    await click(q('.atlas-desk-topic'),'Desk topic picker');
+    const place=async name=>{
+      const trigger=q('button[aria-label="Atlas destinations"]');
+      await wait(`Boolean(${trigger}) || Boolean(${q('.atlas-rail button')})`,'Atlas navigation ready');
+      if(await ev(`Boolean(${trigger})`)) {
+        await click(trigger,'Atlas destinations');
+        await click(q('[role="menuitem"]',`el.textContent.trim().startsWith(${JSON.stringify(name)})`),name+' menu destination');
+      } else await click(q('.atlas-rail button',`el.ariaLabel.split(',')[0]===${JSON.stringify(name)}`),name+' rail destination');
+    };
+    await flow({q,wait,click,key,ev,c,place,fx,model});
+    const problems=[...errors,...httpErrors.map(x=>x.join(' '))];
+    assert.deepEqual(problems,[]);
+    console.log('PASS',flow.name,'— browser console, page and HTTP errors: 0');
+  } catch(error) {
+    console.error('Browser diagnostics:',JSON.stringify({errors,httpErrors,visible:await ev?.(`document.body.innerText.slice(-3500)`).catch(()=>null),buttons:await ev?.(`Array.from(document.querySelectorAll('button')).filter(x=>x.checkVisibility()).slice(0,65).map(x=>[x.ariaLabel,x.title,x.textContent.trim().slice(0,60)])`).catch(()=>null)}));
+    throw error;
+  } finally {
+    if(c){await c.call('Browser.close').catch(()=>{});c.close();}
+    // On a CDP startup failure the main process may still own renderers. Terminate only
+    // the process tree we launched; never locate or terminate the user's browser by name.
+    const force=setTimeout(()=>{
+      if(!browser.pid || browser.exitCode!==null || browser.signalCode!==null)return;
+      if(process.platform==='win32') {
+        const kill=spawn(path.join(process.env.SystemRoot,'System32','taskkill.exe'),['/PID',String(browser.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
+        kill.once('error',()=>browser.kill('SIGKILL'));
+      } else { try {process.kill(-browser.pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;} }
+    },4000);
+    try { await closed; } finally {clearTimeout(force);}
+  }
+});
+}
+
+async function smokeM1({q,wait,click,key,ev,c,place}) {
+    await place('Desk'); // M1 rail or the consolidated Atlas ▾ destination menu.
+    await click(q('.atlas-desk-topic,button[aria-label^="Choose topic"]'),'Desk topic picker');
     await click(q('.atlas-desk-choice',`el.textContent.includes('Worm algorithm:')`),'worm topic');
     assert.match(await ev(`document.querySelector('.atlas-desk-topic').textContent`),/Worm algorithm/);
     const question='Show the two fixture reading links.';
@@ -85,7 +121,7 @@ await withPreview(async ({url,fx,env}) => {
     const link=q(`${transcript} a, ${transcript} button`, `el.textContent.includes('worm note') || /mc[\\\\/]worm[\\\\/]research\\.md/i.test(el.title)`);
     const paper=q(`${transcript} a`, `el.href.includes('arxiv.org/abs/1510.07698')`);
     await wait(`Boolean(${paper})`,'streamed arXiv link');
-    assert.match(await ev(`document.querySelector('.atlas-companion-title').textContent`),/Worm algorithm/);
+    assert.match(await ev(`document.querySelector('.atlas-disc-topic,.atlas-companion-title')?.textContent || ''`),/Worm algorithm/);
     const retained=await c.call('Runtime.evaluate',{expression:`${paper}`,objectGroup:'smoke',returnByValue:false});
     // Keep a remote reference to an actual assistant-message node (not just the Atlas wrapper).
     const sameTranscript=async()=>assert.equal((await c.call('Runtime.callFunctionOn',{objectId:retained.result.objectId,functionDeclaration:`function(){return this===(${paper})&&this.isConnected;}`,returnByValue:true})).result.value,true);
@@ -109,23 +145,6 @@ await withPreview(async ({url,fx,env}) => {
     await wait(`Boolean(${q('[role="tab"][aria-selected="true"]',`el.innerText.trim()==='Library'`)})`,'Alt+5 opened Library');
     await click(q('.atlas-library button, .atlas-shelf button, [role="tabpanel"] button',`/^(Read|Open PDF|Read PDF|PDF)$/i.test(el.textContent.trim()) || /^(Open|Read) (the )?PDF$/i.test(el.title)`),'read local fixture PDF');
     await wait(pageOne,'PDF.js first fixture page from Library');
-    const problems=[...errors,...httpErrors.map(x=>x.join(' '))];
-    assert.deepEqual(problems,[]);
-    console.log('PASS Desk topic + send, DSH assistant/file/paper links, split + retained conversation, pane menu close/reopen, Alt+5, one-page PDF. Console/uncaught errors: 0. HTTP failures:',JSON.stringify(httpErrors));
-  } catch(error) {
-    console.error('Browser diagnostics:',JSON.stringify({errors,httpErrors,visible:await ev?.(`document.body.innerText.slice(-3500)`).catch(()=>null),buttons:await ev?.(`Array.from(document.querySelectorAll('button')).filter(x=>x.checkVisibility()).slice(0,65).map(x=>[x.ariaLabel,x.title,x.textContent.trim().slice(0,60)])`).catch(()=>null)}));
-    throw error;
-  } finally {
-    if(c){await c.call('Browser.close').catch(()=>{});c.close();}
-    // On a CDP startup failure the main process may still own renderers. Terminate only
-    // the process tree we launched; never locate or terminate the user's browser by name.
-    const force=setTimeout(()=>{
-      if(!browser.pid || browser.exitCode!==null || browser.signalCode!==null)return;
-      if(process.platform==='win32') {
-        const kill=spawn(path.join(process.env.SystemRoot,'System32','taskkill.exe'),['/PID',String(browser.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
-        kill.once('error',()=>browser.kill('SIGKILL'));
-      } else { try {process.kill(-browser.pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;} }
-    },4000);
-    try { await closed; } finally {clearTimeout(force);}
-  }
-});
+}
+
+if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) await runBrowserSmoke();
