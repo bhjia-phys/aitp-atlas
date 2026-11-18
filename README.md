@@ -9,8 +9,8 @@ to what you are looking at. The reasoning is in [DESIGN.md](DESIGN.md).
 
 ## What you see
 
-Open **Atlas** from the left sidebar. The top bar holds four places (Universe, Activity, Library,
-Learn), Search (`/`), Add (`+`), Ask (Ctrl+J) and the theme: **Auto** follows DSH's own appearance,
+Open **Atlas** from the left sidebar. The top bar holds five places (Universe, Activity, Library,
+Learn, Write), Search (`/`), Add or write (`+`, or N), Ask (Ctrl+J) and the theme: **Auto** follows DSH's own appearance,
 **Day** and **Night** stay put.
 
 - **Universe**: a star chart of the root `research.md`. Each direction is a colored sector in the
@@ -41,10 +41,17 @@ Learn), Search (`/`), Add (`+`), Ask (Ctrl+J) and the theme: **Auto** follows DS
   understand* (a dated note in the topic) and *Check my understanding*. Nothing tracks progress.
 - **Search** (`/`): every word must appear; results from notes, knowledge entries and papers (paper
   maps and the abstracts of their TeX sources), with the words marked.
+- **Write**: the LaTeX documents your topic notes link, by topic and newest first, each with whether
+  its PDF is built (a linked section stands for its document; standalone figures are left out).
+  One opens as the page, its source beside its PDF.
+- **Add or write** (`+` or N, anywhere): a paper by its arXiv ID, link, DOI or INSPIRE link, looked
+  up and added to the library for a topic, or read first beside the page; a note or a LaTeX document,
+  made from the template in a topic's folder (`notes/`, `manuscript/`, or one you name): a note opens
+  beside the page in the editor, a document as the page. Each starts with the topic in view.
 
 ## Bringing material in
 
-*Discover and add* (or `+` in the top bar):
+*Discover and add* (in the Library, or from the `+` panel):
 
 - **Saved searches** per topic: words such as `long-range Heisenberg · level statistics` (each
   phrase must appear in the title or abstract); arXiv's newest matches, marked new since you last

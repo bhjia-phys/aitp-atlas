@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, paneFor, sideLayout, placeKeys, paneFocus, besideOf, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, DIRECTION_SLOTS, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideKey, sideTitle };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, paneFor, sideLayout, placeKeys, paneFocus, besideOf, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, DIRECTION_SLOTS, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideKey, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -356,7 +356,7 @@ test('themes: auto follows DSH, day and night are fixed, the config adds safe th
 test('themes: every token the styles use is defined by both themes, and night keeps the observatory', () => {
   const used = new Set([...client.STYLES.matchAll(/var\(--([a-z0-9-]+)/g)].map((m) => m[1]));
   // Set by PDF.js on its text layer, or by Atlas inline: not theme tokens.
-  const own = new Set(['dir', 'serif', 'sans', 'mono', 'companion-w', 'side-w', 'tab-w', 'right-w', 'total-scale-factor', 'min-font-size', 'min-font-size-inv', 'text-scale-factor', 'font-height', 'rotate', 'scale-x']);
+  const own = new Set(['dir', 'serif', 'sans', 'mono', 'companion-w', 'side-w', 'tab-w', 'right-w', 'write-split', 'total-scale-factor', 'min-font-size', 'min-font-size-inv', 'text-scale-factor', 'font-height', 'rotate', 'scale-x']);
   const missing = (base) => [...used].filter((t) => !own.has(t) && !t.startsWith('dsw-') && !(t in client.THEME_TOKENS[base]));
   assert.deepEqual(missing('night'), []);
   assert.deepEqual(missing('day'), []);
@@ -401,4 +401,29 @@ test('client: no two modules declare the same top-level name (they share one sco
     for (const m of readFileSync(new URL(f, dir), 'utf8').matchAll(/^(?:async\s+)?(?:function\*?|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) names.set(m[1], [...(names.get(m[1]) || []), f]);
   }
   assert.deepEqual([...names].filter(([, where]) => where.length > 1), []);
+});
+
+test('write: a new note or LaTeX document goes in its topic folder, named from its title', () => {
+  assert.equal(client.noteSlug('Spectral flow: the edge anomaly (draft)'), 'spectral-flow-the-edge-anomaly-draft');
+  assert.equal(client.writeTarget('/r/qc/research.md', 'notes', 'Spectral flow', 'md'), '/r/qc/notes/spectral-flow.md');
+  assert.equal(client.writeTarget('/r/qc/research.md', '/manuscript/', 'Level statistics', 'tex'), '/r/qc/manuscript/level-statistics.tex');
+  assert.equal(client.writeTarget('/r/qc/research.md', '', 'Here', 'md'), '/r/qc/here.md', 'no folder: beside the topic note');
+  assert.equal(client.writeTarget('', 'notes', 'No topic', 'md'), '', 'a topic is needed');
+  assert.equal(client.writeTarget('/r/qc/research.md', 'notes', '  ', 'md'), '', 'a title is needed');
+});
+
+test('write: the PDF stays to the right of the source until the page is phone-narrow', () => {
+  const block = (width) => {
+    const start = client.STYLES.indexOf(`@container (max-width: ${width}px) {`);
+    assert.ok(start >= 0, `a ${width}px block`);
+    let depth = 0;
+    for (let i = client.STYLES.indexOf('{', start); i < client.STYLES.length; i++) {
+      if (client.STYLES[i] === '{') depth++;
+      else if (client.STYLES[i] === '}' && --depth === 0) return client.STYLES.slice(start, i);
+    }
+    return '';
+  };
+  assert.ok(!block(1000).includes('.atlas-write-split'), 'not stacked at 1000px');
+  assert.ok(block(640).includes('.atlas-write-split { grid-template-columns: minmax(0, 1fr)'), 'stacked only below 640px');
+  assert.match(client.STYLES, /\.atlas-write-split \{ display: grid; grid-template-columns: minmax\(240px, var\(--write-split, 50%\)\) 10px minmax\(260px, 1fr\)/);
 });

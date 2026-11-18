@@ -128,7 +128,8 @@ function joinPath(dir, rel) {
     if (part === '..') out.pop();
     else if (part !== '.') out.push(part);
   }
-  const lead = dir.startsWith('\\\\') ? '\\\\' : dir.startsWith('//') ? '//' : '';
+  // A UNC share, a // share, or (on macOS and Linux) an absolute path keeps its leading slashes.
+  const lead = dir.startsWith('\\\\') ? '\\\\' : dir.startsWith('//') ? '//' : dir.startsWith('/') ? '/' : '';
   return lead + out.filter((p, i) => p !== '' || i === 0).join(sep).replace(/^[\\/]+/, '');
 }
 

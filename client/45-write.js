@@ -50,6 +50,28 @@ function texOutline(text) {
 
 function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
   const pane = usePaneName();
+  // The source on the left, the PDF on the right; the share between them is the researcher's, remembered.
+  const [split, setSplit] = useState(() => storageGet('write-split', 50));
+  const splitBox = useRef(null);
+  const saveSplit = (value) => {
+    setSplit(value);
+    storageSet('write-split', value);
+  };
+  const startSplit = (event) => {
+    event.preventDefault();
+    const box = splitBox.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    const at = (x) => Math.round(Math.min(78, Math.max(22, ((x - rect.left) / rect.width) * 100)));
+    const move = (e) => setSplit(at(e.clientX));
+    const up = (e) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      saveSplit(at(e.clientX));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   const original = data.raw !== undefined ? data.raw : data.body;
   const [text, setText] = useState(original);
   const [base, setBase] = useState({ text: original, mtimeMs: data.mtimeMs });
@@ -235,7 +257,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
       h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
       h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
     main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
-    h('div', { className: 'atlas-write-split' },
+    h('div', { className: 'atlas-write-split', ref: splitBox, style: { '--write-split': split + '%' } },
       h('div', { className: 'atlas-write-source' },
         h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
         h('textarea', {
@@ -261,6 +283,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
           'aria-label': 'Source of ' + baseName(data.path),
           title: 'Ctrl+click a line to find it in the PDF',
         })),
+      h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the PDF', title: 'Drag to give the source or the PDF more room; double-click for half and half', onPointerDown: startSplit, onDoubleClick: () => saveSplit(50) }),
       h('div', { className: 'atlas-write-side' },
         h('div', { className: 'atlas-seg atlas-write-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on', key === 'problems' && errors && 'is-alert'), onClick: () => setTab(key) }, label))),
         h('div', { className: 'atlas-write-pane' },

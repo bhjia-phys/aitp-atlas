@@ -5,7 +5,9 @@
  * Nothing else in the research tree changes.
  */
 import assert from 'node:assert/strict';
+import { texHead } from '../lib/write.js';
 import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import test from 'node:test';
 import { apply, normalizeConfig } from '../index.js';
@@ -74,7 +76,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
@@ -197,6 +199,29 @@ test('host: without DSH authentication only this computer is answered; no root, 
     assert.equal(settings.web, true);
     assert.equal(settings.request, undefined, 'a YAML config cannot supply a request function');
     assert.equal(normalizeConfig({ root: '/r', web: false }).web, false);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('write: the LaTeX documents the notes link, a section standing for its document, figures left out', async () => {
+  assert.deepEqual(texHead('% \\documentclass{article}\n\\documentclass[11pt]{revtex4-2}\n\\title{Level statistics of the \\emph{kicked} top}\n'), { document: true, docClass: 'revtex4-2', title: 'Level statistics of the kicked top' });
+  assert.equal(texHead('\\documentclass[tikz]{standalone}\n').document, false, 'a standalone figure is not a document');
+  assert.equal(texHead('\\documentclass{article}\n\\title{Worm and Swendsen--Wang updates for the $\\mathcal{O}(2)\\ XY$ model --- notes}\n').title, 'Worm and Swendsen–Wang updates for the O(2) XY model — notes', 'LaTeX spacing, dashes and math wrappers read as text');
+  assert.equal(texHead('\\section{Model}\n').document, false);
+  assert.equal(texHead('%\\documentclass{article}\n').document, false, 'a commented-out class does not count');
+  const fx = await makeFixture();
+  try {
+    const dir = fx.file('topics/topology/manuscript');
+    await fsp.writeFile(path.join(dir, 'edge.tex'), '% !TEX root = draft.tex\n\\section{Edge}\n');
+    await fsp.writeFile(path.join(dir, 'figure.tex'), '\\documentclass{standalone}\n\\begin{document}x\\end{document}\n');
+    const note = fx.file('topics/topology/research.md');
+    await fsp.appendFile(note, '\nThe [edge section](manuscript/edge.tex) and [a figure](manuscript/figure.tex).\n');
+    const h = fakeContext();
+    apply(h.ctx, { root: fx.root });
+    const r = await call(h.routes, 'GET', 'write');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.documents.map((d) => [path.relative(fx.root, d.file).split(path.sep).join('/'), d.title, d.topic && d.topic.id, d.pdf]), [['topology/manuscript/draft.tex', 'draft', 'topology', null]], 'the section stands for draft.tex; the figure is not listed');
   } finally {
     await fx.cleanup();
   }

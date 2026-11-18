@@ -177,7 +177,7 @@ function NewNote({ dir, go, flash, onClose }) {
   const [folder, setFolder] = useState('notes');
   const [kind, setKind] = useState('md');
   const [busy, setBusy] = useState(false);
-  const slug = title.toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 60);
+  const slug = noteSlug(title);
   const target = slug ? joinPath(dir, `${folder.replace(/^[\\/]+|[\\/]+$/g, '') || '.'}/${slug}.${kind}`) : '';
   const create = async (event) => {
     event.preventDefault();
@@ -186,7 +186,7 @@ function NewNote({ dir, go, flash, onClose }) {
     try {
       await api('save', { method: 'POST', body: { path: target, text: TEMPLATES[kind](title.trim()), create: true } });
       onClose();
-      go({ view: 'doc', path: target, edit: true, created: true });
+      go({ view: 'doc', path: target, edit: true, created: true, full: kind === 'tex' });
     } catch (error) {
       flash(error.message);
     } finally {

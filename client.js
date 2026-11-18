@@ -134,7 +134,8 @@ window.__ModuleLoader__.load({
         if (part === '..') out.pop();
         else if (part !== '.') out.push(part);
       }
-      const lead = dir.startsWith('\\\\') ? '\\\\' : dir.startsWith('//') ? '//' : '';
+      // A UNC share, a // share, or (on macOS and Linux) an absolute path keeps its leading slashes.
+      const lead = dir.startsWith('\\\\') ? '\\\\' : dir.startsWith('//') ? '//' : dir.startsWith('/') ? '/' : '';
       return lead + out.filter((p, i) => p !== '' || i === 0).join(sep).replace(/^[\\/]+/, '');
     }
 
@@ -1376,7 +1377,7 @@ window.__ModuleLoader__.load({
       const [folder, setFolder] = useState('notes');
       const [kind, setKind] = useState('md');
       const [busy, setBusy] = useState(false);
-      const slug = title.toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 60);
+      const slug = noteSlug(title);
       const target = slug ? joinPath(dir, `${folder.replace(/^[\\/]+|[\\/]+$/g, '') || '.'}/${slug}.${kind}`) : '';
       const create = async (event) => {
         event.preventDefault();
@@ -1385,7 +1386,7 @@ window.__ModuleLoader__.load({
         try {
           await api('save', { method: 'POST', body: { path: target, text: TEMPLATES[kind](title.trim()), create: true } });
           onClose();
-          go({ view: 'doc', path: target, edit: true, created: true });
+          go({ view: 'doc', path: target, edit: true, created: true, full: kind === 'tex' });
         } catch (error) {
           flash(error.message);
         } finally {
@@ -1482,7 +1483,7 @@ window.__ModuleLoader__.load({
             data && data.mtimeMs ? h('span', { className: 'atlas-date' }, 'changed ' + dateOf(data.mtimeMs)) : null),
           h('div', { className: 'atlas-actions' },
             type === 'folder' ? null : h(AskMenu, { asks }),
-            editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true }) }, 'Edit') : null,
+            editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, beside its PDF' : undefined }, 'Edit') : null,
             type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
             h(Button, { quiet: true, icon: 'external', title: 'Open with the system app', onClick: () => openFile(path).then(() => flash('Opened with the system app.')).catch((e) => flash(e.message)) }, 'System app'))),
         data ? h(LinkedFrom, { refs: data.linkedFrom, go, label: 'Cited by' }) : null,
@@ -2086,6 +2087,28 @@ window.__ModuleLoader__.load({
 
     function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
       const pane = usePaneName();
+      // The source on the left, the PDF on the right; the share between them is the researcher's, remembered.
+      const [split, setSplit] = useState(() => storageGet('write-split', 50));
+      const splitBox = useRef(null);
+      const saveSplit = (value) => {
+        setSplit(value);
+        storageSet('write-split', value);
+      };
+      const startSplit = (event) => {
+        event.preventDefault();
+        const box = splitBox.current;
+        if (!box) return;
+        const rect = box.getBoundingClientRect();
+        const at = (x) => Math.round(Math.min(78, Math.max(22, ((x - rect.left) / rect.width) * 100)));
+        const move = (e) => setSplit(at(e.clientX));
+        const up = (e) => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          saveSplit(at(e.clientX));
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      };
       const original = data.raw !== undefined ? data.raw : data.body;
       const [text, setText] = useState(original);
       const [base, setBase] = useState({ text: original, mtimeMs: data.mtimeMs });
@@ -2271,7 +2294,7 @@ window.__ModuleLoader__.load({
           h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
           h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
         main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
-        h('div', { className: 'atlas-write-split' },
+        h('div', { className: 'atlas-write-split', ref: splitBox, style: { '--write-split': split + '%' } },
           h('div', { className: 'atlas-write-source' },
             h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
             h('textarea', {
@@ -2297,6 +2320,7 @@ window.__ModuleLoader__.load({
               'aria-label': 'Source of ' + baseName(data.path),
               title: 'Ctrl+click a line to find it in the PDF',
             })),
+          h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the PDF', title: 'Drag to give the source or the PDF more room; double-click for half and half', onPointerDown: startSplit, onDoubleClick: () => saveSplit(50) }),
           h('div', { className: 'atlas-write-side' },
             h('div', { className: 'atlas-seg atlas-write-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on', key === 'problems' && errors && 'is-alert'), onClick: () => setTab(key) }, label))),
             h('div', { className: 'atlas-write-pane' },
@@ -2529,6 +2553,182 @@ window.__ModuleLoader__.load({
             choices.map((c) => h('option', { key: c.file, value: c.file }, c.label)))),
         h('input', { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value), placeholder: 'Why you are reading it (optional)', 'aria-label': 'Why you are reading it' }),
         h('button', { type: 'submit', className: 'atlas-button is-primary is-small', disabled: busy }, busy ? 'Adding…' : 'Add'));
+    }
+
+    // ===== client/48-quick.js
+    // ------------------------------------------------------------------ write ---
+    // Adding and writing from anywhere. The + button (or N) opens a small panel over the page: a paper
+    // (looked up, then added to the library for a topic), a note, or a LaTeX document (created in a
+    // topic's folder and opened: a note beside the page, a document as the page, where its PDF fits).
+    // Each starts with the topic in view. The Write page lists the LaTeX documents the notes link.
+
+    const QUICK_TABS = [['paper', 'Paper', 'paper'], ['note', 'Note', 'note'], ['tex', 'LaTeX', 'writing']];
+
+    /** A file name from a title: lower case, letters, digits and hyphens. */
+    function noteSlug(title) {
+      return String(title || '').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 60);
+    }
+
+    /** Where a new note or LaTeX document goes: `<topic folder>/<folder>/<slug>.<ext>`, or '' until it has a topic and a name. */
+    function writeTarget(topicFile, folder, title, kind) {
+      const slug = noteSlug(title);
+      if (!slug || !topicFile) return '';
+      return joinPath(dirOf(topicFile), `${String(folder || '').replace(/^[\\/]+|[\\/]+$/g, '') || '.'}/${slug}.${kind}`);
+    }
+
+    /** The topic in view (in the pane used last), if a file can be filed under it. */
+    function topicInView(ov) {
+      const focus = paneFocus(focusStore.get(), 'global');
+      const file = focus.topic && focus.topic.path;
+      return file && topicChoices(ov).some((c) => pathKey(c.file) === pathKey(file)) ? file : '';
+    }
+
+    function QuickAdd({ tab: initial, overview: ov, go, flash, onClose }) {
+      const [tab, setTab] = useState(initial || 'paper');
+      const box = useRef(null);
+      const topic = useMemo(() => topicInView(ov), [ov]);
+      useEffect(() => {
+        const close = (event) => {
+          if (event.type === 'keydown' ? event.key === 'Escape' : !(box.current && box.current.contains(event.target))) onClose();
+        };
+        document.addEventListener('mousedown', close);
+        document.addEventListener('keydown', close);
+        return () => {
+          document.removeEventListener('mousedown', close);
+          document.removeEventListener('keydown', close);
+        };
+      }, [onClose]);
+      const done = (next) => {
+        onClose();
+        go(next);
+      };
+      return h('div', { className: 'atlas-quick', role: 'dialog', 'aria-label': 'Add a paper, or write a note or a LaTeX document', ref: box },
+        h('div', { className: 'atlas-seg', role: 'tablist', 'aria-label': 'What to add' },
+          QUICK_TABS.map(([key, label, icon]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on'), onClick: () => setTab(key) }, h(Icon, { name: icon, size: 14 }), ' ', label))),
+        tab === 'paper' ? h(QuickPaper, { ov, topic, done, flash }) : h(QuickNote, { key: tab, kind: tab === 'tex' ? 'tex' : 'md', ov, topic, done, flash }),
+        h('p', { className: 'atlas-quick-more' }, 'A lecture or files: ', h(TextButton, { onClick: () => done({ view: 'library', tab: 'discover', add: Date.now() }) }, 'Library › Discover and add'), ' · ', h('kbd', null, 'Esc'), ' closes'));
+    }
+
+    /** A paper by its identifier: looked up, then added for a topic (or read first, beside the page). */
+    function QuickPaper({ ov, topic, done, flash }) {
+      const [q, setQ] = useState('');
+      const [found, setFound] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const look = async (event) => {
+        event.preventDefault();
+        if (!q.trim()) return;
+        setBusy(true);
+        setError('');
+        setFound(null);
+        try {
+          setFound(await api('web/lookup', { query: { q: q.trim() } }));
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+        }
+      };
+      const url = found ? (found.kind === 'arxiv' ? `https://arxiv.org/abs/${found.id}${found.version}` : found.doi ? `https://doi.org/${found.doi}` : '') : '';
+      const authors = found && found.authors ? found.authors : [];
+      let actions = null;
+      if (found && found.inLibrary && found.inLibrary.pdf) {
+        actions = h('div', { className: 'atlas-actions' }, h('span', { className: 'atlas-muted' }, 'Already in your library.'),
+          h(Button, { small: true, primary: true, icon: 'paper', onClick: () => done({ view: 'doc', path: found.inLibrary.pdf, link: true }) }, 'Open it'));
+      } else if (found && found.kind === 'arxiv') {
+        actions = h('div', null,
+          h(AddToLibrary, { entry: found, ov, preferred: topic, go: (next) => done({ ...next, stay: false, link: true }), flash }),
+          h(Button, { small: true, quiet: true, icon: 'paper', onClick: () => done({ view: 'paper', url, topic }) }, 'Read it first'));
+      } else if (found) {
+        actions = h('p', { className: 'atlas-muted' }, 'It has no arXiv edition, so only its details can be shown. ', url ? h(TextButton, { onClick: () => done({ view: 'paper', url, topic }) }, 'Show them') : null);
+      }
+      return h('div', { className: 'atlas-quick-body' },
+        h('form', { className: 'atlas-quick-row', onSubmit: look },
+          h('input', { className: 'atlas-input', autoFocus: true, value: q, onChange: (e) => setQ(e.target.value), placeholder: 'arXiv ID or link, DOI, or INSPIRE link', 'aria-label': 'The paper' }),
+          h('button', { type: 'submit', className: 'atlas-button is-small', disabled: busy || !q.trim() }, busy ? 'Looking…' : 'Look up')),
+        error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null,
+        found ? h('div', { className: 'atlas-quick-found' },
+          h('p', { className: 'atlas-quick-title' }, found.title || q),
+          h('p', { className: 'atlas-muted' }, [authors.slice(0, 4).join(', ') + (authors.length > 4 ? ', et al.' : ''), found.year, found.journal].filter(Boolean).join(' · ')),
+          actions) : null);
+    }
+
+    /** A note or a LaTeX document in a topic's folder, made from the template and opened for writing. */
+    function QuickNote({ kind, ov, topic, done, flash }) {
+      const choices = useMemo(() => topicChoices(ov), [ov]);
+      const [title, setTitle] = useState('');
+      const [forTopic, setForTopic] = useState(topic || '');
+      const [folder, setFolder] = useState(kind === 'tex' ? 'manuscript' : 'notes');
+      const [busy, setBusy] = useState(false);
+      const target = writeTarget(forTopic, folder, title, kind);
+      const create = async (event) => {
+        event.preventDefault();
+        if (!target) return;
+        setBusy(true);
+        try {
+          await api('save', { method: 'POST', body: { path: target, text: TEMPLATES[kind](title.trim()), create: true } });
+          // A note opens beside the page; a LaTeX document as the page, where its PDF has room.
+          done(kind === 'tex' ? { view: 'doc', path: target, edit: true, created: true, full: true } : { view: 'doc', path: target, edit: true, created: true, link: true });
+        } catch (error) {
+          flash(error.status === 409 ? `There is already a file called ${baseName(target)} there.` : error.message);
+        } finally {
+          setBusy(false);
+        }
+      };
+      return h('form', { className: 'atlas-quick-body', onSubmit: create },
+        h('input', { className: 'atlas-input', autoFocus: true, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === 'tex' ? 'Title of the document' : 'Title of the note', 'aria-label': 'Title' }),
+        h('div', { className: 'atlas-quick-row' },
+          h('label', { className: 'atlas-ref-for' }, h('span', null, 'For'),
+            h('select', { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic it belongs to' },
+              h('option', { value: '' }, 'Choose a topic…'),
+              choices.map((c) => h('option', { key: c.file, value: c.file }, c.label)))),
+          h('label', { className: 'atlas-ref-for atlas-quick-folder' }, h('span', null, 'In'),
+            h('input', { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value), 'aria-label': 'The folder inside the topic' }))),
+        h('div', { className: 'atlas-quick-row' },
+          h('span', { className: 'atlas-path' }, target ? target.slice(dirOf(forTopic).length + 1) : forTopic ? 'Name it to see where it goes' : 'Choose the topic it belongs to'),
+          h('span', { className: 'atlas-spacer' }),
+          h('button', { type: 'submit', className: 'atlas-button is-primary is-small', disabled: busy || !target }, busy ? 'Creating…' : kind === 'tex' ? 'Create and open' : 'Create and write')));
+    }
+
+    /** The Write page: the LaTeX documents the notes link, by topic, newest first, each with its build state. */
+    function WriteView({ overview: ov, go, version, onQuick }) {
+      const { data, error, loading } = useApi('write', version ? { fresh: 1 } : null, 'write', version);
+      usePublishFocus({ kind: 'write' }, []);
+      const groups = useMemo(() => {
+        const out = [];
+        for (const d of (data && data.documents) || []) {
+          const key = d.topic ? d.topic.id : '';
+          let group = out.find((g) => g.key === key);
+          if (!group) out.push((group = { key, topic: d.topic, docs: [] }));
+          group.docs.push(d);
+        }
+        return out;
+      }, [data]);
+      return h('div', { className: 'atlas-page is-wide atlas-write-page' },
+        h('p', { className: 'atlas-kicker' }, h(Icon, { name: 'writing', size: 14 }), 'Write'),
+        h('h1', null, 'Your writing'),
+        h('p', { className: 'atlas-lede' }, 'The LaTeX documents your topic notes link, newest first. Open one to write beside its PDF; Build is Ctrl+B. New notes, documents and papers also start from + anywhere (or N).'),
+        h('div', { className: 'atlas-actions' },
+          h(Button, { primary: true, icon: 'writing', onClick: () => onQuick('tex') }, 'New LaTeX document'),
+          h(Button, { icon: 'note', onClick: () => onQuick('note') }, 'New note'),
+          h(Button, { icon: 'paper', onClick: () => onQuick('paper') }, 'Add a paper')),
+        loading && !data ? h(Loading, { label: 'Finding the documents your notes link…' }) : null,
+        error ? h(ErrorNote, { error }) : null,
+        data && groups.length === 0 ? h(Empty, null, 'No topic note links a LaTeX document yet. Link one from its topic’s note, or start one with New LaTeX document.') : null,
+        groups.map((g) => h('section', { key: g.key, className: 'atlas-section' },
+          h('h2', null, g.topic ? h(TextButton, { onClick: () => go({ view: 'doc', path: g.topic.file }) }, g.topic.title) : 'Outside the topics', h('span', { className: 'atlas-count' }, g.docs.length)),
+          h('ul', { className: 'atlas-items' }, g.docs.map((d) => h('li', { key: d.file }, h(WriteRow, { d, go })))))));
+    }
+
+    function WriteRow({ d, go }) {
+      const built = Boolean(d.pdf && d.pdf.mtimeMs >= d.mtimeMs - 1000);
+      const state = !d.pdf ? 'not built yet' : built ? `PDF ${dateOf(d.pdf.mtimeMs)}` : 'PDF older than the source';
+      return h('div', { className: 'atlas-write-row' },
+        h('button', { type: 'button', className: 'atlas-item', title: d.file, onClick: () => go({ view: 'doc', path: d.file, edit: true, full: true }) },
+          h(Icon, { name: 'writing', size: 15 }),
+          h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, d.title), h('span', { className: 'atlas-item-sub' }, `${baseName(d.file)} · changed ${dateOf(d.mtimeMs)}`)),
+          h(Chip, { dot: !d.pdf ? 'var(--status-other)' : built ? 'var(--status-done)' : 'var(--status-waiting)' }, state)),
+        d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
     }
 
     // ===== client/50-library.js
@@ -4450,7 +4650,7 @@ window.__ModuleLoader__.load({
     // opens in the companion pane. With a file and a discussion both open they stand side by side,
     // or, when the window cannot fit three columns, share the side as two tabs.
 
-    const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn']];
+    const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn'], ['write', 'Write', 'writing']];
     const SIDE_MIN = 360;
     const MAIN_MIN = 420;
 
@@ -4551,6 +4751,7 @@ window.__ModuleLoader__.load({
       const [thread, setThread] = useState(() => storageGet('companion', null));
       const [last, setLast] = useState(() => storageGet('companion-last', null));
       const [askBar, setAskBar] = useState(null);
+      const [quick, setQuick] = useState(null);
       const [paneWidth, setPaneWidth] = useState(() => storageGet('companion-width', 440));
       const [side, setSide] = useState(() => {
         const saved = storageGet('side', null);
@@ -4660,8 +4861,12 @@ window.__ModuleLoader__.load({
         const cur = sideRef.current;
         const here = from === 'side' ? (cur ? (cur.url ? { view: 'paper', url: cur.url } : { view: 'doc', path: cur.path }) : null) : routeRef.current;
         if (paneFor(next, from, here, (p) => placesRef.current.has(pathKey(p))) === 'side') openSide(next);
-        else goMain(next && next.full ? { ...next, full: undefined } : next);
-      }, [goMain, openSide]);
+        else {
+          // Made the page: the same file is not shown again beside it.
+          if (next && next.full && cur && cur.path && next.path && pathKey(cur.path) === pathKey(next.path) && !closeSide()) return;
+          goMain(next && next.full ? { ...next, full: undefined } : next);
+        }
+      }, [goMain, openSide, closeSide]);
       const go = useMemo(() => navigator('main'), [navigator]);
       const goSide = useMemo(() => navigator('side'), [navigator]);
       const openAsPage = useCallback(() => {
@@ -4706,6 +4911,7 @@ window.__ModuleLoader__.load({
       const current = thread && thread.id ? thread.id : null;
       const actionValue = useMemo(() => ({ ...actions, current }), [actions, current]);
       const closeAsk = useCallback(() => setAskBar(null), []);
+      const closeQuick = useCallback(() => setQuick(null), []);
       // The ask bar takes the selection from whichever pane holds it (and that pane's focus).
       const openAsk = useCallback(() => {
         const beside = sideScroller.current ? captureSelection(sideScroller.current) : {};
@@ -4750,6 +4956,22 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKey, true);
       }, [go]);
 
+      // "N" adds or writes something (a paper, a note, a LaTeX document), unless a field has the keyboard.
+      useEffect(() => {
+        const onKey = (event) => {
+          if (String(event.key).toLowerCase() !== 'n' || event.ctrlKey || event.metaKey || event.altKey) return;
+          const target = event.target;
+          if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+          if (target && target.closest && target.closest('.atlas-companion')) return;
+          const root = rootRef.current;
+          if (!root || !root.isConnected || root.getClientRects().length === 0) return;
+          event.preventDefault();
+          setQuick({ tab: 'paper', at: Date.now() });
+        };
+        document.addEventListener('keydown', onKey, true);
+        return () => document.removeEventListener('keydown', onKey, true);
+      }, []);
+
       // A direction anchor on the Universe scrolls to its section once drawn.
       useEffect(() => {
         if (route.view !== 'home' || !route.anchor) return undefined;
@@ -4780,11 +5002,12 @@ window.__ModuleLoader__.load({
         else if (route.view === 'activity') body = h(ActivityView, props);
         else if (route.view === 'search') body = h(SearchView, { ...props, q: route.q, at: route.at });
         else if (route.view === 'learn') body = h(LearnView, { ...props, path: route.path });
+        else if (route.view === 'write') body = h(WriteView, { ...props, onQuick: (tab) => setQuick({ tab, at: Date.now() }) });
         else if (route.view === 'paper' && route.url) body = h(PaperRefView, { ...props, key: route.url, url: route.url, topic: route.topic });
         else if (route.view === 'team') body = h(TeamView, { ...props, key: (route.path || '') + ':' + (route.thread || ''), path: route.path, thread: route.thread });
         else body = h(UniverseView, props);
       }
-      const area = route.view === 'library' ? 'library' : route.view === 'home' ? 'home' : route.view === 'activity' || route.view === 'team' ? 'activity' : route.view === 'learn' ? 'learn' : '';
+      const area = route.view === 'library' ? 'library' : route.view === 'home' ? 'home' : route.view === 'activity' || route.view === 'team' ? 'activity' : route.view === 'learn' ? 'learn' : route.view === 'write' ? 'write' : '';
       const waiting = overview.data ? waitingItems(overview.data).length : 0;
       const filtering = route.view === 'home' || route.view === 'library';
       const open = Boolean(thread && (thread.id || thread.pending));
@@ -4812,7 +5035,7 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', className: 'atlas-ask-top', onMouseDown: (e) => e.preventDefault(), onClick: openAsk, title: 'Ask about what you are viewing, or the passage you selected (Ctrl+J)' },
                 h(Icon, { name: 'spark', size: 15 }), h('span', null, 'Ask'), h('kbd', null, 'Ctrl J')),
               h('button', { type: 'button', className: 'atlas-icon-button', title: 'Search your notes, knowledge and papers (/)', 'aria-label': 'Search', onClick: () => go({ view: 'search', at: Date.now() }) }, h(Icon, { name: 'search' })),
-              h('button', { type: 'button', className: 'atlas-icon-button', title: 'Add a paper, a lecture or files', 'aria-label': 'Add a paper, a lecture or files', onClick: () => go({ view: 'library', tab: 'discover', add: Date.now() }) }, h(Icon, { name: 'plus' })),
+              h('button', { type: 'button', className: 'atlas-icon-button', title: 'Add a paper, or write a note or a LaTeX document (N)', 'aria-label': 'Add or write', onClick: () => setQuick({ tab: 'paper', at: Date.now() }) }, h(Icon, { name: 'plus' })),
               !open && last ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Show the last discussion', 'aria-label': 'Show the last discussion', onClick: () => showThread({ id: last }) }, h(Icon, { name: 'panel' })) : null,
               h('button', { type: 'button', className: 'atlas-icon-button', title: `Theme: ${modeLabel(mode)}. Click for ${modeLabel(nextMode)}.`, 'aria-label': `Theme: ${modeLabel(mode)}`, onClick: () => themeModeStore.set(nextMode) }, h(Icon, { name: THEME_ICON[mode] || (theme.base === 'day' ? 'sun' : 'moon') })),
               h('button', { type: 'button', className: cx('atlas-icon-button', overview.loading && 'is-busy'), title: 'Read the files again', 'aria-label': 'Read the files again', onClick: () => setVersion(Date.now()) }, h(Icon, { name: 'refresh' })))),
@@ -4835,7 +5058,8 @@ window.__ModuleLoader__.load({
             })) : null,
             h(PaneContext.Provider, { value: 'main' }, h(SelectionTools, { container: scroller, host: bodyRef })),
             side ? h(PaneContext.Provider, { value: 'side' }, h(SelectionTools, { container: sideScroller, host: bodyRef })) : null,
-            askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null)));
+            askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null,
+            quick && overview.data ? h(QuickAdd, { key: `${quick.tab}:${quick.at || ''}`, tab: quick.tab, overview: overview.data, go, flash, onClose: closeQuick }) : null)));
     }
 
     // ===== client/80-styles.js
@@ -5005,6 +5229,21 @@ window.__ModuleLoader__.load({
     .atlas-ref-for > span { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
     .atlas-ref-for > select { flex: 1; min-width: 0; }
     .atlas-ref-abstract { margin: 0; color: var(--ink-2); line-height: 1.6; }
+
+    /* ---- adding and writing from anywhere: the + panel and the Write page ---- */
+    .atlas-quick { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); display: grid; gap: 10px; padding: 12px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))), 0 0 0 4px rgba(var(--accent-rgb), .05); }
+    .atlas-body.has-right > .atlas-quick { left: calc((100% - var(--right-w, 0px)) / 2); width: min(600px, calc(100% - var(--right-w, 0px) - 32px)); }
+    .atlas-quick .atlas-seg { justify-self: start; }
+    .atlas-quick-body { display: grid; gap: 8px; }
+    .atlas-quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .atlas-quick-row > .atlas-input { flex: 1 1 260px; width: auto; min-width: 0; }
+    .atlas-quick-folder { flex: 0 1 220px; }
+    .atlas-quick-found { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(var(--accent-rgb), .04); }
+    .atlas-quick-title { margin: 0; font: 600 14.5px/1.35 var(--serif); color: var(--ink-1); }
+    .atlas-quick-found .atlas-muted { margin: 0; }
+    .atlas-quick-more { margin: 0; font-size: 12px; color: var(--ink-3); }
+    .atlas-write-row { display: flex; align-items: center; gap: 8px; }
+    .atlas-write-row > .atlas-item { flex: 1; min-width: 0; }
 
     /* ---- asking: the ask bar and the selection tools ---- */
     .atlas-askbar { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(660px, calc(100% - 32px)); padding: 12px 12px 10px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))), 0 0 0 4px rgba(var(--accent-rgb), .05); }
@@ -5382,10 +5621,13 @@ window.__ModuleLoader__.load({
     .atlas-write-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .atlas-write-engine { width: auto; max-width: 320px; padding: 5px 9px; font-size: 13px; }
     .atlas-write-main { margin: 0; font-size: 12.5px; }
-    .atlas-write-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; height: calc(100vh - 250px); min-height: 440px; }
+    .atlas-write-split { display: grid; grid-template-columns: minmax(240px, var(--write-split, 50%)) 10px minmax(260px, 1fr); gap: 0; height: calc(100vh - 250px); min-height: 440px; }
     .atlas-write-source { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--deep-rgb), .65); }
     .atlas-write-gutter { margin: 0; padding: 12px 8px 12px 12px; overflow: hidden; text-align: right; color: var(--ink-3); font: 12.5px/1.6 var(--mono); user-select: none; border-right: 1px solid var(--line); background: rgba(var(--panel-rgb), .55); min-width: 44px; }
     .atlas-write-text.atlas-editor-text { height: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; outline: none; resize: none; padding: 12px; background: transparent; color: var(--ink-1); font: 12.5px/1.6 var(--mono); white-space: pre; overflow: auto; tab-size: 2; box-shadow: none; }
+    .atlas-write-divider { position: relative; cursor: col-resize; touch-action: none; }
+    .atlas-write-divider::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 4px; width: 2px; border-radius: 2px; background: var(--line); transition: background .15s; }
+    .atlas-write-divider:hover::after, .atlas-write-divider:active::after { background: rgba(var(--accent-rgb), .55); }
     .atlas-write-side { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--panel-rgb), .5); }
     .atlas-write-tabs { padding: 6px; border-bottom: 1px solid var(--line); border-radius: 0; }
     .atlas-seg-item.is-alert { color: var(--danger-ink-2); }
@@ -5495,9 +5737,6 @@ window.__ModuleLoader__.load({
     @container (max-width: 1000px) {
       .atlas-learn-grid { grid-template-columns: minmax(0, 1fr); }
       .atlas-result-where, .atlas-result-snippet { margin-left: 0; }
-      .atlas-write-split { grid-template-columns: minmax(0, 1fr); height: auto; }
-      .atlas-write-source { height: 60vh; }
-      .atlas-write-side { height: 70vh; }
       .atlas-discover { grid-template-columns: minmax(0, 1fr); }
       .atlas-add { position: static; order: -1; }
       .atlas-pdf-layout.has-aside { grid-template-columns: minmax(0, 1fr); }
@@ -5506,8 +5745,13 @@ window.__ModuleLoader__.load({
       .atlas-side { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; max-width: calc(100% - 28px); }
       .atlas-body.is-tabbed > .atlas-main { margin-right: 0; }
       .atlas-body.has-right > .atlas-askbar { left: 50%; width: min(640px, calc(100% - 32px)); }
+      .atlas-body.has-right > .atlas-quick { left: 50%; width: min(620px, calc(100% - 32px)); }
     }
     @container (max-width: 640px) {
+      .atlas-write-split { grid-template-columns: minmax(0, 1fr); height: auto; gap: 12px; }
+      .atlas-write-divider { display: none; }
+      .atlas-write-source { height: 60vh; }
+      .atlas-write-side { height: 70vh; }
       .atlas-ask-top kbd { display: none; }
       .atlas-activity-row { grid-template-columns: minmax(0, 1fr) auto; }
       .atlas-activity-kind, .atlas-activity-row > .atlas-date { display: none; }

@@ -177,3 +177,17 @@ is for, preset to the topic being read; the library stays one shelf by edition (
 that link beside the topics whose notes cite the paper. No folder per subject: a paper serves several
 topics, and the citation and the reading note are where that is said.
 
+## 0.7 (2026-11-17): writing and adding from anywhere
+
+Adding a paper meant going to the Library's *Discover and add*; a note was started from its topic's
+page; and LaTeX had no place of its own. Now the `+` button (or N) opens a small panel over whatever is
+on screen, for a paper (looked up, then added for a topic, or read first beside the page), a note, or a
+LaTeX document. Each starts with the topic in view, so recording something while reading takes a title
+and Enter. A note opens beside the page in the editor; a document opens as the page, where its PDF fits.
+
+The **Write** page lists the LaTeX documents the topic notes link, by topic and newest first, with their
+build state. It reads what the notes link, not the whole tree: a research tree also holds unpacked arXiv
+sources, standalone figures and old versions (a census of one tree found about 500 files declaring a
+document class), and the notes say which documents matter. A linked section stands for its document
+(`mainFileOf`); a standalone figure is not a document.
+

@@ -4,7 +4,7 @@
 // opens in the companion pane. With a file and a discussion both open they stand side by side,
 // or, when the window cannot fit three columns, share the side as two tabs.
 
-const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn']];
+const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn'], ['write', 'Write', 'writing']];
 const SIDE_MIN = 360;
 const MAIN_MIN = 420;
 
@@ -105,6 +105,7 @@ function AtlasApp() {
   const [thread, setThread] = useState(() => storageGet('companion', null));
   const [last, setLast] = useState(() => storageGet('companion-last', null));
   const [askBar, setAskBar] = useState(null);
+  const [quick, setQuick] = useState(null);
   const [paneWidth, setPaneWidth] = useState(() => storageGet('companion-width', 440));
   const [side, setSide] = useState(() => {
     const saved = storageGet('side', null);
@@ -214,8 +215,12 @@ function AtlasApp() {
     const cur = sideRef.current;
     const here = from === 'side' ? (cur ? (cur.url ? { view: 'paper', url: cur.url } : { view: 'doc', path: cur.path }) : null) : routeRef.current;
     if (paneFor(next, from, here, (p) => placesRef.current.has(pathKey(p))) === 'side') openSide(next);
-    else goMain(next && next.full ? { ...next, full: undefined } : next);
-  }, [goMain, openSide]);
+    else {
+      // Made the page: the same file is not shown again beside it.
+      if (next && next.full && cur && cur.path && next.path && pathKey(cur.path) === pathKey(next.path) && !closeSide()) return;
+      goMain(next && next.full ? { ...next, full: undefined } : next);
+    }
+  }, [goMain, openSide, closeSide]);
   const go = useMemo(() => navigator('main'), [navigator]);
   const goSide = useMemo(() => navigator('side'), [navigator]);
   const openAsPage = useCallback(() => {
@@ -260,6 +265,7 @@ function AtlasApp() {
   const current = thread && thread.id ? thread.id : null;
   const actionValue = useMemo(() => ({ ...actions, current }), [actions, current]);
   const closeAsk = useCallback(() => setAskBar(null), []);
+  const closeQuick = useCallback(() => setQuick(null), []);
   // The ask bar takes the selection from whichever pane holds it (and that pane's focus).
   const openAsk = useCallback(() => {
     const beside = sideScroller.current ? captureSelection(sideScroller.current) : {};
@@ -304,6 +310,22 @@ function AtlasApp() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [go]);
 
+  // "N" adds or writes something (a paper, a note, a LaTeX document), unless a field has the keyboard.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (String(event.key).toLowerCase() !== 'n' || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (target && target.closest && target.closest('.atlas-companion')) return;
+      const root = rootRef.current;
+      if (!root || !root.isConnected || root.getClientRects().length === 0) return;
+      event.preventDefault();
+      setQuick({ tab: 'paper', at: Date.now() });
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
   // A direction anchor on the Universe scrolls to its section once drawn.
   useEffect(() => {
     if (route.view !== 'home' || !route.anchor) return undefined;
@@ -334,11 +356,12 @@ function AtlasApp() {
     else if (route.view === 'activity') body = h(ActivityView, props);
     else if (route.view === 'search') body = h(SearchView, { ...props, q: route.q, at: route.at });
     else if (route.view === 'learn') body = h(LearnView, { ...props, path: route.path });
+    else if (route.view === 'write') body = h(WriteView, { ...props, onQuick: (tab) => setQuick({ tab, at: Date.now() }) });
     else if (route.view === 'paper' && route.url) body = h(PaperRefView, { ...props, key: route.url, url: route.url, topic: route.topic });
     else if (route.view === 'team') body = h(TeamView, { ...props, key: (route.path || '') + ':' + (route.thread || ''), path: route.path, thread: route.thread });
     else body = h(UniverseView, props);
   }
-  const area = route.view === 'library' ? 'library' : route.view === 'home' ? 'home' : route.view === 'activity' || route.view === 'team' ? 'activity' : route.view === 'learn' ? 'learn' : '';
+  const area = route.view === 'library' ? 'library' : route.view === 'home' ? 'home' : route.view === 'activity' || route.view === 'team' ? 'activity' : route.view === 'learn' ? 'learn' : route.view === 'write' ? 'write' : '';
   const waiting = overview.data ? waitingItems(overview.data).length : 0;
   const filtering = route.view === 'home' || route.view === 'library';
   const open = Boolean(thread && (thread.id || thread.pending));
@@ -366,7 +389,7 @@ function AtlasApp() {
           h('button', { type: 'button', className: 'atlas-ask-top', onMouseDown: (e) => e.preventDefault(), onClick: openAsk, title: 'Ask about what you are viewing, or the passage you selected (Ctrl+J)' },
             h(Icon, { name: 'spark', size: 15 }), h('span', null, 'Ask'), h('kbd', null, 'Ctrl J')),
           h('button', { type: 'button', className: 'atlas-icon-button', title: 'Search your notes, knowledge and papers (/)', 'aria-label': 'Search', onClick: () => go({ view: 'search', at: Date.now() }) }, h(Icon, { name: 'search' })),
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Add a paper, a lecture or files', 'aria-label': 'Add a paper, a lecture or files', onClick: () => go({ view: 'library', tab: 'discover', add: Date.now() }) }, h(Icon, { name: 'plus' })),
+          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Add a paper, or write a note or a LaTeX document (N)', 'aria-label': 'Add or write', onClick: () => setQuick({ tab: 'paper', at: Date.now() }) }, h(Icon, { name: 'plus' })),
           !open && last ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Show the last discussion', 'aria-label': 'Show the last discussion', onClick: () => showThread({ id: last }) }, h(Icon, { name: 'panel' })) : null,
           h('button', { type: 'button', className: 'atlas-icon-button', title: `Theme: ${modeLabel(mode)}. Click for ${modeLabel(nextMode)}.`, 'aria-label': `Theme: ${modeLabel(mode)}`, onClick: () => themeModeStore.set(nextMode) }, h(Icon, { name: THEME_ICON[mode] || (theme.base === 'day' ? 'sun' : 'moon') })),
           h('button', { type: 'button', className: cx('atlas-icon-button', overview.loading && 'is-busy'), title: 'Read the files again', 'aria-label': 'Read the files again', onClick: () => setVersion(Date.now()) }, h(Icon, { name: 'refresh' })))),
@@ -389,5 +412,6 @@ function AtlasApp() {
         })) : null,
         h(PaneContext.Provider, { value: 'main' }, h(SelectionTools, { container: scroller, host: bodyRef })),
         side ? h(PaneContext.Provider, { value: 'side' }, h(SelectionTools, { container: sideScroller, host: bodyRef })) : null,
-        askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null)));
+        askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null,
+        quick && overview.data ? h(QuickAdd, { key: `${quick.tab}:${quick.at || ''}`, tab: quick.tab, overview: overview.data, go, flash, onClose: closeQuick }) : null)));
 }
