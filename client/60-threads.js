@@ -101,7 +101,9 @@ function forgetTab(tab) {
 }
 
 function useThreadIndex() {
-  return React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
+  const legacy = React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
+  const records = useRegistryRecords();
+  return useMemo(() => [...records, ...legacy.filter(t => t.kind === 'team' && !records.some(r => r.id === t.id))], [legacy, records]);
 }
 
 function useFocus() {
@@ -181,6 +183,7 @@ function focusContext(focus, extra = {}) {
     selection: extra.selection || '',
     ...(focus.beside ? { beside: focus.beside } : {}),
     ...(attachments.length ? { attachments } : {}),
+    ...(extra.routing ? { routing: extra.routing } : {}),
   };
 }
 
@@ -265,7 +268,7 @@ function threadTitle(context, intent, question, label) {
  * with the context and the question. `onCreated` fires as soon as the session
  * exists, so the companion can show it while the first message is sent.
  */
-async function startThread({ root, context, intent, question, label, onCreated }) {
+async function startThread({ root, context, intent = 'ask', question, label, onCreated, origin = 'ask', filing = context.topic ? 'user' : 'none', candidates = [], model = null }) {
   const sessions = svc('sessions');
   const workspaces = svc('workspaces');
   if (!sessions || typeof sessions.create !== 'function' || typeof sessions.retain !== 'function') {
@@ -279,23 +282,64 @@ async function startThread({ root, context, intent, question, label, onCreated }
     workspaceId = workspace && (workspace.id || workspace.workspaceId);
   }
   const id = await sessions.create(workspaceId ? { workspaceId } : { cwd: root });
-  await keepBaseline(id, context);
-  const title = threadTitle(context, intent, question, label);
-  const record = { id, title, created: Date.now(), status: 'open', intent, label: label || '', question: intent === 'ask' ? String(question || '').trim() : '', context };
-  threadStore.set([...threadStore.get().filter((t) => t.id !== id), record].slice(-400));
-  if (onCreated) onCreated(record);
+  const title = intent === 'ask' && question?.trim() && !label ? shortTitle(question.trim(), 100) : threadTitle(context, intent, question, label);
+  const at = Date.now();
+  if (origin === 'desk' && filing !== 'user') context = { ...context, routing: { filing, candidates } };
+  const record = { id, title, created: at, updated: at, seenAt: at, status: 'open', pinned: false, topic: context.topic || null, filing,
+    origin, intent, question: String(question || '').trim(), context, model: null, teamId: null };
+  // No automatic retries of session creation or prompting. If the index write
+  // fails, the empty DSH session remains recoverable in Other DSH sessions.
+  try {
+    return await atlasWithSession(id, async session => {
+      if (model) { await atlasSelectSessionModel(id, model); record.model = atlasModelValue(model); }
+      if (session.rename) atlasRequireResult(await session.rename(title), 'DSH could not name the new discussion.');
+      const saved = await registryCreate(record);
+      await keepBaseline(id, context);
+      if (onCreated) onCreated(saved);
+      atlasRequireResult(await session.prompt([{ type: 'text', text: promptOf(context, intent, question) }], 'queue'), 'DSH did not accept the question.');
+      return saved;
+    });
+  } catch (e) { throw Object.assign(new Error(`Session ${id}: ${e.message}`), { sessionId: id }); }
+}
+
+async function atlasWithSession(id, operation) {
+  const sessions = svc('sessions');
+  if (!id || !sessions?.retain) throw new Error('DSH session access is unavailable.');
   const reference = sessions.retain(id, { source: 'atlas' });
   try {
     const binding = await reference.ready;
-    const session = (binding && binding.session) || ((sessions.binding && sessions.binding(id)) || {}).session;
-    if (!session) throw new Error('DSH did not open the new discussion.');
-    if (typeof session.rename === 'function') await Promise.resolve(session.rename(title)).catch(() => {});
-    const result = await session.prompt([{ type: 'text', text: promptOf(context, intent, question) }], 'queue');
-    if (result && result.ok === false) throw new Error((result.error && result.error.message) || 'DSH did not accept the question.');
-  } finally {
-    reference.release();
+    if (!binding?.session) throw new Error('DSH did not open the discussion.');
+    return await operation(binding.session);
+  } finally { reference.release(); }
+}
+async function atlasSendToSession(id, text) {
+  return atlasWithSession(id, async session => atlasRequireResult(await session.prompt([{ type: 'text', text }], 'queue'), 'DSH did not accept the message.'));
+}
+async function atlasRenameDiscussion(record, value) {
+  const title = value.trim();
+  if (!title || title === record.title) return;
+  await atlasWithSession(record.id, async session => {
+    if (!session.rename) throw new Error('DSH cannot rename this discussion.');
+    atlasRequireResult(await session.rename(title), 'DSH did not rename the session.');
+  });
+  await registryPatch(record.id, { title });
+}
+async function atlasResolveDiscussion(record, status) {
+  if (record.status === status) return true;
+  const id = record.id, workspaces = svc('workspaces');
+  const method = status === 'resolved' ? 'archiveSession' : 'unarchiveSession';
+  if (!workspaces?.[method]) throw new Error('DSH session archiving is unavailable.');
+  if (status === 'resolved') {
+    const pending = await api('review/changes', { query: { session: id } });
+    const count = pending.files.reduce((n, f) => n + f.edits.length, 0);
+    if (count && !window.confirm(`Resolve with ${plural(count, 'unreviewed edit')}? The notes will not change, but this discussion’s comparison will be cleared.`)) return false;
   }
-  return record;
+  await workspaces[method](id);
+  try { await registryPatch(id, { status }); }
+  catch (e) { throw new Error(`DSH ${status === 'resolved' ? 'archived' : 'reopened'} the session, but Atlas could not save its status: ${e.message}`); }
+  if (status === 'resolved') await api('review/forget', { method: 'POST', body: { session: id } });
+  else await keepBaseline(id, { ...record.context, topic: record.topic });
+  return true;
 }
 
 /** Copies of the notes a discussion is about, so that its edits can be reviewed (the server widens a topic note to its parent and branches). */
@@ -316,7 +360,7 @@ function draftIntoThread(id, text) {
   const binding = sessions && sessions.binding ? sessions.binding(id) : null;
   if (!binding || !conversation || !conversation.input || typeof conversation.input.requestDraftInitialization !== 'function') return false;
   try {
-    return conversation.input.requestDraftInitialization(binding, { prompt: text, whenDraftExists: 'append' }) !== 'blocked';
+    return conversation.input.requestDraftInitialization(binding, { prompt: text, whenDraftExists: 'append' }) === 'applied';
   } catch {
     return false;
   }
@@ -540,85 +584,100 @@ function conversationLink(target, root) {
   return chatLocation(href, root);
 }
 
-function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
-  const actions = React.useContext(AtlasActions);
-  const tabId = usePaneName();
-  const threads = useThreadIndex();
-  const rows = useSessionRows();
-  const focus = useFocus();
-  const thread = threads.find((t) => t.id === threadId);
-  const row = rowOf(rows, threadId);
-  const running = Boolean(pending || (row && row.running));
+﻿// The only owner of a DSH conversation binding is EmbeddedConversation. Evicted
+// tabs are pure placeholders: no transcript, listeners, review polling or retain.
+function DiscussionTab({ sessionId, retained = true, ...props }) {
+  return retained ? h(Companion, { ...props, key: sessionId, threadId: sessionId, root: props.overview?.root || props.root })
+    : h('div', { className: 'atlas-companion-wait', role: 'status' }, 'Reopening when this discussion is shown…');
+}
+function DiscussionMarginalia({ context, replied }) {
+  const chips = chipsOf(context);
+  const [expanded, expand] = useState(null), [all, showAll] = useState(false);
+  if (!chips.length) return null;
+  const open = expanded ?? !replied;
+  return h('div', { className: 'atlas-disc-context', 'aria-label': 'What this discussion was given' },
+    h('button', { type: 'button', 'aria-expanded': open, onClick: () => expand(!open) }, `Context (${chips.length}) ${open ? '▴' : '▾'}`),
+    open && (all ? chips : chips.slice(0, 3)).map((chip, i) => h(Chip, { key: i, variant: 'context', contextKey: chip.label, title: chip.title || chip.text }, chip.text)),
+    open && chips.length > 3 && h('button', { type: 'button', onClick: () => showAll(!all) }, all ? 'Show less' : `+${chips.length - 3}`));
+}
+function Companion({ threadId, record, flash, root, overview, go, onOpenLink }) {
+  const actions = React.useContext(AtlasActions), tabId = usePaneName();
+  const threads = useThreadIndex(), rows = useSessionRows(), focus = useFocus();
+  const thread = record || threads.find(t => t.id === threadId);
+  const row = rowOf(rows, threadId), running = !!row?.running;
+  const resolved = thread?.status === 'resolved';
+  const editable = !!thread && thread.kind !== 'team' && !row?.parentId;
   const uiWorkspace = svc('uiWorkspace');
-  const resolved = Boolean(thread && thread.status === 'resolved');
-  const openChat = async () => {
-    if (!uiWorkspace || typeof uiWorkspace.openSession !== 'function') {
-      flash('This DSH version cannot open the conversation directly.');
-      return;
-    }
-    // A resolved discussion is archived in DSH; bring it back before opening it there.
-    if (resolved) {
-      patchThread(threadId, { status: 'open' });
-      try {
-        await uiWorkspace.unarchiveSession(threadId);
-      } catch {
-        // Opening still works when DSH keeps archived sessions reachable.
-      }
-    }
+  const [menu, setMenu] = useState(false), [move, setMove] = useState(null), [handoff, setHandoff] = useState(false);
+  const [renaming, setRenaming] = useState(null), [busy, setBusy] = useState(false);
+  const trigger = useRef(null), topicButton = useRef(null), titleButton = useRef(null), titleInput = useRef(null);
+  const title = thread?.title?.replace(/^Atlas · /, '') || row?.displayTitle || row?.title || 'Discussion';
+  const access = async fn => { try { return await fn(); } catch (e) { flash(e.message); } };
+  const openChat = () => access(async () => {
+    if (!uiWorkspace?.openSession) throw new Error('DSH chat navigation is unavailable.');
+    if (resolved) await atlasResolveDiscussion(thread, 'open');
     uiWorkspace.openSession(threadId);
+  });
+  useLayoutEffect(() => { if (renaming !== null && titleInput.current) { titleInput.current.focus(); titleInput.current.select(); } }, [renaming === null]);
+  const stopRename = () => { setRenaming(null); requestAnimationFrame(() => titleButton.current?.focus()); };
+  const rename = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await atlasRenameDiscussion(thread, renaming); stopRename(); } catch (e) { flash(e.message); } finally { setBusy(false); }
   };
-  const resolve = async () => {
-    if (!resolved) {
-      const pending = await api('review/changes', { query: { session: threadId } }).catch(() => null);
-      const count = pending ? pending.files.reduce((n, f) => n + f.edits.length, 0) : 0;
-      if (count && !window.confirm(`Unreviewed changes since this discussion’s baseline: ${count}. Resolve anyway? The changes stay in the notes; the baseline is discarded.`)) return;
-      api('review/forget', { method: 'POST', body: { session: threadId } }).catch(() => {});
-    }
-    patchThread(threadId, { status: resolved ? 'open' : 'resolved' });
-    try {
-      if (resolved) await uiWorkspace.unarchiveSession(threadId);
-      else await uiWorkspace.archiveSession(threadId);
-    } catch {
-      // Archiving only tidies DSH's session list; the discussion is marked either way.
-    }
-    flash(resolved ? 'The discussion is open again.' : 'Resolved: it stays listed with its topic and leaves DSH’s session list.');
-  };
+  const openMove = () => setMove(topicButton.current || trigger.current);
   const addView = () => {
-    const text = contextBlock(focusContext(focus));
-    if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
-    else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
+    if (draftIntoThread(threadId, contextBlock(focusContext(focus)) + '\n\n')) flash('Added to the input box. Send it when ready.');
+    else flash('DSH could not add context to this discussion’s draft.');
   };
-  // Links in the conversation open in Atlas: files and papers in a tab beside the discussion, other sites in the browser.
-  const onLinkClick = (event) => {
-    if (!onOpenLink || event.button > 0) return;
-    const ref = conversationLink(event.target, root);
-    if (!ref) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (ref.url && !paperLink(ref.url)) window.open(ref.url, '_blank', 'noopener');
-    else onOpenLink(ref);
+  const openLink = event => {
+    if ((!onOpenLink && !go) || event.button > 0) return;
+    const link = conversationLink(event.target, root); if (!link) return;
+    event.preventDefault(); event.stopPropagation();
+    if (link.url && !paperLink(link.url)) window.open(link.url, '_blank', 'noopener');
+    else if (onOpenLink) onOpenLink(link, event);
+    else go(link.url ? { view: 'paper', url: link.url, topic: thread?.topic?.path || '' } : { view: 'doc', path: link.path, anchor: link.anchor, link: true }, event);
   };
-  const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-  return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion' },
-    h('header', { className: 'atlas-companion-head' },
-      h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
-      h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
-      actions.focusPane ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Focus this pane', 'aria-label': 'Focus discussion pane', onClick: () => actions.focusPane(tabId) }, h(Icon, { name: 'expand', size: 15 })) : null,
-      h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
-      h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
-    thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
-    pending ? null : h('div', { className: 'atlas-companion-actions' },
-      h(TextButton, { onClick: addView, title: 'Put a pointer to what you are viewing now into the input box' }, h(Icon, { name: 'plus', size: 13 }), 'Add what I’m viewing'),
-      h('span', { className: 'atlas-spacer' }),
-      h(TextButton, { onClick: resolve, title: resolved ? 'Bring it back to DSH’s session list' : 'Mark it settled and archive the session' }, resolved ? 'Reopen' : 'Resolve')),
-    pending ? null : h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
-    h('div', { className: 'atlas-companion-body', onClickCapture: onLinkClick }, pending
-      ? h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Starting a session for this…')
-      : h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
+  // A committed lastUsed route is evidence of a model request. Count its first
+  // completion (including a completion observed after mounting while running).
+  const [replied, setReplied] = useState(false), wasRunning = useRef(running);
+  useEffect(() => { if (!running && (wasRunning.current || row?.projectionValues?.modelSelection?.lastUsed)) setReplied(true); wasRunning.current = running; }, [running, row]);
+  const selection = row?.projectionValues?.modelSelection;
+  const topic = thread?.topic, model = atlasModelValue(selection?.next) || thread?.model || atlasModelValue(selection?.lastUsed);
+  return h('aside', { className: 'atlas-companion atlas-disc-panel', 'aria-label': 'Discussion' },
+    h('header', { className: 'atlas-disc-header' },
+      h('span', { role: 'img', 'aria-label': running ? 'Working' : resolved ? 'Resolved' : 'Idle', title: running ? 'Working' : resolved ? 'Resolved' : 'Idle', className: cx('atlas-disc-mark', running && 'is-running') }, running ? '✦' : resolved ? '✓' : '○'),
+      renaming !== null ? h('input', { ref: titleInput, value: renaming, disabled: busy, 'aria-label': 'Discussion title', className: 'atlas-disc-title atlas-control-input', onChange: e => setRenaming(e.target.value), onKeyDown: e => {
+        if (e.nativeEvent?.isComposing) return;
+        if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (e.key === 'Enter') rename(); else stopRename(); }
+      } }) : h(editable ? 'button' : 'span', { type: editable ? 'button' : undefined, ref: titleButton, className: 'atlas-disc-title', title, 'aria-label': editable ? `Rename discussion: ${title}` : undefined, onClick: editable ? () => setRenaming(title) : undefined }, title),
+      editable && h('button', { type: 'button', ref: topicButton, className: cx('atlas-disc-topic', thread.filing === 'auto' && 'is-auto'), title: topic?.title || 'Unfiled', 'aria-label': 'Move to a topic', 'aria-haspopup': 'dialog', onClick: openMove }, h('span', null, topic ? `${topic.title}${thread.filing === 'auto' ? ' · auto' : ''}` : 'Unfiled')),
+      editable && h(AtlasModelPicker, { sessionId: threadId, value: model, disabled: resolved, onChange: async choice => { await atlasSelectSessionModel(threadId, choice); await registryPatch(threadId, { model: choice }); flash('Model changed for the next turn.'); } }),
+      resolved && h(Chip, null, 'Resolved'),
+      resolved && h(Button, { small: true, onClick: () => access(() => atlasResolveDiscussion(thread, 'open')) }, 'Reopen'),
+      h(IconButton, { label: 'Add what is open beside', icon: 'attach', small: true, disabled: resolved || !(focus.doc || focus.topic), onClick: addView }),
+      actions.focusPane && h(IconButton, { label: 'Focus discussion pane', icon: 'expand', small: true, onClick: () => actions.focusPane(tabId) }),
+      h(IconButton, { label: 'Discussion options', icon: 'more', small: true, buttonRef: trigger, 'aria-haspopup': 'menu', 'aria-expanded': menu, onClick: () => setMenu(!menu), onKeyDown: e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setMenu(e.key === 'ArrowUp' ? 'last' : 'first'); } } })),
+    menu && h(Menu, { label: 'Discussion options', anchor: trigger, align: 'end', initial: menu === 'last' ? 'last' : 'first', onClose: () => setMenu(false), items: [
+      { label: 'Move to a topic…', disabled: !editable, onSelect: openMove }, { label: thread?.pinned ? 'Unpin' : 'Pin', disabled: !editable, onSelect: () => access(() => registryPatch(threadId, { pinned: !thread.pinned })) },
+      { label: 'Rename', disabled: !editable, onSelect: () => setRenaming(title) }, { label: 'Open in DSH’s chat', onSelect: openChat },
+      { label: 'Continue in another workspace…', disabled: !editable || typeof DiscussionHandoffDialog !== 'function', onSelect: () => setHandoff(true) },
+      { label: resolved ? 'Reopen' : 'Resolve', disabled: !editable, onSelect: () => access(async () => { if (await atlasResolveDiscussion(thread, resolved ? 'open' : 'resolved')) flash(resolved ? 'Discussion reopened.' : 'Discussion resolved.'); }) },
+      { label: 'Copy session id', onSelect: () => access(async () => { if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.'); await navigator.clipboard.writeText(threadId); flash('Session id copied.'); }) }] }),
+    move && h(MoveDiscussion, { anchor: move, ids: [threadId], overview, onClose: () => setMove(null), flash }),
+    handoff && h(DiscussionHandoffDialog, { record: thread, onClose: () => setHandoff(false), onOpen: id => actions.openThread(id), flash }),
+    thread?.context && h(DiscussionMarginalia, { context: thread.context, replied }),
+    h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
+    h('div', { className: 'atlas-companion-body', onClickCapture: openLink }, h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
 }
 
 // ----------------------------------------------------------- ask surfaces ---
 
+function atlasAskTargets(threads, rows, openIds, suggested) {
+  const recent = threads.filter(t => t.kind !== 'team' && t.status !== 'resolved' && knownThread(rows, t) && !rowOf(rows, t.id)?.parentId).slice().sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+  const byId = new Map(recent.map(t => [t.id, t]));
+  return [...new Set([...openIds, ...suggested.map(t => t.id), ...recent.map(t => t.id)])].filter(id => byId.has(id)).map(id => ({ id, title: byId.get(id).title || 'Discussion' }));
+}
 /** The ask bar (Ctrl+J or the Ask button): a question, or a research move, about what is in focus. */
 function AskBar({ preset, onClose }) {
   const actions = React.useContext(AtlasActions);
@@ -627,6 +686,12 @@ function AskBar({ preset, onClose }) {
   const [error, setError] = useState('');
   const box = useRef(null);
   const context = focusContext(focus, preset || {});
+  const threads = useThreadIndex(), rows = useSessionRows();
+  const targets = atlasAskTargets(threads, rows, actions.openDiscussionIds || [], actions.targets || []);
+  const [target, setTarget] = useState(actions.current || 'new');
+  const available = target === 'new' || targets.some(t => t.id === target);
+  const input = useRef(null);
+  useAtlasDialogFocus(box, onClose, { initialFocusRef: input });
   useEffect(() => {
     const close = (event) => {
       if (box.current && !box.current.contains(event.target)) onClose();
@@ -639,14 +704,17 @@ function AskBar({ preset, onClose }) {
       setError('Write a question, or pick one of the moves below.');
       return;
     }
-    actions.ask(context, intent, text.trim());
+    if (!available) { setError('That discussion is no longer available. Choose another target.'); return; }
+    actions.ask(context, intent, text.trim(), undefined, { targetId: target, origin: context.selection ? 'selection' : 'ask' });
     onClose();
   };
-  return h('div', { className: 'atlas-askbar', role: 'dialog', 'aria-label': 'Ask about what you are viewing', ref: box },
+  return h('div', { className: 'atlas-askbar', role: 'dialog', 'aria-modal': true, tabIndex: -1, 'data-atlas-overlay': true, 'aria-label': 'Ask about what you are viewing', ref: box },
     h(ContextChips, { context }),
+    h('label', { className: 'atlas-ask-target' }, 'Ask in', h(Select, { label: 'Ask in', value: target, onChange: e => setTarget(e.target.value) },
+      h('option', { value: 'new' }, 'New discussion'), !available && h('option', { value: target, disabled: true }, 'Unavailable discussion'), targets.map(t => h('option', { key: t.id, value: t.id }, t.title)))),
     h('form', { className: 'atlas-askbar-row', onSubmit: (e) => { e.preventDefault(); send('ask'); } },
       h(Icon, { name: 'spark' }),
-      h('input', { className: 'atlas-askbar-input', autoFocus: true, value: text, onChange: (e) => { setText(e.target.value); setError(''); }, onKeyDown: (e) => { if (e.key === 'Escape') onClose(); }, placeholder: `Ask about ${shortTitle(anchorName(context), 44)}…`, 'aria-label': 'Your question' }),
+      h('input', { className: 'atlas-askbar-input', ref: input, value: text, onChange: (e) => { setText(e.target.value); setError(''); }, onKeyDown: (e) => { if (e.key === 'Escape') onClose(); }, placeholder: `Ask about ${shortTitle(anchorName(context), 44)}…`, 'aria-label': 'Your question' }),
       h('button', { type: 'submit', className: 'atlas-button is-primary is-small' }, 'Ask')),
     error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null,
     h('div', { className: 'atlas-askbar-moves' },
@@ -714,7 +782,8 @@ function SelectionTools({ container, host }) {
     if (window.getSelection()) window.getSelection().removeAllRanges();
   };
   const go = (intent) => {
-    actions.ask(context, intent, intent === 'ask' ? text.trim() : '');
+    actions.keepTab?.(tabId);
+    actions.ask(context, intent, intent === 'ask' ? text.trim() : '', undefined, { targetId: actions.current || 'new', origin: 'selection' });
     done();
   };
   const keep = (e) => {
@@ -729,7 +798,7 @@ function SelectionTools({ container, host }) {
       : [
         ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
         actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
-        actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
+        actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.keepTab?.(tabId); actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
         keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { actions.keepTab?.(tabId); keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
       ]);
 }
@@ -737,7 +806,8 @@ function SelectionTools({ container, host }) {
 // ------------------------------------------------------------ discussions ---
 
 function threadLabel(t) {
-  return t.label || t.question || t.title.replace(/^Atlas( team)? · [^·]+ · /, '');
+  if (t.origin && t.origin !== 'import') return t.title || t.question || 'Discussion';
+  return t.label || t.question || (t.title || 'Discussion').replace(/^Atlas( team)? · [^·]+ · /, '');
 }
 
 function ThreadRow({ t, row, onOpen, current }) {

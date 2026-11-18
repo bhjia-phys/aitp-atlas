@@ -1985,22 +1985,24 @@ window.__ModuleLoader__.load({
         footer));
     }
 
-    // M1 keeps the local, session-checked 0.9 index; do not count other browsers' discussions.
+    // Current filing lives in the registry. The initial context is historical and
+    // must not make a moved discussion appear under its previous topic.
     function TopicDiscussionShelf({ file }) {
       const actions = React.useContext(AtlasActions);
       const threads = useThreadIndex();
       const rows = useSessionRows();
-      const list = threads.filter((t) => t.context?.topic?.path && pathKey(t.context.topic.path) === pathKey(file) && knownThread(rows, t))
+      const list = threads.filter((t) => t.kind !== 'team' && t.topic?.path && pathKey(t.topic.path) === pathKey(file) && knownThread(rows, t))
         .sort((a, b) => Number(a.status === 'resolved') - Number(b.status === 'resolved') || b.created - a.created);
       return h(TopicShelf, { id: `${file}#discussions`, title: 'Discussions', icon: 'spark', items: list,
-        hint: 'From the Atlas index in this browser.',
+        hint: 'Filed to this topic in the workspace discussion registry.',
         empty: h(Empty, null, 'No discussions about this topic yet.'),
         renderItem: (t) => h(React.Fragment, null, h(ThreadRow, { t, row: rowOf(rows, t.id), current: actions.current === t.id, onOpen: () => actions.openThread(t.id) }), t.status === 'resolved' ? h('span', { className: 'atlas-shelf-hint' }, 'Resolved') : null),
         footer: h(Button, { small: true, icon: 'spark', onClick: () => actions.startAsk({}) }, 'Ask about this topic') });
     }
 
     function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
-      const t = data.topic;
+      const t = data.topic, actions = React.useContext(AtlasActions);
+      const discuss = () => actions.ask(focusContext({ topic: { id: t.id, title: t.title || 'Root note', path: data.path } }), 'ask', 'Discuss this topic.', '', { targetId: 'new', origin: 'topic' });
       const parts = useMemo(() => splitNote(data.body), [data.body]);
       const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
       const [reveal, setReveal] = useState({ key: '', n: 0 });
@@ -2051,7 +2053,8 @@ window.__ModuleLoader__.load({
             facts.map((f) => h('span', { key: f, className: 'atlas-meta-fact' }, f)),
             t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
           h('div', { className: 'atlas-actions' },
-            h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
+            h(Button, { primary: true, icon: 'chat', onClick: discuss }, 'Discuss'),
+            h(Button, { icon: 'team', disabled: !actions.startTeam, title: actions.startTeam ? 'Start a team for this topic' : 'Native team setup arrives in M3.', onClick: () => actions.startTeam?.({ topic: t.id }) }, 'Start a team'),
             data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
             h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
             h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
@@ -4403,7 +4406,9 @@ window.__ModuleLoader__.load({
     }
 
     function useThreadIndex() {
-      return React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
+      const legacy = React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
+      const records = useRegistryRecords();
+      return useMemo(() => [...records, ...legacy.filter(t => t.kind === 'team' && !records.some(r => r.id === t.id))], [legacy, records]);
     }
 
     function useFocus() {
@@ -4483,6 +4488,7 @@ window.__ModuleLoader__.load({
         selection: extra.selection || '',
         ...(focus.beside ? { beside: focus.beside } : {}),
         ...(attachments.length ? { attachments } : {}),
+        ...(extra.routing ? { routing: extra.routing } : {}),
       };
     }
 
@@ -4567,7 +4573,7 @@ window.__ModuleLoader__.load({
      * with the context and the question. `onCreated` fires as soon as the session
      * exists, so the companion can show it while the first message is sent.
      */
-    async function startThread({ root, context, intent, question, label, onCreated }) {
+    async function startThread({ root, context, intent = 'ask', question, label, onCreated, origin = 'ask', filing = context.topic ? 'user' : 'none', candidates = [], model = null }) {
       const sessions = svc('sessions');
       const workspaces = svc('workspaces');
       if (!sessions || typeof sessions.create !== 'function' || typeof sessions.retain !== 'function') {
@@ -4581,23 +4587,64 @@ window.__ModuleLoader__.load({
         workspaceId = workspace && (workspace.id || workspace.workspaceId);
       }
       const id = await sessions.create(workspaceId ? { workspaceId } : { cwd: root });
-      await keepBaseline(id, context);
-      const title = threadTitle(context, intent, question, label);
-      const record = { id, title, created: Date.now(), status: 'open', intent, label: label || '', question: intent === 'ask' ? String(question || '').trim() : '', context };
-      threadStore.set([...threadStore.get().filter((t) => t.id !== id), record].slice(-400));
-      if (onCreated) onCreated(record);
+      const title = intent === 'ask' && question?.trim() && !label ? shortTitle(question.trim(), 100) : threadTitle(context, intent, question, label);
+      const at = Date.now();
+      if (origin === 'desk' && filing !== 'user') context = { ...context, routing: { filing, candidates } };
+      const record = { id, title, created: at, updated: at, seenAt: at, status: 'open', pinned: false, topic: context.topic || null, filing,
+        origin, intent, question: String(question || '').trim(), context, model: null, teamId: null };
+      // No automatic retries of session creation or prompting. If the index write
+      // fails, the empty DSH session remains recoverable in Other DSH sessions.
+      try {
+        return await atlasWithSession(id, async session => {
+          if (model) { await atlasSelectSessionModel(id, model); record.model = atlasModelValue(model); }
+          if (session.rename) atlasRequireResult(await session.rename(title), 'DSH could not name the new discussion.');
+          const saved = await registryCreate(record);
+          await keepBaseline(id, context);
+          if (onCreated) onCreated(saved);
+          atlasRequireResult(await session.prompt([{ type: 'text', text: promptOf(context, intent, question) }], 'queue'), 'DSH did not accept the question.');
+          return saved;
+        });
+      } catch (e) { throw Object.assign(new Error(`Session ${id}: ${e.message}`), { sessionId: id }); }
+    }
+
+    async function atlasWithSession(id, operation) {
+      const sessions = svc('sessions');
+      if (!id || !sessions?.retain) throw new Error('DSH session access is unavailable.');
       const reference = sessions.retain(id, { source: 'atlas' });
       try {
         const binding = await reference.ready;
-        const session = (binding && binding.session) || ((sessions.binding && sessions.binding(id)) || {}).session;
-        if (!session) throw new Error('DSH did not open the new discussion.');
-        if (typeof session.rename === 'function') await Promise.resolve(session.rename(title)).catch(() => {});
-        const result = await session.prompt([{ type: 'text', text: promptOf(context, intent, question) }], 'queue');
-        if (result && result.ok === false) throw new Error((result.error && result.error.message) || 'DSH did not accept the question.');
-      } finally {
-        reference.release();
+        if (!binding?.session) throw new Error('DSH did not open the discussion.');
+        return await operation(binding.session);
+      } finally { reference.release(); }
+    }
+    async function atlasSendToSession(id, text) {
+      return atlasWithSession(id, async session => atlasRequireResult(await session.prompt([{ type: 'text', text }], 'queue'), 'DSH did not accept the message.'));
+    }
+    async function atlasRenameDiscussion(record, value) {
+      const title = value.trim();
+      if (!title || title === record.title) return;
+      await atlasWithSession(record.id, async session => {
+        if (!session.rename) throw new Error('DSH cannot rename this discussion.');
+        atlasRequireResult(await session.rename(title), 'DSH did not rename the session.');
+      });
+      await registryPatch(record.id, { title });
+    }
+    async function atlasResolveDiscussion(record, status) {
+      if (record.status === status) return true;
+      const id = record.id, workspaces = svc('workspaces');
+      const method = status === 'resolved' ? 'archiveSession' : 'unarchiveSession';
+      if (!workspaces?.[method]) throw new Error('DSH session archiving is unavailable.');
+      if (status === 'resolved') {
+        const pending = await api('review/changes', { query: { session: id } });
+        const count = pending.files.reduce((n, f) => n + f.edits.length, 0);
+        if (count && !window.confirm(`Resolve with ${plural(count, 'unreviewed edit')}? The notes will not change, but this discussion’s comparison will be cleared.`)) return false;
       }
-      return record;
+      await workspaces[method](id);
+      try { await registryPatch(id, { status }); }
+      catch (e) { throw new Error(`DSH ${status === 'resolved' ? 'archived' : 'reopened'} the session, but Atlas could not save its status: ${e.message}`); }
+      if (status === 'resolved') await api('review/forget', { method: 'POST', body: { session: id } });
+      else await keepBaseline(id, { ...record.context, topic: record.topic });
+      return true;
     }
 
     /** Copies of the notes a discussion is about, so that its edits can be reviewed (the server widens a topic note to its parent and branches). */
@@ -4618,7 +4665,7 @@ window.__ModuleLoader__.load({
       const binding = sessions && sessions.binding ? sessions.binding(id) : null;
       if (!binding || !conversation || !conversation.input || typeof conversation.input.requestDraftInitialization !== 'function') return false;
       try {
-        return conversation.input.requestDraftInitialization(binding, { prompt: text, whenDraftExists: 'append' }) !== 'blocked';
+        return conversation.input.requestDraftInitialization(binding, { prompt: text, whenDraftExists: 'append' }) === 'applied';
       } catch {
         return false;
       }
@@ -4842,85 +4889,100 @@ window.__ModuleLoader__.load({
       return chatLocation(href, root);
     }
 
-    function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
-      const actions = React.useContext(AtlasActions);
-      const tabId = usePaneName();
-      const threads = useThreadIndex();
-      const rows = useSessionRows();
-      const focus = useFocus();
-      const thread = threads.find((t) => t.id === threadId);
-      const row = rowOf(rows, threadId);
-      const running = Boolean(pending || (row && row.running));
+    ﻿// The only owner of a DSH conversation binding is EmbeddedConversation. Evicted
+    // tabs are pure placeholders: no transcript, listeners, review polling or retain.
+    function DiscussionTab({ sessionId, retained = true, ...props }) {
+      return retained ? h(Companion, { ...props, key: sessionId, threadId: sessionId, root: props.overview?.root || props.root })
+        : h('div', { className: 'atlas-companion-wait', role: 'status' }, 'Reopening when this discussion is shown…');
+    }
+    function DiscussionMarginalia({ context, replied }) {
+      const chips = chipsOf(context);
+      const [expanded, expand] = useState(null), [all, showAll] = useState(false);
+      if (!chips.length) return null;
+      const open = expanded ?? !replied;
+      return h('div', { className: 'atlas-disc-context', 'aria-label': 'What this discussion was given' },
+        h('button', { type: 'button', 'aria-expanded': open, onClick: () => expand(!open) }, `Context (${chips.length}) ${open ? '▴' : '▾'}`),
+        open && (all ? chips : chips.slice(0, 3)).map((chip, i) => h(Chip, { key: i, variant: 'context', contextKey: chip.label, title: chip.title || chip.text }, chip.text)),
+        open && chips.length > 3 && h('button', { type: 'button', onClick: () => showAll(!all) }, all ? 'Show less' : `+${chips.length - 3}`));
+    }
+    function Companion({ threadId, record, flash, root, overview, go, onOpenLink }) {
+      const actions = React.useContext(AtlasActions), tabId = usePaneName();
+      const threads = useThreadIndex(), rows = useSessionRows(), focus = useFocus();
+      const thread = record || threads.find(t => t.id === threadId);
+      const row = rowOf(rows, threadId), running = !!row?.running;
+      const resolved = thread?.status === 'resolved';
+      const editable = !!thread && thread.kind !== 'team' && !row?.parentId;
       const uiWorkspace = svc('uiWorkspace');
-      const resolved = Boolean(thread && thread.status === 'resolved');
-      const openChat = async () => {
-        if (!uiWorkspace || typeof uiWorkspace.openSession !== 'function') {
-          flash('This DSH version cannot open the conversation directly.');
-          return;
-        }
-        // A resolved discussion is archived in DSH; bring it back before opening it there.
-        if (resolved) {
-          patchThread(threadId, { status: 'open' });
-          try {
-            await uiWorkspace.unarchiveSession(threadId);
-          } catch {
-            // Opening still works when DSH keeps archived sessions reachable.
-          }
-        }
+      const [menu, setMenu] = useState(false), [move, setMove] = useState(null), [handoff, setHandoff] = useState(false);
+      const [renaming, setRenaming] = useState(null), [busy, setBusy] = useState(false);
+      const trigger = useRef(null), topicButton = useRef(null), titleButton = useRef(null), titleInput = useRef(null);
+      const title = thread?.title?.replace(/^Atlas · /, '') || row?.displayTitle || row?.title || 'Discussion';
+      const access = async fn => { try { return await fn(); } catch (e) { flash(e.message); } };
+      const openChat = () => access(async () => {
+        if (!uiWorkspace?.openSession) throw new Error('DSH chat navigation is unavailable.');
+        if (resolved) await atlasResolveDiscussion(thread, 'open');
         uiWorkspace.openSession(threadId);
+      });
+      useLayoutEffect(() => { if (renaming !== null && titleInput.current) { titleInput.current.focus(); titleInput.current.select(); } }, [renaming === null]);
+      const stopRename = () => { setRenaming(null); requestAnimationFrame(() => titleButton.current?.focus()); };
+      const rename = async () => {
+        if (busy) return;
+        setBusy(true);
+        try { await atlasRenameDiscussion(thread, renaming); stopRename(); } catch (e) { flash(e.message); } finally { setBusy(false); }
       };
-      const resolve = async () => {
-        if (!resolved) {
-          const pending = await api('review/changes', { query: { session: threadId } }).catch(() => null);
-          const count = pending ? pending.files.reduce((n, f) => n + f.edits.length, 0) : 0;
-          if (count && !window.confirm(`Unreviewed changes since this discussion’s baseline: ${count}. Resolve anyway? The changes stay in the notes; the baseline is discarded.`)) return;
-          api('review/forget', { method: 'POST', body: { session: threadId } }).catch(() => {});
-        }
-        patchThread(threadId, { status: resolved ? 'open' : 'resolved' });
-        try {
-          if (resolved) await uiWorkspace.unarchiveSession(threadId);
-          else await uiWorkspace.archiveSession(threadId);
-        } catch {
-          // Archiving only tidies DSH's session list; the discussion is marked either way.
-        }
-        flash(resolved ? 'The discussion is open again.' : 'Resolved: it stays listed with its topic and leaves DSH’s session list.');
-      };
+      const openMove = () => setMove(topicButton.current || trigger.current);
       const addView = () => {
-        const text = contextBlock(focusContext(focus));
-        if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
-        else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
+        if (draftIntoThread(threadId, contextBlock(focusContext(focus)) + '\n\n')) flash('Added to the input box. Send it when ready.');
+        else flash('DSH could not add context to this discussion’s draft.');
       };
-      // Links in the conversation open in Atlas: files and papers in a tab beside the discussion, other sites in the browser.
-      const onLinkClick = (event) => {
-        if (!onOpenLink || event.button > 0) return;
-        const ref = conversationLink(event.target, root);
-        if (!ref) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (ref.url && !paperLink(ref.url)) window.open(ref.url, '_blank', 'noopener');
-        else onOpenLink(ref);
+      const openLink = event => {
+        if ((!onOpenLink && !go) || event.button > 0) return;
+        const link = conversationLink(event.target, root); if (!link) return;
+        event.preventDefault(); event.stopPropagation();
+        if (link.url && !paperLink(link.url)) window.open(link.url, '_blank', 'noopener');
+        else if (onOpenLink) onOpenLink(link, event);
+        else go(link.url ? { view: 'paper', url: link.url, topic: thread?.topic?.path || '' } : { view: 'doc', path: link.path, anchor: link.anchor, link: true }, event);
       };
-      const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-      return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion' },
-        h('header', { className: 'atlas-companion-head' },
-          h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
-          h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
-          actions.focusPane ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Focus this pane', 'aria-label': 'Focus discussion pane', onClick: () => actions.focusPane(tabId) }, h(Icon, { name: 'expand', size: 15 })) : null,
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
-        thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
-        pending ? null : h('div', { className: 'atlas-companion-actions' },
-          h(TextButton, { onClick: addView, title: 'Put a pointer to what you are viewing now into the input box' }, h(Icon, { name: 'plus', size: 13 }), 'Add what I’m viewing'),
-          h('span', { className: 'atlas-spacer' }),
-          h(TextButton, { onClick: resolve, title: resolved ? 'Bring it back to DSH’s session list' : 'Mark it settled and archive the session' }, resolved ? 'Reopen' : 'Resolve')),
-        pending ? null : h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
-        h('div', { className: 'atlas-companion-body', onClickCapture: onLinkClick }, pending
-          ? h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Starting a session for this…')
-          : h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
+      // A committed lastUsed route is evidence of a model request. Count its first
+      // completion (including a completion observed after mounting while running).
+      const [replied, setReplied] = useState(false), wasRunning = useRef(running);
+      useEffect(() => { if (!running && (wasRunning.current || row?.projectionValues?.modelSelection?.lastUsed)) setReplied(true); wasRunning.current = running; }, [running, row]);
+      const selection = row?.projectionValues?.modelSelection;
+      const topic = thread?.topic, model = atlasModelValue(selection?.next) || thread?.model || atlasModelValue(selection?.lastUsed);
+      return h('aside', { className: 'atlas-companion atlas-disc-panel', 'aria-label': 'Discussion' },
+        h('header', { className: 'atlas-disc-header' },
+          h('span', { role: 'img', 'aria-label': running ? 'Working' : resolved ? 'Resolved' : 'Idle', title: running ? 'Working' : resolved ? 'Resolved' : 'Idle', className: cx('atlas-disc-mark', running && 'is-running') }, running ? '✦' : resolved ? '✓' : '○'),
+          renaming !== null ? h('input', { ref: titleInput, value: renaming, disabled: busy, 'aria-label': 'Discussion title', className: 'atlas-disc-title atlas-control-input', onChange: e => setRenaming(e.target.value), onKeyDown: e => {
+            if (e.nativeEvent?.isComposing) return;
+            if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (e.key === 'Enter') rename(); else stopRename(); }
+          } }) : h(editable ? 'button' : 'span', { type: editable ? 'button' : undefined, ref: titleButton, className: 'atlas-disc-title', title, 'aria-label': editable ? `Rename discussion: ${title}` : undefined, onClick: editable ? () => setRenaming(title) : undefined }, title),
+          editable && h('button', { type: 'button', ref: topicButton, className: cx('atlas-disc-topic', thread.filing === 'auto' && 'is-auto'), title: topic?.title || 'Unfiled', 'aria-label': 'Move to a topic', 'aria-haspopup': 'dialog', onClick: openMove }, h('span', null, topic ? `${topic.title}${thread.filing === 'auto' ? ' · auto' : ''}` : 'Unfiled')),
+          editable && h(AtlasModelPicker, { sessionId: threadId, value: model, disabled: resolved, onChange: async choice => { await atlasSelectSessionModel(threadId, choice); await registryPatch(threadId, { model: choice }); flash('Model changed for the next turn.'); } }),
+          resolved && h(Chip, null, 'Resolved'),
+          resolved && h(Button, { small: true, onClick: () => access(() => atlasResolveDiscussion(thread, 'open')) }, 'Reopen'),
+          h(IconButton, { label: 'Add what is open beside', icon: 'attach', small: true, disabled: resolved || !(focus.doc || focus.topic), onClick: addView }),
+          actions.focusPane && h(IconButton, { label: 'Focus discussion pane', icon: 'expand', small: true, onClick: () => actions.focusPane(tabId) }),
+          h(IconButton, { label: 'Discussion options', icon: 'more', small: true, buttonRef: trigger, 'aria-haspopup': 'menu', 'aria-expanded': menu, onClick: () => setMenu(!menu), onKeyDown: e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setMenu(e.key === 'ArrowUp' ? 'last' : 'first'); } } })),
+        menu && h(Menu, { label: 'Discussion options', anchor: trigger, align: 'end', initial: menu === 'last' ? 'last' : 'first', onClose: () => setMenu(false), items: [
+          { label: 'Move to a topic…', disabled: !editable, onSelect: openMove }, { label: thread?.pinned ? 'Unpin' : 'Pin', disabled: !editable, onSelect: () => access(() => registryPatch(threadId, { pinned: !thread.pinned })) },
+          { label: 'Rename', disabled: !editable, onSelect: () => setRenaming(title) }, { label: 'Open in DSH’s chat', onSelect: openChat },
+          { label: 'Continue in another workspace…', disabled: !editable || typeof DiscussionHandoffDialog !== 'function', onSelect: () => setHandoff(true) },
+          { label: resolved ? 'Reopen' : 'Resolve', disabled: !editable, onSelect: () => access(async () => { if (await atlasResolveDiscussion(thread, resolved ? 'open' : 'resolved')) flash(resolved ? 'Discussion reopened.' : 'Discussion resolved.'); }) },
+          { label: 'Copy session id', onSelect: () => access(async () => { if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.'); await navigator.clipboard.writeText(threadId); flash('Session id copied.'); }) }] }),
+        move && h(MoveDiscussion, { anchor: move, ids: [threadId], overview, onClose: () => setMove(null), flash }),
+        handoff && h(DiscussionHandoffDialog, { record: thread, onClose: () => setHandoff(false), onOpen: id => actions.openThread(id), flash }),
+        thread?.context && h(DiscussionMarginalia, { context: thread.context, replied }),
+        h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
+        h('div', { className: 'atlas-companion-body', onClickCapture: openLink }, h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
     }
 
     // ----------------------------------------------------------- ask surfaces ---
 
+    function atlasAskTargets(threads, rows, openIds, suggested) {
+      const recent = threads.filter(t => t.kind !== 'team' && t.status !== 'resolved' && knownThread(rows, t) && !rowOf(rows, t.id)?.parentId).slice().sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+      const byId = new Map(recent.map(t => [t.id, t]));
+      return [...new Set([...openIds, ...suggested.map(t => t.id), ...recent.map(t => t.id)])].filter(id => byId.has(id)).map(id => ({ id, title: byId.get(id).title || 'Discussion' }));
+    }
     /** The ask bar (Ctrl+J or the Ask button): a question, or a research move, about what is in focus. */
     function AskBar({ preset, onClose }) {
       const actions = React.useContext(AtlasActions);
@@ -4929,6 +4991,12 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const box = useRef(null);
       const context = focusContext(focus, preset || {});
+      const threads = useThreadIndex(), rows = useSessionRows();
+      const targets = atlasAskTargets(threads, rows, actions.openDiscussionIds || [], actions.targets || []);
+      const [target, setTarget] = useState(actions.current || 'new');
+      const available = target === 'new' || targets.some(t => t.id === target);
+      const input = useRef(null);
+      useAtlasDialogFocus(box, onClose, { initialFocusRef: input });
       useEffect(() => {
         const close = (event) => {
           if (box.current && !box.current.contains(event.target)) onClose();
@@ -4941,14 +5009,17 @@ window.__ModuleLoader__.load({
           setError('Write a question, or pick one of the moves below.');
           return;
         }
-        actions.ask(context, intent, text.trim());
+        if (!available) { setError('That discussion is no longer available. Choose another target.'); return; }
+        actions.ask(context, intent, text.trim(), undefined, { targetId: target, origin: context.selection ? 'selection' : 'ask' });
         onClose();
       };
-      return h('div', { className: 'atlas-askbar', role: 'dialog', 'aria-label': 'Ask about what you are viewing', ref: box },
+      return h('div', { className: 'atlas-askbar', role: 'dialog', 'aria-modal': true, tabIndex: -1, 'data-atlas-overlay': true, 'aria-label': 'Ask about what you are viewing', ref: box },
         h(ContextChips, { context }),
+        h('label', { className: 'atlas-ask-target' }, 'Ask in', h(Select, { label: 'Ask in', value: target, onChange: e => setTarget(e.target.value) },
+          h('option', { value: 'new' }, 'New discussion'), !available && h('option', { value: target, disabled: true }, 'Unavailable discussion'), targets.map(t => h('option', { key: t.id, value: t.id }, t.title)))),
         h('form', { className: 'atlas-askbar-row', onSubmit: (e) => { e.preventDefault(); send('ask'); } },
           h(Icon, { name: 'spark' }),
-          h('input', { className: 'atlas-askbar-input', autoFocus: true, value: text, onChange: (e) => { setText(e.target.value); setError(''); }, onKeyDown: (e) => { if (e.key === 'Escape') onClose(); }, placeholder: `Ask about ${shortTitle(anchorName(context), 44)}…`, 'aria-label': 'Your question' }),
+          h('input', { className: 'atlas-askbar-input', ref: input, value: text, onChange: (e) => { setText(e.target.value); setError(''); }, onKeyDown: (e) => { if (e.key === 'Escape') onClose(); }, placeholder: `Ask about ${shortTitle(anchorName(context), 44)}…`, 'aria-label': 'Your question' }),
           h('button', { type: 'submit', className: 'atlas-button is-primary is-small' }, 'Ask')),
         error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null,
         h('div', { className: 'atlas-askbar-moves' },
@@ -5016,7 +5087,8 @@ window.__ModuleLoader__.load({
         if (window.getSelection()) window.getSelection().removeAllRanges();
       };
       const go = (intent) => {
-        actions.ask(context, intent, intent === 'ask' ? text.trim() : '');
+        actions.keepTab?.(tabId);
+        actions.ask(context, intent, intent === 'ask' ? text.trim() : '', undefined, { targetId: actions.current || 'new', origin: 'selection' });
         done();
       };
       const keep = (e) => {
@@ -5031,7 +5103,7 @@ window.__ModuleLoader__.load({
           : [
             ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
             actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
-            actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
+            actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.keepTab?.(tabId); actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
             keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { actions.keepTab?.(tabId); keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
           ]);
     }
@@ -5039,7 +5111,8 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------ discussions ---
 
     function threadLabel(t) {
-      return t.label || t.question || t.title.replace(/^Atlas( team)? · [^·]+ · /, '');
+      if (t.origin && t.origin !== 'import') return t.title || t.question || 'Discussion';
+      return t.label || t.question || (t.title || 'Discussion').replace(/^Atlas( team)? · [^·]+ · /, '');
     }
 
     function ThreadRow({ t, row, onOpen, current }) {
@@ -5411,9 +5484,9 @@ window.__ModuleLoader__.load({
     .atlas-disc-open {flex:1;min-width:0;padding:var(--s-4) var(--s-8)} .atlas-disc-top {display:flex;align-items:center;gap:var(--s-8)}
     .atlas-disc-open .atlas-disc-top>span:nth-child(2),.atlas-disc-sub {overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
     .atlas-disc-top time {margin-inline-start:auto;font-style:italic;white-space:nowrap;color:var(--text-3)} .atlas-disc-unread {font-weight:600} .atlas-disc-top small {color:var(--accent)}
-    .atlas-disc-sub {display:block;color:var(--text-3);font-size:var(--fs-meta)} .atlas-disc-row-actions {gap:0;opacity:0}.atlas-disc-row:hover .atlas-disc-row-actions,.atlas-disc-row:focus-within .atlas-disc-row-actions {opacity:1}
+    .atlas-disc-sub {display:block;color:var(--text-3);font-size:var(--fs-meta)} .atlas-disc-row{position:relative}.atlas-disc-row-actions {position:absolute;inset-inline-end:0;gap:0;opacity:0;pointer-events:none;background:var(--surface)}.atlas-disc-row:hover .atlas-disc-row-actions,.atlas-disc-row:focus-within .atlas-disc-row-actions {opacity:1;pointer-events:auto}
     .atlas-disc-wait {margin-block:var(--s-12);border-inline-start:2px solid var(--gold);padding:var(--s-8)} .atlas-disc-move {width:min(360px,100%);display:grid;gap:var(--s-8)} .atlas-disc-move [role=radiogroup] {max-height:36vh;overflow:auto}.atlas-disc-topic-option {padding-block:var(--s-4);cursor:pointer}
-    @media(hover:none){.atlas-disc-row-actions{opacity:1}}
+    @media(hover:none){.atlas-disc-row-actions{position:static;opacity:1;pointer-events:auto}}
     @container (max-width:640px){.atlas-discussions-place{display:block}.atlas-disc-filters{border:0;display:flex;align-items:center;gap:var(--s-4);overflow:auto}.atlas-disc-filters h2{display:none}.atlas-disc-filter{width:auto;white-space:nowrap}.atlas-disc-results{padding:var(--s-12)}.atlas-disc-row-actions button:not(:last-child){display:none}}
     `;
 
@@ -5608,11 +5681,7 @@ window.__ModuleLoader__.load({
     }
 
     // ===== client/65-activity.js
-    // --------------------------------------------------------------- activity ---
-    // What is waiting on the researcher, what is running across topics, and agent
-    // teams started from a topic. Everything here is read from the notes (Current
-    // work dispositions) and from DSH's own session list; Atlas keeps only its
-    // small index of which session is about what.
+    // Read-only legacy team index and Current work decision controls. Discussions and needs live in the registry.
 
     /** A Current work disposition that waits on the researcher's decision. */
     function isWaiting(status) {
@@ -5667,36 +5736,13 @@ window.__ModuleLoader__.load({
       if (options.length < 2) return null;
       const decide = (o) => {
         actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask',
-          `My decision on "${thread.name}": ${o.letter}: ${o.text}. Record it in the owning note's decisions with today's date and these words, update this Current work entry, and continue within it.`, `Decide ${thread.name}`);
+          `My decision on "${thread.name}": ${o.letter}: ${o.text}. Record it in the owning note's decisions with today's date and these words, update this Current work entry, and continue within it.`, `Decide ${thread.name}`, { origin: 'decide', targetId: 'new' });
         if (onDone) onDone();
       };
       return h('div', { className: 'atlas-decide', role: 'group', 'aria-label': 'Choose an option' },
         options.map((o) => h('button', { key: o.letter, type: 'button', className: 'atlas-decide-option', onClick: () => decide(o), title: `Decide ${o.letter}: a discussion records it in the note` },
           h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
     }
-
-    function WaitingList({ ov, go, compact, limit, allowTeamStart = true }) {
-      const actions = React.useContext(AtlasActions);
-      const items = useMemo(() => waitingItems(ov), [ov]);
-      if (items.length === 0) return compact ? null : h('section', { className: 'atlas-waiting is-empty' }, h('h2', null, 'Waiting on you'), h(Empty, null, 'Nothing in your notes waits on a decision from you.'));
-      const shown = limit ? items.slice(0, limit) : items;
-      return h('section', { className: cx('atlas-waiting', compact && 'is-compact'), 'aria-label': 'Waiting on you' },
-        h('h2', null, 'Waiting on you', h('span', { className: 'atlas-count' }, items.length)),
-        h('ul', null, shown.map(({ topic, thread, summary }, i) => h('li', { key: topic.id + ':' + thread.name + ':' + i, className: 'atlas-waiting-item' },
-          h('div', { className: 'atlas-waiting-head' },
-            h('button', { type: 'button', className: 'atlas-waiting-title', onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, thread.name),
-            thread.date ? h('span', { className: 'atlas-date' }, thread.date) : null),
-          h('p', { className: 'atlas-waiting-topic' }, topic.id === '' ? 'Root note' : shortTitle(topic.title, 60)),
-          compact ? null : h('p', { className: 'atlas-waiting-text' }, summary),
-          compact ? null : h('div', { className: 'atlas-waiting-actions' },
-            h(Button, { small: true, onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, 'Open the thread'),
-            h(Button, { small: true, quiet: true, onClick: () => actions && actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide "${thread.name}": lay out the options my note records, what each would settle, and what you would recommend.`, 'Decide ' + thread.name) }, 'Discuss'),
-            allowTeamStart ? h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team') : null),
-          compact ? null : h(DecideButtons, { topic, thread })))),
-        compact && items.length > shown.length ? h(TextButton, { onClick: () => go({ view: 'activity' }) }, `All ${items.length} in Activity`) : null);
-    }
-
-    // ------------------------------------------------------------- the list ---
 
     function sessionState(row, record) {
       if (row && row.running) return { label: 'working', className: 'is-running' };
@@ -5709,37 +5755,27 @@ window.__ModuleLoader__.load({
       return row ? row.parentSessionId || row.parentId || '' : '';
     }
 
-    /** Discussions and teams Atlas started, by topic; DSH's other recent sessions after them. */
-    function activityGroups(index, rows, place, filter) {
-      // Classify the full index before taking a list slice. A team deliberately
-      // omitted from Discussions is still Atlas-owned, not an 'other' session.
-      const matchesPlace = (t, row, id) => {
-        const team = Boolean(t?.kind === 'team' || teamOf(row));
-        if ((place === 'teams' && !team) || (place === 'discussions' && team) || filter === 'needs') return false;
-        return filter !== 'running' || row?.running || (team && membersOf(rows, id).some((m) => m.row?.running));
-      };
-      const byTopic = new Map();
-      const seen = new Set();
+    /** Preserve topic groupings and historical labels; live child projections count
+     * towards the Running filter. Ordinary discussions belong to the registry. */
+    function legacyTeamGroups(index, rows, filter = '') {
+      const groups = new Map(), indexed = new Set();
+      const running = (id, row) => row?.running || membersOf(rows, id).some(m => m.row?.running);
       for (const t of index) {
-        if (!knownThread(rows, t)) continue;
-        seen.add(t.id);
-        if (!matchesPlace(t, rowOf(rows, t.id), t.id)) continue;
-        const topic = (t.context && t.context.topic) || null;
-        const key = topic ? topic.path : '';
-        if (!byTopic.has(key)) byTopic.set(key, { key, topic, items: [], latest: 0 });
-        const group = byTopic.get(key);
+        const row = rowOf(rows, t.id);
+        if (!knownThread(rows,t) || parentOf(row) || (t.kind !== 'team' && !teamOf(row))) continue;
+        indexed.add(t.id);
+        if (filter === 'running' && !running(t.id,row)) continue;
+        const topic = t.context?.topic || null, key = topic?.path || '';
+        if (!groups.has(key)) groups.set(key, { key, topic, latest: 0, items: [] });
+        const group = groups.get(key);
         group.items.push(t);
         group.latest = Math.max(group.latest, t.created || 0);
       }
-      for (const group of byTopic.values()) group.items.sort((a, b) => (b.created || 0) - (a.created || 0));
-      const groups = [...byTopic.values()].sort((a, b) => b.latest - a.latest);
-      const others = rows && rows.byId ? Object.entries(rows.byId)
-        .map(([id, row]) => ({ id, row }))
-        .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank && matchesPlace(null, row, id))
-        .reverse() : [];
-      return { groups, others: place ? others : others.slice(0, 12) };
+      for (const group of groups.values()) group.items.sort((a,b) => (b.created || 0) - (a.created || 0));
+      const others = Object.entries(rows?.byId || {}).filter(([id,row]) => !indexed.has(id) && !parentOf(row) && !row.archived && !row.blank && teamOf(row) && (filter !== 'running' || running(id,row)))
+        .map(([id,row]) => ({id,row}));
+      return {groups: [...groups.values()].sort((a,b) => b.latest - a.latest), others};
     }
-
     /** What DSH's session list says about a session (its projection), or nothing. */
     function projectionOf(row) {
       return (row && row.projectionValues) || {};
@@ -5799,7 +5835,7 @@ window.__ModuleLoader__.load({
           members.length === 0 ? h('li', { className: 'atlas-muted' }, 'No members yet: the lead staffs the seats in its first turn.') : null));
     }
 
-    function ActivityRow({ id, kind, title, row, record, onOpen, children }) {
+    function LegacyTeamRow({ id, kind, title, row, record, onOpen, children }) {
       const state = sessionState(row, record);
       const when = record && record.created ? new Date(record.created).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
       return h('li', { className: 'atlas-activity-row' },
@@ -5811,214 +5847,29 @@ window.__ModuleLoader__.load({
         when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
     }
 
-    function ActivityView({ overview: ov, go, place, filter = '' }) {
-      const actions = React.useContext(AtlasActions);
-      const index = useThreadIndex();
-      const rows = useSessionRows();
-      usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title || 'Root note', path: ov.rootFile } }, [ov.rootFile, ov.title]);
-      const scoped = place === 'teams' || place === 'discussions';
-      const teams = place === 'teams';
-      const needs = scoped && filter === 'needs';
-      const { groups, others } = useMemo(() => activityGroups(index, rows, scoped ? place : undefined, scoped ? filter : ''), [index, rows, scoped, place, filter]);
-      const topicColor = (topic) => {
-        const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
-        return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--accent)';
-      };
-      const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
-      return h('div', { className: 'atlas-page is-wide atlas-activity' },
-        h('p', { className: 'atlas-kicker' }, scoped ? 'Research desk' : 'Activity'),
-        h('h1', null, scoped ? teams ? 'Teams' : 'Discussions' : "What's running"),
-        h('p', { className: 'atlas-lede' }, teams ? 'Inspect existing team leads, members and task counts from DSH.' : scoped ? 'Decisions in your notes and discussions by topic, from the Atlas index on this device.' : 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
-        scoped ? h('div', { className: 'atlas-actions', role: 'group', 'aria-label': 'Filter ' + place },
-          (teams ? [['', 'All'], ['running', 'Running']] : [['', 'All'], ['needs', 'Needs you'], ['running', 'Running']]).map(([value, text]) => h('button', { key: value, type: 'button', className: cx('atlas-button is-small', filter === value && 'is-primary'), 'aria-pressed': filter === value, onClick: () => go({ view: place, filter: value }) }, text))) : null,
-        !teams && (!scoped || filter !== 'running') ? h(WaitingList, { ov, go, allowTeamStart: !scoped }) : null,
-        needs ? (teams ? h(Empty, null, 'This team index does not track decision requests.') : null) : h('section', { className: 'atlas-section' },
-          h('h2', null, 'By topic', h('span', { className: 'atlas-count' }, groups.length)),
-          groups.length === 0 ? h(Empty, null, scoped ? (filter === 'running' ? 'Nothing is running in this list.' : teams ? 'No teams in the local Atlas index.' : 'No discussions in the local Atlas index yet. Ask from the Desk or a topic.') : 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
-          groups.map((group) => h('div', { key: group.key || 'none', className: 'atlas-activity-group' },
-            h('h3', null,
-              h('span', { className: 'atlas-dot', style: { background: topicColor(group.topic) } }),
-              group.topic ? h(TextButton, { onClick: () => go({ view: 'doc', path: group.topic.path }) }, group.topic.title) : 'The research programme'),
-            h('ul', null, group.items.map((t) => h(ActivityRow, { key: t.id, id: t.id, kind: label(t), title: threadLabel(t), row: rowOf(rows, t.id), record: t, onOpen: () => actions.openThread(t.id) },
-              t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? h(TeamMembers, { rows, leadId: t.id, onOpen: actions.openThread }) : null)))))),
-        others.length > 0
-          ? h('section', { className: 'atlas-section' },
-            h('h2', null, 'Other sessions in DSH', h('span', { className: 'atlas-count' }, others.length)),
-            h('ul', { className: 'atlas-activity-others' }, others.map(({ id, row }) => h(ActivityRow, { key: id, id, kind: teamOf(row) ? 'Team' : 'Session', title: row.displayTitle || row.title || 'Untitled session', row, onOpen: () => actions.openThread(id) },
-              teamOf(row) ? h(TeamMembers, { rows, leadId: id, onOpen: actions.openThread }) : null))))
-          : null);
+    function LegacyTeamsPlace({overview: ov, go, filter = ''}) {
+      const actions = React.useContext(AtlasActions), index = useThreadIndex(), rows = useSessionRows();
+      const {groups, others} = useMemo(() => legacyTeamGroups(index,rows,filter), [index,rows,filter]);
+      usePublishFocus({kind:'universe', topic:{id:'',title:ov.title || 'Root note',path:ov.rootFile}}, [ov.rootFile,ov.title]);
+      const teamRow = (id, record, row) => h(LegacyTeamRow, {
+        key:id, id, row, record, kind:'Team', title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Untitled team',
+        onOpen:() => actions.openThread(id),
+      }, h(TeamMembers,{rows,leadId:id,onOpen:actions.openThread}));
+      return h('div',{className:'atlas-page is-wide atlas-activity'},
+        h('p',{className:'atlas-kicker'},'Research desk'), h('h1',null,'Teams'),
+        h('p',{className:'atlas-lede'},'Inspect existing team leads, members and task counts from DSH.'),
+        h('div',{className:'atlas-actions',role:'group','aria-label':'Filter teams'},
+          [['','All'],['running','Running']].map(([value,label])=>h('button',{type:'button',key:value,'aria-pressed':filter===value,className:cx('atlas-button is-small',filter===value && 'is-primary'),onClick:()=>go({view:'teams',filter:value})},label))),
+        groups.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'By topic'),groups.map(g =>
+          h('div',{className:'atlas-activity-group',key:g.key},h('h3',null,g.topic ? h(TextButton,{'data-atlas-open':true,onClick:()=>go({view:'doc',path:g.topic.path})},g.topic.title) : 'The research programme'),
+            h('ul',null,g.items.map(t=>teamRow(t.id,t,rowOf(rows,t.id))))))),
+        others.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'Other teams in DSH'),h('ul',{className:'atlas-activity-others'},others.map(({id,row})=>teamRow(id,null,row)))),
+        !groups.length && !others.length && h(Empty,null,filter==='running' ? 'No teams are running.' : 'No existing teams to show.'));
     }
 
-    // ------------------------------------------------------------- teams ---
-
-    /** DSH's Agent Teams service, set while it is loaded (see the registration). */
+    // Optional DSH Agent Teams capability installed by 90-register. No M2
+    // launcher calls it. Team mutations and new rooms belong to M3.
     let teamScope = null;
-
-    /**
-     * The roles Oh-My-BBFF Team ships with. A one-shot role is dispatched for a
-     * bounded job (bbff_team_dispatch); the others can also be hired as a core
-     * member that keeps its context (bbff_team_hire). The researcher can change
-     * the catalog in BBFF Settings; the brief asks the Lead to check it.
-     */
-    const TEAM_ROLES = [
-      { id: 'librarian', name: 'Librarian', kind: 'oneshot', hint: 'Finds and reads sources; reads, never edits' },
-      { id: 'explorer', name: 'Explorer', kind: 'oneshot', hint: 'Maps code, data and notes quickly' },
-      { id: 'oracle', name: 'Oracle', kind: 'oneshot', hint: 'Reviews and judges: the independent check' },
-      { id: 'fixer', name: 'Fixer', kind: 'both', hint: 'Implements and runs the checks or calculations' },
-      { id: 'writer', name: 'Writer', kind: 'both', hint: 'Drafts and revises text' },
-      { id: 'laborer', name: 'Laborer', kind: 'both', hint: 'Bounded routine work' },
-      { id: 'designer', name: 'Designer', kind: 'both', hint: 'Designs interfaces and figures' },
-    ];
-    const SEAT_MODES = [['member', 'Core member'], ['oneshot', 'One-shot job']];
-
-    function roleOf(id) {
-      return TEAM_ROLES.find((r) => r.id === id) || { id, name: id, kind: 'both', hint: '' };
-    }
-
-    /** How a seat is filled: a one-shot role is always dispatched. */
-    function seatMode(m) {
-      return roleOf(m.role).kind === 'oneshot' ? 'oneshot' : m.mode === 'oneshot' ? 'oneshot' : 'member';
-    }
-
-    function defaultMembers() {
-      return [
-        { role: 'librarian', mode: 'oneshot', purpose: 'Literature scout: find and read the sources the goal needs. Reads, never edits.', model: '' },
-        { role: 'fixer', mode: 'member', purpose: 'Runs the derivation checks or calculations the goal needs, within the limits.', model: '' },
-        { role: 'oracle', mode: 'oneshot', purpose: 'Reviewer: checks the record against the work before anything enters research.md.', model: '' },
-      ];
-    }
-
-    function slugOf(text) {
-      return String(text || '').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 40) || 'team';
-    }
-
-    /** The Lead's first message: where it is, what to settle, the limits, the seats and the rules. */
-    function teamBrief({ context, goal, limits, members, reportDir }) {
-      const line = (m) => `- ${m.role}${m.purpose ? ` — ${m.purpose}` : ''}${m.model ? ` (model tier: ${m.model})` : ''}`;
-      const seats = members.filter((m) => m.role);
-      const core = seats.filter((m) => seatMode(m) === 'member').map(line);
-      const jobs = seats.filter((m) => seatMode(m) === 'oneshot').map(line);
-      const rules = [
-        "Use the bbff-team-leading skill to staff and brief the team, and AITP's Skills for the research itself.",
-        'Check bbff_team_roles first: if a role or model tier named here is not in the catalog, use the closest one and say so.',
-        'Give each member only the pointers above and the files its task needs, never whole folders.',
-        `Each member writes its own report under ${reportDir}/.`,
-        'Only you propose edits to the notes, after the reviewer has checked them; say what changed and why.',
-        "Prepare any cluster job as the exact command and stop: a submission needs the researcher's yes.",
-      ];
-      return [
-        contextBlock(context),
-        '',
-        'Start an agent team for this goal and lead it.',
-        '',
-        `Goal: ${String(goal || '').trim()}`,
-        limits && limits.trim() ? `Limits:\n${limits.trim().split(/\n+/).map((l) => '- ' + l.replace(/^[-*]\s*/, '')).join('\n')}` : '',
-        core.length ? `Core members to hire (bbff_team_hire):\n${core.join('\n')}` : '',
-        jobs.length ? `One-shot jobs to dispatch when their turn comes (bbff_team_dispatch):\n${jobs.join('\n')}` : '',
-        `Rules:\n${rules.map((r) => '- ' + r).join('\n')}`,
-      ].filter(Boolean).join('\n');
-    }
-
-    /**
-     * Start a team: a DSH session in the research workspace with Agent Teams on,
-     * titled and briefed. The Lead hires the seats itself (Oh-My-BBFF Team tools).
-     */
-    async function startTeam({ root, context, goal, limits, members, label, onCreated }) {
-      const sessions = svc('sessions');
-      const workspaces = svc('workspaces');
-      const teams = teamScope && teamScope.remote ? teamScope.remote.agentTeams : null;
-      if (!sessions || typeof sessions.create !== 'function' || typeof sessions.retain !== 'function') throw new Error('This DSH version cannot start sessions from Atlas.');
-      if (!teams || typeof teams.setEnabled !== 'function') throw new Error("DSH's Agent Teams is not available here, so a team cannot start.");
-      let workspaceId;
-      if (workspaces && typeof workspaces.create === 'function') {
-        const workspace = await workspaces.create({ path: root });
-        workspaceId = workspace && (workspace.id || workspace.workspaceId);
-      }
-      const id = await sessions.create(workspaceId ? { workspaceId } : { cwd: root });
-      await keepBaseline(id, context);
-      const topicTitle = context.topic ? shortTitle(context.topic.title, 24) : 'Research';
-      const title = `Atlas team · ${topicTitle} · ${shortTitle(String(goal || '').replace(/\s+/g, ' '), 52)}`;
-      const topicDir = context.topic && context.topic.path ? dirOf(context.topic.path) : root;
-      const reportDir = joinPath(topicDir, `calculations/team-${slugOf(goal)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
-      const record = { id, kind: 'team', title, created: Date.now(), status: 'open', intent: 'team', label: label || shortTitle(String(goal || '').replace(/\s+/g, ' '), 90), question: String(goal || '').trim(), context, team: { goal, limits, members, reportDir } };
-      threadStore.set([...threadStore.get().filter((t) => t.id !== id), record].slice(-400));
-      if (onCreated) onCreated(record);
-      const reference = sessions.retain(id, { source: 'atlas' });
-      try {
-        const binding = await reference.ready;
-        const session = (binding && binding.session) || ((sessions.binding && sessions.binding(id)) || {}).session;
-        if (!session) throw new Error('DSH did not open the team session.');
-        if (typeof session.rename === 'function') await Promise.resolve(session.rename(title)).catch(() => {});
-        const brief = teamBrief({ context, goal, limits, members, reportDir });
-        const enabled = await Promise.resolve(teams.setEnabled(id, true)).catch((error) => ({ ok: false, error }));
-        if (!enabled || enabled.ok === false) {
-          // The session exists: leave the brief in its input box for the researcher to send once Agent Teams is on.
-          const reason = (enabled && enabled.error && enabled.error.message) || 'DSH did not turn Agent Teams on.';
-          const drafted = draftIntoThread(id, brief);
-          throw new Error(`${reason} The team's session is open${drafted ? ' with the brief in its input box' : ''}: turn on Use Agent Teams in its model menu, then send the brief.`);
-        }
-        const result = await session.prompt([{ type: 'text', text: brief }], 'queue');
-        if (result && result.ok === false) throw new Error((result.error && result.error.message) || 'DSH did not accept the brief.');
-      } finally {
-        reference.release();
-      }
-      return record;
-    }
-
-    function TeamView({ overview: ov, go, flash, path, thread }) {
-      const actions = React.useContext(AtlasActions);
-      const topic = useMemo(() => Object.values(ov.topics).find((t) => t.file === path) || null, [ov, path]);
-      // The overview carries a topic's waiting entries; any other thread is known by its name.
-      const th = topic && thread ? (topic.waiting || []).find((x) => x.name === thread) || { name: thread, markdown: '' } : null;
-      const [goal, setGoal] = useState(() => (th ? `Settle "${th.name}"${th.markdown ? ': ' + entrySummary(th, 400) : '.'}` : ''));
-      const [limits, setLimits] = useState("No cluster submission without the researcher's yes\nNo change to acceptance criteria");
-      const [members, setMembers] = useState(defaultMembers);
-      const [busy, setBusy] = useState(false);
-      const context = focusContext(topic ? { kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } } : { kind: 'universe' }, th ? { section: 'Current work › ' + th.name } : {});
-      usePublishFocus({ kind: 'topic', topic: topic ? { id: topic.id, title: topic.title, path: topic.file } : null }, [path]);
-      const setMember = (i, patch) => setMembers(members.map((m, j) => (j === i ? { ...m, ...patch } : m)));
-      const start = async (event) => {
-        event.preventDefault();
-        if (!goal.trim()) return flash('Say what the team should settle first.');
-        setBusy(true);
-        try {
-          await startTeam({ root: ov.root, context, goal, limits, members, label: th ? th.name : '', onCreated: (record) => actions.openThread(record.id) });
-          flash('The team started: its lead is staffing the seats. Follow it here or in Activity.');
-          go({ view: 'activity' });
-        } catch (error) {
-          flash(error.message || String(error));
-        } finally {
-          setBusy(false);
-        }
-      };
-      const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
-      if (topic) crumbs.push({ label: shortTitle(topic.title, 40), go: { view: 'doc', path: topic.file } });
-      crumbs.push({ label: 'Start a team' });
-      return h('div', { className: 'atlas-page atlas-team' },
-        h(Crumbs, { items: crumbs, go }),
-        h('p', { className: 'atlas-kicker' }, 'Agent team'),
-        h('h1', null, th ? th.name : 'Start a team'),
-        h('p', { className: 'atlas-lede' }, 'A DSH session with Agent Teams on leads the work. Oh-My-BBFF Team gives each seat a role, its permissions and a model tier: a core member keeps its context across the work, a one-shot job ends with its report. You review what the team proposes for your notes.'),
-        h('form', { className: 'atlas-team-form', onSubmit: start },
-          h('label', { className: 'atlas-field' }, h('span', null, 'Goal'), h('textarea', { className: 'atlas-input', rows: 4, value: goal, onChange: (e) => setGoal(e.target.value), placeholder: 'What should the team settle?' })),
-          h('label', { className: 'atlas-field' }, h('span', null, 'Limits, one per line'), h('textarea', { className: 'atlas-input', rows: 3, value: limits, onChange: (e) => setLimits(e.target.value) })),
-          h('fieldset', { className: 'atlas-team-seats' },
-            h('legend', null, 'Seats'),
-            members.map((m, i) => {
-              const role = roleOf(m.role);
-              return h('div', { key: i, className: 'atlas-team-seat' },
-                h('label', { className: 'atlas-seat-role' }, h('span', null, 'Role'), h('select', { className: 'atlas-input', value: m.role, title: role.hint, onChange: (e) => setMember(i, { role: e.target.value }) }, TEAM_ROLES.map((r) => h('option', { key: r.id, value: r.id, title: r.hint }, r.name)))),
-                h('label', { className: 'atlas-seat-how' }, h('span', null, 'As'), h('select', { className: 'atlas-input', value: seatMode(m), disabled: role.kind === 'oneshot', title: role.kind === 'oneshot' ? 'This role only takes one-shot jobs' : 'A core member keeps its context across the work; a one-shot job ends with its report', onChange: (e) => setMember(i, { mode: e.target.value }) }, SEAT_MODES.map(([key, label]) => h('option', { key, value: key }, label)))),
-                h('label', { className: 'atlas-seat-task' }, h('span', null, 'Task'), h('input', { className: 'atlas-input', value: m.purpose, onChange: (e) => setMember(i, { purpose: e.target.value }) })),
-                h('label', { className: 'atlas-seat-model' }, h('span', null, 'Model tier'), h('input', { className: 'atlas-input', value: m.model, placeholder: 'role default', title: "A tier label from the role's model list in BBFF Settings", onChange: (e) => setMember(i, { model: e.target.value }) })),
-                h('button', { type: 'button', className: 'atlas-icon-button atlas-seat-remove', 'aria-label': 'Remove this seat', onClick: () => setMembers(members.filter((_, j) => j !== i)) }, h(Icon, { name: 'close', size: 14 })));
-            }),
-            h(TextButton, { onClick: () => setMembers([...members, { role: 'explorer', mode: 'oneshot', purpose: '', model: '' }]) }, '+ Add a seat')),
-          h('p', { className: 'atlas-muted' }, 'Each seat gets the Atlas context block (the topic note and the thread), never whole folders. Reports go to the topic\'s calculations folder; note edits come back to you.'),
-          h('div', { className: 'atlas-actions' },
-            h('button', { type: 'submit', className: 'atlas-button is-primary', disabled: busy || !ov.root }, busy ? 'Starting…' : 'Start the team'),
-            h(Button, { quiet: true, onClick: () => go({ back: true }) }, 'Cancel'))));
-    }
 
     // ===== client/68-review.js
     // ------------------------------------------------------------------ review ---
@@ -6066,7 +5917,7 @@ window.__ModuleLoader__.load({
       return parts.map((p, i) => (p.changed ? h(kind, { key: i }, p.text) : h('span', { key: i }, p.text)));
     }
 
-    function EditCard({ file, edit, busy, onKeep, onRevert }) {
+    function EditCard({ file, edit, busy, shared, onKeep, onRevert }) {
       const marks = useMemo(() => wordDiff(edit.removed.join('\n'), edit.added.join('\n')), [edit.id]);
       return h('div', { className: 'atlas-edit' },
         h('div', { className: 'atlas-edit-where' }, `${baseName(file)} · ${edit.where || `line ${edit.line}`}`),
@@ -6074,12 +5925,13 @@ window.__ModuleLoader__.load({
         edit.added.length ? h('div', { className: 'atlas-edit-ins' }, h('span', { className: 'atlas-edit-sign', 'aria-label': 'added' }, '+'), h('span', { className: 'atlas-edit-text' }, h(Marked, { parts: marks.after, kind: 'ins' }))) : null,
         h('div', { className: 'atlas-edit-actions' },
           h(Button, { small: true, disabled: Boolean(busy), onClick: onKeep }, 'Keep'),
-          h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
+          shared ? h('span', { className: 'atlas-muted' }, 'Shared or legacy baseline · inspect the note before changing it')
+            : h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
     }
 
     function ReviewPanel({ sessionId, running, flash }) {
       const [data, setData] = useState(null);
-      const [open, setOpen] = useState(true);
+      const [open, setOpen] = useState(false);
       const [busy, setBusy] = useState('');
       const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
       // Poll more frequently while running; a change can also come from outside this session.
@@ -6121,7 +5973,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'atlas-review-toggle' }, open ? 'Hide' : 'Show')),
         open ? h('div', { className: 'atlas-review-body' },
           h('p', { className: 'atlas-muted' }, 'Compared with the copies saved for this discussion. These changes are already in the notes; the comparison does not identify who made them. Keep accepts the current text. Revert restores the earlier text.'),
-          files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
+          files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, shared: f.shared, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
           h('div', { className: 'atlas-review-actions' },
             h(Button, { small: true, primary: true, disabled: Boolean(busy), onClick: keepAll }, count > 1 ? 'Keep all' : 'Keep it'),
             h(Button, { small: true, quiet: true, onClick: () => draft(`Independently review the changes observed in ${names} since this discussion’s baseline. Check each against the work it reports; do not assume who wrote it.`) }, 'Run an independent review'),
@@ -6217,16 +6069,26 @@ window.__ModuleLoader__.load({
       const theme = resolveTheme(mode, dshDark, themes);
       activeBase = theme.base;
 
-      const rows = useSessionRows(), threads = useThreadIndex();
+      const rows = useSessionRows();
+      const registry = useDiscussionRegistry(ov?.root);
+      const priorRetained = useRef([]), observations=useRef({root:null,values:new Map()});
+      const [foreground, setForeground] = useState(() => document.visibilityState !== 'hidden');
+      useEffect(()=>{
+        const change=()=>setForeground(document.visibilityState !== 'hidden');
+        document.addEventListener('visibilitychange',change);return ()=>document.removeEventListener('visibilitychange',change);
+      },[]);
+      const records = registry.records;
       const activeId = s => s.layout.active[s.lastPane] || 'desk';
       const active = activeId(state);
-      const conversation = Object.values(state.tabs).find(t => t.kind === 'discussion' || t.kind === 'member');
       const displayTabs = useMemo(() => {
-        if (!conversation) return state.tabs;
-        const row=rowOf(rows,conversation.sessionId), record=threads.find(t=>t.id===conversation.sessionId);
-        const title=(record?.title && threadLabel(record)) || row?.displayTitle || row?.title;
-        return title ? {...state.tabs,[conversation.id]:{...conversation,title}} : state.tabs;
-      }, [state.tabs, conversation, rows, threads]);
+        const result={...state.tabs}, bySession=new Map(records.map(r=>[r.id,r]));
+        for (const t of Object.values(state.tabs)) if (tabConversation(t)) {
+          const record=bySession.get(t.sessionId), row=rowOf(rows,t.sessionId);
+          result[t.id]={...t, title:record?.title || row?.displayTitle || row?.title || t.title,
+            unread:Boolean(record && record.lastTurnAt > (record.seenAt || 0))};
+        }
+        return result;
+      }, [state.tabs, rows, records]);
       const tab=displayTabs[active];
       const show = id => {update(s => tabActivate(s,id));setActivePane(id);};
       const promote = id => update(s => tabPromote(s,id));
@@ -6280,47 +6142,57 @@ window.__ModuleLoader__.load({
       };
       const openThread = (id,from = activeId(stateRef.current),opts={}) => {
         if (!id) return;
-        const record=threadStore.get().find(t=>t.id===id),row=rowOf(rows,id);
-        const isMember=Boolean(row?.parentId || row?.parentSessionId);
-        nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Discussion'},opts);
+        const record=registryGet(id),row=rowOf(rows,id);
+        const isMember=!record && Boolean(row?.parentId || row?.parentSessionId);
+        nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:record?.title || row?.displayTitle || row?.title || 'Discussion'},opts);
       };
       // Desk submission activates the real session only after DSH accepts its first
       // message; failure is returned to the Desk so the researcher can retry.
-      const submitDesk = async ({question,topicId,attachments=[]}) => {
+      const submitDesk = async ({question,topicId,attachments=[],model=null,filing='none',candidates=[]}) => {
         const t = topicId == null ? null : ov?.topics?.[topicId];
         const context=focusContext({topic:t ? {id:t.id,title:t.title,path:t.file} : null});
         if (attachments.length) context.attachments=attachments;
-        const record = await startThread({root:ov.root,context,intent:'ask',question});
+        context.routing={filing,candidates};
+        const record = await startThread({root:ov.root,context,intent:'ask',question,origin:'desk',filing,candidates,model});
         if (live.current) openThread(record.id,'desk');
         return record;
       };
       const openAsk = () => {
-        for (const id of Object.values(layout.active)) {
-          if (!id || id===conversation?.id || !bodyRef(id).current) continue;
+        for (const id of visibleIds) {
+          if (!id || tabConversation(state.tabs[id]) || !bodyRef(id).current) continue;
           const got=captureSelection(bodyRef(id).current);
           if (got.selection) {show(id);setAsk({from:id,preset:got});return;}
         }
-        const from=active===conversation?.id ? layout.active[otherPane(paneOfTab(layout,active))] || active : active;
+        const across=layout.active[otherPane(paneOfTab(layout,active))];
+        const from=tabConversation(tab) && visibleIds.includes(across) && !tabConversation(state.tabs[across]) ? across : active;
         setAsk({from,preset:{}});
       };
-      const askFrom = async (from,context,intent,question,label) => {
+      const askFrom = async (from,context,intent,question,label,{targetId='new',origin='ask'}={}) => {
         if (!ov) return;
         promote(from); setStarting(true);
         try {
-          const record = await startThread({root:ov.root,context,intent,question,label});
-          if (live.current && stateRef.current.tabs[from]) openThread(record.id,from);
+          // Capture the chosen session before any await. Never replace a stale or
+          // closed target with whichever discussion happens to be active now.
+          if (targetId!=='new') {
+            const target=registryGet(targetId);
+            if (!target || target.status==='resolved' || !knownThread(rows,target)) throw new Error('The chosen discussion is no longer available.');
+            await keepBaseline(targetId,context);
+            await atlasSendToSession(targetId,promptOf(context,intent,question));
+            if (live.current && stateRef.current.tabs[from]) openThread(targetId,from);
+          } else {
+            const record=await startThread({root:ov.root,context,intent,question,label,origin,filing:context.topic?'user':'none'});
+            if (live.current && stateRef.current.tabs[from]) openThread(record.id,from);
+          }
         } catch (e) {
-          if (!live.current) return;
-          if (e.fallback) handOff(ov.root,promptOf(context,intent,question),flash);
-          else flash('The discussion could not start: '+e.message);
+          if (live.current) flash('The question could not be sent: '+e.message);
         } finally { if (live.current) setStarting(false); }
       };
       const onQuick = (kind,from=activeId(stateRef.current)) => setQuick({tab:kind || 'paper',from,at:Date.now()});
       const onRefresh = () => {
         if (Object.keys(stateRef.current.tabs).some(id=>editorDirty[id])) { flash('Save or discard your edits before reading the files again.'); return; }
-        setVersion(Date.now());
+        setVersion(Date.now()); registry.refresh();
       };
-      const chrome = useAtlasChrome({rootRef, overview:ov, mode, themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+      const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
         activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
         openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
         openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
@@ -6332,6 +6204,17 @@ window.__ModuleLoader__.load({
       const visibleIds=focused ? [active] : Object.values(layout.active).filter(Boolean);
       const visibleLeft=visibleIds.includes(layout.active.left)?layout.active.left:null;
       const visibleRight=visibleIds.includes(layout.active.right)?layout.active.right:null;
+      const retained=retainedTabIds(state.tabs,state.order,[active,...visibleIds],priorRetained.current);
+      useLayoutEffect(()=>{ priorRetained.current=retained; });
+      useEffect(()=>{
+        if (!ov?.root || registry.root!==ov.root) return;
+        const prev=observations.current.root===ov.root ? observations.current.values : new Map();
+        const shownSessions=foreground ? [visibleLeft,visibleRight].map(id=>state.tabs[id]?.sessionId).filter(Boolean) : [];
+        const {snapshots,patches}=discussionObservations(prev,records,rows,shownSessions,Date.now());
+        observations.current={root:ov.root,values:snapshots};
+        for (const {id,patch} of patches) registryPatch(id,patch).catch(()=>{if (live.current) flash('Could not update the read status of a discussion.');});
+      },[ov?.root,registry.root,records,rows,visibleLeft,visibleRight,foreground]);
+      const targets=useMemo(()=>discussionTargetRows(state.tabs,state.order,records,rows),[state.tabs,state.order,records,rows]);
       useLayoutEffect(() => {
         const all=focusStore.get(), byTab={};
         for (const [id,data] of Object.entries(all.byTab)) if (state.tabs[id]) byTab[id]=data;
@@ -6339,11 +6222,12 @@ window.__ModuleLoader__.load({
         focusStore.set({byTab,paneOf,active,visible:{left:visibleLeft,right:visibleRight}});
       }, [state.layout, active, narrow, visibleLeft, visibleRight]);
       const actionsFor = from => ({
-        current:conversation?.sessionId || null, keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
-        ask:(...args)=>askFrom(from,...args),openThread:id=>openThread(id,from),startAsk:preset=>setAsk({from,preset:preset||{}}),
+        current:besideDiscussion(state.tabs,layout,visibleIds,from), targets, openDiscussionIds:state.order.map(id=>state.tabs[id]).filter(t=>t.kind==='discussion').map(t=>t.sessionId), keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
+        ask:(...args)=>askFrom(from,...args),openThread:(id,opts)=>openThread(id,from,opts),startAsk:preset=>setAsk({from,preset:preset||{}}),
         addToThread(context) {
-          const sessionId = conversation?.sessionId;
-          if (!sessionId || stateRef.current.tabs[conversation.id]?.sessionId !== sessionId) {flash('The discussion is no longer open.');return;}
+          const sessionId = besideDiscussion(state.tabs,layout,visibleIds,from);
+          const cur=stateRef.current, screen=tabScreenLayout(cur,narrow), currentVisible=focused?[activeId(cur)]:Object.values(screen.active).filter(Boolean);
+          if (!sessionId || besideDiscussion(cur.tabs,screen,currentVisible,from)!==sessionId) {flash('There is no discussion open beside this tab.');return;}
           promote(from); const text=contextBlock(context);
           if (draftIntoThread(sessionId,text+'\n\n')) flash('The passage is in the discussion’s input box: add your question and send it.');
           else if (navigator.clipboard) navigator.clipboard.writeText(text).then(()=>flash('Copied the passage; paste it into the discussion.'),()=>flash('Atlas could not add it here.'));
@@ -6366,7 +6250,8 @@ window.__ModuleLoader__.load({
         if (!ov) return h(Loading);
         if (t.kind==='place') {
           if (t.view==='library') return h(React.Fragment,null,h('label',{className:'atlas-library-local-filter'},h('input',{className:'atlas-input',type:'search',value:libFilter,placeholder:'Filter papers and entries','aria-label':'Filter papers and entries',onChange:e=>setLibFilter(e.target.value)})),h(LibraryView,{...props,filter:libFilter,tab:t.tab,focusAdd:t.add}));
-          if (t.view==='discussions' || t.view==='teams') return h(ActivityView,{...props,place:t.view,filter:t.filter||''});
+          if (t.view==='discussions') return h(DiscussionsPlace,{...props,filter:t.filter||''});
+          if (t.view==='teams') return h(LegacyTeamsPlace,{...props,filter:t.filter||''});
           if (t.view==='map') return h(UniverseView,{...props,filter:'',anchor:t.anchor});
           if (t.view==='learn') return h(LearnView,{...props,path:t.path});
           if (t.view==='search') return h(SearchView,{...props,q:t.q,at:t.at});
@@ -6375,7 +6260,7 @@ window.__ModuleLoader__.load({
         if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
-        if (t.kind==='discussion' || t.kind==='member') return h(Companion,{threadId:t.sessionId,pending:false,onClose:()=>close(t.id),flash,root:ov.root,onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
+        if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
         return h(Empty,null,'This team room is not available in this version.');
       };
       const split=liveSplit ?? layout.split;
@@ -6411,14 +6296,14 @@ window.__ModuleLoader__.load({
       };
       const wrap = (id,node) => h(PaneContext.Provider,{value:id},h(AtlasActions.Provider,{value:actionsFor(id)},node));
       const running=t=>Boolean(t.sessionId && rowOf(rows,t.sessionId)?.running);
-      return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused',conversation&&'has-companion'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
+      return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
         h('div',{className:'atlas-body'},
           !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,workspaceMenu:p===shown[0]?chrome.workspaceMenu:null,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
             menuItems:menuItems(p,layout.active[p]),onShow:show,onClose:close,onFocus:focus,onPromote:promote,onDrag:startDrag,onDropAt:dropHandlers,domId}))),
           h('div',{className:'atlas-panes',ref:panesRef},
             state.order.map(id=>{
               const t=state.tabs[id],visible=visibleIds.includes(id);
-              return h('div',{key:id,id:domId('panel',id),role:'tabpanel','aria-label':tabV2Label(t,ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
+              return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
                 ref:bodyRef(id),className:cx('atlas-tab-body','is-'+t.kind,!visible&&'is-hidden'),style:geometry(paneOfTab(layout,id)),
                 onFocusCapture:()=>show(id),onPointerDownCapture:()=>show(id),onClickCapture:e=>rememberGesture(e,id,e.nativeEvent?.atlasMiddle?{button:1}:{}),onAuxClickCapture:e=>middle(e,id)},
                 wrap(id,h(Boundary,null,contentOf(t))));
@@ -6429,7 +6314,7 @@ window.__ModuleLoader__.load({
               onDoubleClick:()=>update(s=>({...s,layout:{...s.layout,split:50}})),onKeyDown:e=>{const d=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;if(d){e.preventDefault();update(s=>({...s,layout:{...s.layout,split:Math.max(20,Math.min(80,s.layout.split+d))}}));}}}),
             drag && !focused && shown.map(p=>h('div',{key:'drop-'+p,className:cx('atlas-drop-pane',drop?.pane===p && drop.where==='pane'&&'is-over'),style:geometry(p),...dropHandlers(p,'pane')})),
             drag && !focused && !narrow && shown.length===1 && h('div',{className:cx('atlas-drop-split is-right',drop?.where==='split'&&'is-over'),...dropHandlers('right','split')},h(Icon,{name:'panel'}),'Drop here to split'),
-            visibleIds.filter(id=>id!==conversation?.id).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
+            visibleIds.filter(id=>!tabConversation(state.tabs[id])).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
             ask && state.tabs[ask.from] && wrap(ask.from,h(AskBar,{preset:ask.preset,onClose:()=>setAsk(null)})),
             quick && ov && wrap(quick.from,h(QuickAdd,{key:quick.at,tab:quick.tab,overview:ov,go:goOf(quick.from),flash,onClose:()=>setQuick(null)})),
             h(Toast,{message:message || (starting?'Starting the discussion…':null)}))),
@@ -6601,6 +6486,54 @@ window.__ModuleLoader__.load({
     // see the same keyed siblings when an editor or retained DSH session changes pane.
     const TAB_PLACES = { desk: ['Desk', 'desk'], discussions: ['Discussions', 'chat'], teams: ['Teams', 'team'], map: ['Map', 'universe'], library: ['Library', 'library'], learn: ['Learn', 'learn'], write: ['Write', 'writing'], search: ['Search', 'search'] };
     const tabPreviewable = (kind) => ['file', 'paper', 'topic'].includes(kind);
+    const tabConversation = t => Boolean(t && (t.kind === 'discussion' || t.kind === 'member'));
+    const tabMatches = (a,b) => a.key === b.key || (tabConversation(a) && tabConversation(b) && a.sessionId === b.sessionId);
+
+    /** Only these bodies retain DSH SessionProviders. Current visible conversations
+     * come first, then the last ones actually shown, not the strip or mount order. */
+    function retainedTabIds(tabs, order, visible, previous, cap = 6) {
+      return [...new Set([...visible,...previous,...order.slice().reverse()])]
+        .filter(id => tabConversation(tabs[id])).slice(0,cap);
+    }
+
+    /** Never select a merely open (hidden) conversation for a content action. */
+    function besideDiscussion(tabs, layout, visible, from) {
+      if (!visible.includes(from)) return null;
+      const pane=paneOfTab(layout,from);
+      const id=pane && layout.active[otherPane(pane)];
+      return visible.includes(id) && tabs[id]?.kind === 'discussion' ? tabs[id].sessionId : null;
+    }
+
+    // The catalog's running→settled transition is a genuine turn signal; updated
+    // alone can be a title, pin or filing change. A missing/disconnected catalog
+    // is not a completion. Sequence local observations monotonically, even if two
+    // transitions happen in the same millisecond.
+    function discussionObservations(previous, records, rows, visibleSessions, now) {
+      const snapshots=new Map(), patches=[];
+      for (const record of records) {
+        const id=record.id, row=rowOf(rows,id), prior=previous.get(id);
+        const running=typeof row?.running==='boolean' ? row.running : null;
+        const seen=visibleSessions.includes(id) && Boolean(row);
+        const settled=prior?.running===true && running===false;
+        const turnAt=settled ? Math.max(now,1+(prior.turnAt || 0),1+(record.lastTurnAt || 0)) : Math.max(prior?.turnAt || 0,record.lastTurnAt || 0);
+        const patch={};
+        if (settled) {patch.lastTurnAt=turnAt;patch.updated=turnAt;}
+        if (seen && (!prior?.visible || turnAt > Math.max(record.seenAt || 0,prior?.seenAt || 0))) patch.seenAt=Math.max(now,turnAt);
+        if (Object.keys(patch).length) patches.push({id,patch});
+        snapshots.set(id,{running,visible:seen,turnAt,seenAt:patch.seenAt || prior?.seenAt || record.seenAt || 0});
+      }
+      return {snapshots,patches};
+    }
+
+    function discussionTargetRows(tabs, order, records, rows) {
+      const recordMap = new Map(records.map(r=>[r.id,r]));
+      const shown = order.map(id=>tabs[id]).filter(t=>t.kind==='discussion').map(t=>recordMap.get(t.sessionId)).filter(Boolean);
+      const recent=[...records].sort((a,b)=>(b.updated || b.created || 0)-(a.updated || a.created || 0));
+      const targets=new Map();
+      for (const r of [...shown,...recent]) if (!targets.has(r.id) && r.status!=='resolved' && knownThread(rows,r)) targets.set(r.id,{id:r.id,title:r.title || 'Discussion'});
+      return [...targets.values()];
+    }
+
 
     function tabSpec(route, places) {
       if (!route) return null;
@@ -6622,7 +6555,7 @@ window.__ModuleLoader__.load({
     /** RT-1…8. Existing tabs win even over modifiers. Narrow mode is a projection,
      * not a saved move: a previously split workspace comes back at full width. */
     function tabDestination(state, from, spec, opts = {}) {
-      const existing = Object.values(state.tabs).find(t => t.key === spec.key);
+      const existing = Object.values(state.tabs).find(t => tabMatches(t,spec));
       if (existing) return paneOfTab(state.layout, existing.id);
       if (opts.narrow || spec.kind === 'desk') return 'left';
       const source = paneOfTab(state.layout, from) || state.lastPane;
@@ -6630,6 +6563,7 @@ window.__ModuleLoader__.load({
       if (opts.ctrlKey || opts.metaKey || opts.samePane) return source;
       if (spec.kind === 'place' || spec.kind === 'team') return 'left';
       if (spec.kind === 'member') return 'right';
+      if (spec.kind === 'discussion' && state.tabs[from]?.kind === 'place') return 'right';
       if (spec.kind === 'discussion' && state.tabs[from]?.kind === 'desk') return source;
       if (spec.kind === 'preview' || spec.kind === 'discussion') return otherPane(source);
       if (['desk', 'place'].includes(state.tabs[from]?.kind)) return 'right';
@@ -6638,8 +6572,9 @@ window.__ModuleLoader__.load({
 
     function tabActivate(s, id) {
       const p = paneOfTab(s.layout, id);
-      if (!p || (s.lastPane === p && s.layout.active[p] === id)) return s;
-      return { ...s, lastPane: p, layout: { ...s.layout, active: { ...s.layout.active, [p]: id } } };
+      const remembered = s.tabs[id]?.kind==='discussion' ? s.tabs[id].sessionId : s.lastDiscussion;
+      if (!p || (s.lastPane === p && s.layout.active[p] === id && remembered===s.lastDiscussion)) return s;
+      return { ...s, lastPane: p, lastDiscussion:remembered, layout: { ...s.layout, active: { ...s.layout.active, [p]: id } } };
     }
 
     function tabPromote(s, id) {
@@ -6669,19 +6604,13 @@ window.__ModuleLoader__.load({
     function tabOpenState(s, from, spec, opts = {}, dirty = {}) {
       if (!spec) return s;
       const pane = tabDestination(s, from, spec, opts);
-      const existing = Object.values(s.tabs).find(t => t.key === spec.key);
+      const existing = Object.values(s.tabs).find(t => tabMatches(t,spec));
       const permanent = !tabPreviewable(spec.kind) || opts.permanent || opts.ctrlKey || opts.metaKey || opts.button === 1 || spec.edit || spec.created;
       if (existing) {
         const tab = { ...existing, ...spec, ...(existing.path && ['file','topic'].includes(spec.kind) ? {path: existing.path} : {}), id: existing.id, edit: Boolean(existing.edit || spec.edit), temporary: Boolean(existing.temporary && !permanent) };
         return tabActivate({ ...s, tabs: { ...s.tabs, [tab.id]: tab } }, tab.id);
       }
       let next = opts.narrow ? tabFoldPreviews(s) : s;
-      // M1: one actual DSH conversation at a time, but the v2 identity and
-      // reopen entry are always for a specific (never an anonymous) session.
-      if (spec.kind === 'discussion' || spec.kind === 'member') {
-        const old = Object.values(next.tabs).find(t => t.kind === 'discussion' || t.kind === 'member');
-        if (old) next = tabCloseState(next, old.id);
-      }
       if (!permanent) {
         const candidates = opts.narrow ? next.order : next.layout[pane];
         const old = candidates.find(id => next.tabs[id].temporary);
@@ -6781,11 +6710,11 @@ window.__ModuleLoader__.load({
       const s = emptyTabState();
       if (!saved?.layout) return s;
       const ids = new Set(['desk']), keys = new Set(['desk']);
-      let conversation = false;
+      const sessions = new Set();
       for (const raw of Array.isArray(saved.tabs) ? saved.tabs : []) {
         const t = readSavedTab(raw);
         if (!t || ids.has(t.id) || keys.has(t.key)) continue;
-        if (t.kind === 'discussion' || t.kind === 'member') { if (conversation) continue; conversation = true; }
+        if (tabConversation(t)) { if (sessions.has(t.sessionId)) continue; sessions.add(t.sessionId); }
         s.order.push(t.id); s.tabs[t.id] = t; ids.add(t.id); keys.add(t.key);
       }
       const assigned = new Set(['desk']);
@@ -6881,13 +6810,13 @@ window.__ModuleLoader__.load({
           onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
         ids.map((id,i)=>{
           const t=tabs[id],label=tabV2Label(t,ov),on=id===active;
-          return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, tabIndex:on?0:-1, draggable:id!=='desk',
+          return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, 'aria-label':t.unread ? label+' · Unread reply' : undefined, tabIndex:on?0:-1, draggable:id!=='desk',
             title:t.path || t.url || label, className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert'),
             onClick:()=>onShow(id), onDoubleClick:()=>onPromote(id), onKeyDown:e=>handleKey(e,id), onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
             onDragStart:e=>{ e.dataTransfer.setData(TAB_DRAG,id); e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id); },onDragEnd:()=>onDrag(null)},
             h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label),
             h('span',{className:'atlas-tab-slot'},
-              running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
+              running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : t.unread ? h('span',{className:'atlas-tab-status atlas-tab-unread',title:'Unread reply','aria-hidden':true}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
               id !== 'desk' ? h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:e=>{e.stopPropagation();onClose(id);}},h(Icon,{name:'close',size:12})) : null));
         }),drop?.pane===pane&&drop.where==='strip'&&drop.index===ids.length ? h('span',{className:'atlas-ptab-end'}) : null),
         overflow && tool('list','List tabs','chevron'),
@@ -6914,6 +6843,7 @@ window.__ModuleLoader__.load({
     .atlas-tab-slot {width:var(--s-20);height:var(--s-20);flex:none;display:grid;place-items:center;}
     .atlas-tab-slot > * {grid-area:1/1;}
     .atlas-tab-dirty {width:var(--s-8);height:var(--s-8);border-radius:var(--r-full);background:var(--text-2);}
+    .atlas-tab-unread {width:6px;height:6px;border-radius:var(--r-full);background:var(--accent);}
     .atlas-tab-working {width:var(--s-12);height:var(--s-12);background:var(--accent);clip-path:var(--star-shape);animation:atlas-twinkle var(--motion-twinkle) var(--ease) infinite alternate;}
     .atlas-ptab:hover .atlas-tab-status,.atlas-ptab.is-on .atlas-tab-status {visibility:hidden;}
     .atlas-shell-v2 .atlas-strip-tool {margin:0;flex:none;width:28px;height:28px;}

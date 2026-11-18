@@ -54,22 +54,24 @@ function TopicShelf({ id, title, icon, items, renderItem, defaultOpen = true, em
     footer));
 }
 
-// M1 keeps the local, session-checked 0.9 index; do not count other browsers' discussions.
+// Current filing lives in the registry. The initial context is historical and
+// must not make a moved discussion appear under its previous topic.
 function TopicDiscussionShelf({ file }) {
   const actions = React.useContext(AtlasActions);
   const threads = useThreadIndex();
   const rows = useSessionRows();
-  const list = threads.filter((t) => t.context?.topic?.path && pathKey(t.context.topic.path) === pathKey(file) && knownThread(rows, t))
+  const list = threads.filter((t) => t.kind !== 'team' && t.topic?.path && pathKey(t.topic.path) === pathKey(file) && knownThread(rows, t))
     .sort((a, b) => Number(a.status === 'resolved') - Number(b.status === 'resolved') || b.created - a.created);
   return h(TopicShelf, { id: `${file}#discussions`, title: 'Discussions', icon: 'spark', items: list,
-    hint: 'From the Atlas index in this browser.',
+    hint: 'Filed to this topic in the workspace discussion registry.',
     empty: h(Empty, null, 'No discussions about this topic yet.'),
     renderItem: (t) => h(React.Fragment, null, h(ThreadRow, { t, row: rowOf(rows, t.id), current: actions.current === t.id, onOpen: () => actions.openThread(t.id) }), t.status === 'resolved' ? h('span', { className: 'atlas-shelf-hint' }, 'Resolved') : null),
     footer: h(Button, { small: true, icon: 'spark', onClick: () => actions.startAsk({}) }, 'Ask about this topic') });
 }
 
 function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
-  const t = data.topic;
+  const t = data.topic, actions = React.useContext(AtlasActions);
+  const discuss = () => actions.ask(focusContext({ topic: { id: t.id, title: t.title || 'Root note', path: data.path } }), 'ask', 'Discuss this topic.', '', { targetId: 'new', origin: 'topic' });
   const parts = useMemo(() => splitNote(data.body), [data.body]);
   const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
   const [reveal, setReveal] = useState({ key: '', n: 0 });
@@ -120,7 +122,8 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
         facts.map((f) => h('span', { key: f, className: 'atlas-meta-fact' }, f)),
         t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
       h('div', { className: 'atlas-actions' },
-        h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
+        h(Button, { primary: true, icon: 'chat', onClick: discuss }, 'Discuss'),
+        h(Button, { icon: 'team', disabled: !actions.startTeam, title: actions.startTeam ? 'Start a team for this topic' : 'Native team setup arrives in M3.', onClick: () => actions.startTeam?.({ topic: t.id }) }, 'Start a team'),
         data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
         h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
         h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),

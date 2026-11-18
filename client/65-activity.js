@@ -1,8 +1,4 @@
-// --------------------------------------------------------------- activity ---
-// What is waiting on the researcher, what is running across topics, and agent
-// teams started from a topic. Everything here is read from the notes (Current
-// work dispositions) and from DSH's own session list; Atlas keeps only its
-// small index of which session is about what.
+// Read-only legacy team index and Current work decision controls. Discussions and needs live in the registry.
 
 /** A Current work disposition that waits on the researcher's decision. */
 function isWaiting(status) {
@@ -57,36 +53,13 @@ function DecideButtons({ topic, thread, onDone }) {
   if (options.length < 2) return null;
   const decide = (o) => {
     actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask',
-      `My decision on "${thread.name}": ${o.letter}: ${o.text}. Record it in the owning note's decisions with today's date and these words, update this Current work entry, and continue within it.`, `Decide ${thread.name}`);
+      `My decision on "${thread.name}": ${o.letter}: ${o.text}. Record it in the owning note's decisions with today's date and these words, update this Current work entry, and continue within it.`, `Decide ${thread.name}`, { origin: 'decide', targetId: 'new' });
     if (onDone) onDone();
   };
   return h('div', { className: 'atlas-decide', role: 'group', 'aria-label': 'Choose an option' },
     options.map((o) => h('button', { key: o.letter, type: 'button', className: 'atlas-decide-option', onClick: () => decide(o), title: `Decide ${o.letter}: a discussion records it in the note` },
       h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
 }
-
-function WaitingList({ ov, go, compact, limit, allowTeamStart = true }) {
-  const actions = React.useContext(AtlasActions);
-  const items = useMemo(() => waitingItems(ov), [ov]);
-  if (items.length === 0) return compact ? null : h('section', { className: 'atlas-waiting is-empty' }, h('h2', null, 'Waiting on you'), h(Empty, null, 'Nothing in your notes waits on a decision from you.'));
-  const shown = limit ? items.slice(0, limit) : items;
-  return h('section', { className: cx('atlas-waiting', compact && 'is-compact'), 'aria-label': 'Waiting on you' },
-    h('h2', null, 'Waiting on you', h('span', { className: 'atlas-count' }, items.length)),
-    h('ul', null, shown.map(({ topic, thread, summary }, i) => h('li', { key: topic.id + ':' + thread.name + ':' + i, className: 'atlas-waiting-item' },
-      h('div', { className: 'atlas-waiting-head' },
-        h('button', { type: 'button', className: 'atlas-waiting-title', onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, thread.name),
-        thread.date ? h('span', { className: 'atlas-date' }, thread.date) : null),
-      h('p', { className: 'atlas-waiting-topic' }, topic.id === '' ? 'Root note' : shortTitle(topic.title, 60)),
-      compact ? null : h('p', { className: 'atlas-waiting-text' }, summary),
-      compact ? null : h('div', { className: 'atlas-waiting-actions' },
-        h(Button, { small: true, onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, 'Open the thread'),
-        h(Button, { small: true, quiet: true, onClick: () => actions && actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide "${thread.name}": lay out the options my note records, what each would settle, and what you would recommend.`, 'Decide ' + thread.name) }, 'Discuss'),
-        allowTeamStart ? h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team') : null),
-      compact ? null : h(DecideButtons, { topic, thread })))),
-    compact && items.length > shown.length ? h(TextButton, { onClick: () => go({ view: 'activity' }) }, `All ${items.length} in Activity`) : null);
-}
-
-// ------------------------------------------------------------- the list ---
 
 function sessionState(row, record) {
   if (row && row.running) return { label: 'working', className: 'is-running' };
@@ -99,37 +72,27 @@ function parentOf(row) {
   return row ? row.parentSessionId || row.parentId || '' : '';
 }
 
-/** Discussions and teams Atlas started, by topic; DSH's other recent sessions after them. */
-function activityGroups(index, rows, place, filter) {
-  // Classify the full index before taking a list slice. A team deliberately
-  // omitted from Discussions is still Atlas-owned, not an 'other' session.
-  const matchesPlace = (t, row, id) => {
-    const team = Boolean(t?.kind === 'team' || teamOf(row));
-    if ((place === 'teams' && !team) || (place === 'discussions' && team) || filter === 'needs') return false;
-    return filter !== 'running' || row?.running || (team && membersOf(rows, id).some((m) => m.row?.running));
-  };
-  const byTopic = new Map();
-  const seen = new Set();
+/** Preserve topic groupings and historical labels; live child projections count
+ * towards the Running filter. Ordinary discussions belong to the registry. */
+function legacyTeamGroups(index, rows, filter = '') {
+  const groups = new Map(), indexed = new Set();
+  const running = (id, row) => row?.running || membersOf(rows, id).some(m => m.row?.running);
   for (const t of index) {
-    if (!knownThread(rows, t)) continue;
-    seen.add(t.id);
-    if (!matchesPlace(t, rowOf(rows, t.id), t.id)) continue;
-    const topic = (t.context && t.context.topic) || null;
-    const key = topic ? topic.path : '';
-    if (!byTopic.has(key)) byTopic.set(key, { key, topic, items: [], latest: 0 });
-    const group = byTopic.get(key);
+    const row = rowOf(rows, t.id);
+    if (!knownThread(rows,t) || parentOf(row) || (t.kind !== 'team' && !teamOf(row))) continue;
+    indexed.add(t.id);
+    if (filter === 'running' && !running(t.id,row)) continue;
+    const topic = t.context?.topic || null, key = topic?.path || '';
+    if (!groups.has(key)) groups.set(key, { key, topic, latest: 0, items: [] });
+    const group = groups.get(key);
     group.items.push(t);
     group.latest = Math.max(group.latest, t.created || 0);
   }
-  for (const group of byTopic.values()) group.items.sort((a, b) => (b.created || 0) - (a.created || 0));
-  const groups = [...byTopic.values()].sort((a, b) => b.latest - a.latest);
-  const others = rows && rows.byId ? Object.entries(rows.byId)
-    .map(([id, row]) => ({ id, row }))
-    .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank && matchesPlace(null, row, id))
-    .reverse() : [];
-  return { groups, others: place ? others : others.slice(0, 12) };
+  for (const group of groups.values()) group.items.sort((a,b) => (b.created || 0) - (a.created || 0));
+  const others = Object.entries(rows?.byId || {}).filter(([id,row]) => !indexed.has(id) && !parentOf(row) && !row.archived && !row.blank && teamOf(row) && (filter !== 'running' || running(id,row)))
+    .map(([id,row]) => ({id,row}));
+  return {groups: [...groups.values()].sort((a,b) => b.latest - a.latest), others};
 }
-
 /** What DSH's session list says about a session (its projection), or nothing. */
 function projectionOf(row) {
   return (row && row.projectionValues) || {};
@@ -189,7 +152,7 @@ function TeamMembers({ rows, leadId, onOpen }) {
       members.length === 0 ? h('li', { className: 'atlas-muted' }, 'No members yet: the lead staffs the seats in its first turn.') : null));
 }
 
-function ActivityRow({ id, kind, title, row, record, onOpen, children }) {
+function LegacyTeamRow({ id, kind, title, row, record, onOpen, children }) {
   const state = sessionState(row, record);
   const when = record && record.created ? new Date(record.created).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   return h('li', { className: 'atlas-activity-row' },
@@ -201,211 +164,26 @@ function ActivityRow({ id, kind, title, row, record, onOpen, children }) {
     when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
 }
 
-function ActivityView({ overview: ov, go, place, filter = '' }) {
-  const actions = React.useContext(AtlasActions);
-  const index = useThreadIndex();
-  const rows = useSessionRows();
-  usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title || 'Root note', path: ov.rootFile } }, [ov.rootFile, ov.title]);
-  const scoped = place === 'teams' || place === 'discussions';
-  const teams = place === 'teams';
-  const needs = scoped && filter === 'needs';
-  const { groups, others } = useMemo(() => activityGroups(index, rows, scoped ? place : undefined, scoped ? filter : ''), [index, rows, scoped, place, filter]);
-  const topicColor = (topic) => {
-    const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
-    return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--accent)';
-  };
-  const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
-  return h('div', { className: 'atlas-page is-wide atlas-activity' },
-    h('p', { className: 'atlas-kicker' }, scoped ? 'Research desk' : 'Activity'),
-    h('h1', null, scoped ? teams ? 'Teams' : 'Discussions' : "What's running"),
-    h('p', { className: 'atlas-lede' }, teams ? 'Inspect existing team leads, members and task counts from DSH.' : scoped ? 'Decisions in your notes and discussions by topic, from the Atlas index on this device.' : 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
-    scoped ? h('div', { className: 'atlas-actions', role: 'group', 'aria-label': 'Filter ' + place },
-      (teams ? [['', 'All'], ['running', 'Running']] : [['', 'All'], ['needs', 'Needs you'], ['running', 'Running']]).map(([value, text]) => h('button', { key: value, type: 'button', className: cx('atlas-button is-small', filter === value && 'is-primary'), 'aria-pressed': filter === value, onClick: () => go({ view: place, filter: value }) }, text))) : null,
-    !teams && (!scoped || filter !== 'running') ? h(WaitingList, { ov, go, allowTeamStart: !scoped }) : null,
-    needs ? (teams ? h(Empty, null, 'This team index does not track decision requests.') : null) : h('section', { className: 'atlas-section' },
-      h('h2', null, 'By topic', h('span', { className: 'atlas-count' }, groups.length)),
-      groups.length === 0 ? h(Empty, null, scoped ? (filter === 'running' ? 'Nothing is running in this list.' : teams ? 'No teams in the local Atlas index.' : 'No discussions in the local Atlas index yet. Ask from the Desk or a topic.') : 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
-      groups.map((group) => h('div', { key: group.key || 'none', className: 'atlas-activity-group' },
-        h('h3', null,
-          h('span', { className: 'atlas-dot', style: { background: topicColor(group.topic) } }),
-          group.topic ? h(TextButton, { onClick: () => go({ view: 'doc', path: group.topic.path }) }, group.topic.title) : 'The research programme'),
-        h('ul', null, group.items.map((t) => h(ActivityRow, { key: t.id, id: t.id, kind: label(t), title: threadLabel(t), row: rowOf(rows, t.id), record: t, onOpen: () => actions.openThread(t.id) },
-          t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? h(TeamMembers, { rows, leadId: t.id, onOpen: actions.openThread }) : null)))))),
-    others.length > 0
-      ? h('section', { className: 'atlas-section' },
-        h('h2', null, 'Other sessions in DSH', h('span', { className: 'atlas-count' }, others.length)),
-        h('ul', { className: 'atlas-activity-others' }, others.map(({ id, row }) => h(ActivityRow, { key: id, id, kind: teamOf(row) ? 'Team' : 'Session', title: row.displayTitle || row.title || 'Untitled session', row, onOpen: () => actions.openThread(id) },
-          teamOf(row) ? h(TeamMembers, { rows, leadId: id, onOpen: actions.openThread }) : null))))
-      : null);
+function LegacyTeamsPlace({overview: ov, go, filter = ''}) {
+  const actions = React.useContext(AtlasActions), index = useThreadIndex(), rows = useSessionRows();
+  const {groups, others} = useMemo(() => legacyTeamGroups(index,rows,filter), [index,rows,filter]);
+  usePublishFocus({kind:'universe', topic:{id:'',title:ov.title || 'Root note',path:ov.rootFile}}, [ov.rootFile,ov.title]);
+  const teamRow = (id, record, row) => h(LegacyTeamRow, {
+    key:id, id, row, record, kind:'Team', title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Untitled team',
+    onOpen:() => actions.openThread(id),
+  }, h(TeamMembers,{rows,leadId:id,onOpen:actions.openThread}));
+  return h('div',{className:'atlas-page is-wide atlas-activity'},
+    h('p',{className:'atlas-kicker'},'Research desk'), h('h1',null,'Teams'),
+    h('p',{className:'atlas-lede'},'Inspect existing team leads, members and task counts from DSH.'),
+    h('div',{className:'atlas-actions',role:'group','aria-label':'Filter teams'},
+      [['','All'],['running','Running']].map(([value,label])=>h('button',{type:'button',key:value,'aria-pressed':filter===value,className:cx('atlas-button is-small',filter===value && 'is-primary'),onClick:()=>go({view:'teams',filter:value})},label))),
+    groups.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'By topic'),groups.map(g =>
+      h('div',{className:'atlas-activity-group',key:g.key},h('h3',null,g.topic ? h(TextButton,{'data-atlas-open':true,onClick:()=>go({view:'doc',path:g.topic.path})},g.topic.title) : 'The research programme'),
+        h('ul',null,g.items.map(t=>teamRow(t.id,t,rowOf(rows,t.id))))))),
+    others.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'Other teams in DSH'),h('ul',{className:'atlas-activity-others'},others.map(({id,row})=>teamRow(id,null,row)))),
+    !groups.length && !others.length && h(Empty,null,filter==='running' ? 'No teams are running.' : 'No existing teams to show.'));
 }
 
-// ------------------------------------------------------------- teams ---
-
-/** DSH's Agent Teams service, set while it is loaded (see the registration). */
+// Optional DSH Agent Teams capability installed by 90-register. No M2
+// launcher calls it. Team mutations and new rooms belong to M3.
 let teamScope = null;
-
-/**
- * The roles Oh-My-BBFF Team ships with. A one-shot role is dispatched for a
- * bounded job (bbff_team_dispatch); the others can also be hired as a core
- * member that keeps its context (bbff_team_hire). The researcher can change
- * the catalog in BBFF Settings; the brief asks the Lead to check it.
- */
-const TEAM_ROLES = [
-  { id: 'librarian', name: 'Librarian', kind: 'oneshot', hint: 'Finds and reads sources; reads, never edits' },
-  { id: 'explorer', name: 'Explorer', kind: 'oneshot', hint: 'Maps code, data and notes quickly' },
-  { id: 'oracle', name: 'Oracle', kind: 'oneshot', hint: 'Reviews and judges: the independent check' },
-  { id: 'fixer', name: 'Fixer', kind: 'both', hint: 'Implements and runs the checks or calculations' },
-  { id: 'writer', name: 'Writer', kind: 'both', hint: 'Drafts and revises text' },
-  { id: 'laborer', name: 'Laborer', kind: 'both', hint: 'Bounded routine work' },
-  { id: 'designer', name: 'Designer', kind: 'both', hint: 'Designs interfaces and figures' },
-];
-const SEAT_MODES = [['member', 'Core member'], ['oneshot', 'One-shot job']];
-
-function roleOf(id) {
-  return TEAM_ROLES.find((r) => r.id === id) || { id, name: id, kind: 'both', hint: '' };
-}
-
-/** How a seat is filled: a one-shot role is always dispatched. */
-function seatMode(m) {
-  return roleOf(m.role).kind === 'oneshot' ? 'oneshot' : m.mode === 'oneshot' ? 'oneshot' : 'member';
-}
-
-function defaultMembers() {
-  return [
-    { role: 'librarian', mode: 'oneshot', purpose: 'Literature scout: find and read the sources the goal needs. Reads, never edits.', model: '' },
-    { role: 'fixer', mode: 'member', purpose: 'Runs the derivation checks or calculations the goal needs, within the limits.', model: '' },
-    { role: 'oracle', mode: 'oneshot', purpose: 'Reviewer: checks the record against the work before anything enters research.md.', model: '' },
-  ];
-}
-
-function slugOf(text) {
-  return String(text || '').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 40) || 'team';
-}
-
-/** The Lead's first message: where it is, what to settle, the limits, the seats and the rules. */
-function teamBrief({ context, goal, limits, members, reportDir }) {
-  const line = (m) => `- ${m.role}${m.purpose ? ` — ${m.purpose}` : ''}${m.model ? ` (model tier: ${m.model})` : ''}`;
-  const seats = members.filter((m) => m.role);
-  const core = seats.filter((m) => seatMode(m) === 'member').map(line);
-  const jobs = seats.filter((m) => seatMode(m) === 'oneshot').map(line);
-  const rules = [
-    "Use the bbff-team-leading skill to staff and brief the team, and AITP's Skills for the research itself.",
-    'Check bbff_team_roles first: if a role or model tier named here is not in the catalog, use the closest one and say so.',
-    'Give each member only the pointers above and the files its task needs, never whole folders.',
-    `Each member writes its own report under ${reportDir}/.`,
-    'Only you propose edits to the notes, after the reviewer has checked them; say what changed and why.',
-    "Prepare any cluster job as the exact command and stop: a submission needs the researcher's yes.",
-  ];
-  return [
-    contextBlock(context),
-    '',
-    'Start an agent team for this goal and lead it.',
-    '',
-    `Goal: ${String(goal || '').trim()}`,
-    limits && limits.trim() ? `Limits:\n${limits.trim().split(/\n+/).map((l) => '- ' + l.replace(/^[-*]\s*/, '')).join('\n')}` : '',
-    core.length ? `Core members to hire (bbff_team_hire):\n${core.join('\n')}` : '',
-    jobs.length ? `One-shot jobs to dispatch when their turn comes (bbff_team_dispatch):\n${jobs.join('\n')}` : '',
-    `Rules:\n${rules.map((r) => '- ' + r).join('\n')}`,
-  ].filter(Boolean).join('\n');
-}
-
-/**
- * Start a team: a DSH session in the research workspace with Agent Teams on,
- * titled and briefed. The Lead hires the seats itself (Oh-My-BBFF Team tools).
- */
-async function startTeam({ root, context, goal, limits, members, label, onCreated }) {
-  const sessions = svc('sessions');
-  const workspaces = svc('workspaces');
-  const teams = teamScope && teamScope.remote ? teamScope.remote.agentTeams : null;
-  if (!sessions || typeof sessions.create !== 'function' || typeof sessions.retain !== 'function') throw new Error('This DSH version cannot start sessions from Atlas.');
-  if (!teams || typeof teams.setEnabled !== 'function') throw new Error("DSH's Agent Teams is not available here, so a team cannot start.");
-  let workspaceId;
-  if (workspaces && typeof workspaces.create === 'function') {
-    const workspace = await workspaces.create({ path: root });
-    workspaceId = workspace && (workspace.id || workspace.workspaceId);
-  }
-  const id = await sessions.create(workspaceId ? { workspaceId } : { cwd: root });
-  await keepBaseline(id, context);
-  const topicTitle = context.topic ? shortTitle(context.topic.title, 24) : 'Research';
-  const title = `Atlas team · ${topicTitle} · ${shortTitle(String(goal || '').replace(/\s+/g, ' '), 52)}`;
-  const topicDir = context.topic && context.topic.path ? dirOf(context.topic.path) : root;
-  const reportDir = joinPath(topicDir, `calculations/team-${slugOf(goal)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
-  const record = { id, kind: 'team', title, created: Date.now(), status: 'open', intent: 'team', label: label || shortTitle(String(goal || '').replace(/\s+/g, ' '), 90), question: String(goal || '').trim(), context, team: { goal, limits, members, reportDir } };
-  threadStore.set([...threadStore.get().filter((t) => t.id !== id), record].slice(-400));
-  if (onCreated) onCreated(record);
-  const reference = sessions.retain(id, { source: 'atlas' });
-  try {
-    const binding = await reference.ready;
-    const session = (binding && binding.session) || ((sessions.binding && sessions.binding(id)) || {}).session;
-    if (!session) throw new Error('DSH did not open the team session.');
-    if (typeof session.rename === 'function') await Promise.resolve(session.rename(title)).catch(() => {});
-    const brief = teamBrief({ context, goal, limits, members, reportDir });
-    const enabled = await Promise.resolve(teams.setEnabled(id, true)).catch((error) => ({ ok: false, error }));
-    if (!enabled || enabled.ok === false) {
-      // The session exists: leave the brief in its input box for the researcher to send once Agent Teams is on.
-      const reason = (enabled && enabled.error && enabled.error.message) || 'DSH did not turn Agent Teams on.';
-      const drafted = draftIntoThread(id, brief);
-      throw new Error(`${reason} The team's session is open${drafted ? ' with the brief in its input box' : ''}: turn on Use Agent Teams in its model menu, then send the brief.`);
-    }
-    const result = await session.prompt([{ type: 'text', text: brief }], 'queue');
-    if (result && result.ok === false) throw new Error((result.error && result.error.message) || 'DSH did not accept the brief.');
-  } finally {
-    reference.release();
-  }
-  return record;
-}
-
-function TeamView({ overview: ov, go, flash, path, thread }) {
-  const actions = React.useContext(AtlasActions);
-  const topic = useMemo(() => Object.values(ov.topics).find((t) => t.file === path) || null, [ov, path]);
-  // The overview carries a topic's waiting entries; any other thread is known by its name.
-  const th = topic && thread ? (topic.waiting || []).find((x) => x.name === thread) || { name: thread, markdown: '' } : null;
-  const [goal, setGoal] = useState(() => (th ? `Settle "${th.name}"${th.markdown ? ': ' + entrySummary(th, 400) : '.'}` : ''));
-  const [limits, setLimits] = useState("No cluster submission without the researcher's yes\nNo change to acceptance criteria");
-  const [members, setMembers] = useState(defaultMembers);
-  const [busy, setBusy] = useState(false);
-  const context = focusContext(topic ? { kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } } : { kind: 'universe' }, th ? { section: 'Current work › ' + th.name } : {});
-  usePublishFocus({ kind: 'topic', topic: topic ? { id: topic.id, title: topic.title, path: topic.file } : null }, [path]);
-  const setMember = (i, patch) => setMembers(members.map((m, j) => (j === i ? { ...m, ...patch } : m)));
-  const start = async (event) => {
-    event.preventDefault();
-    if (!goal.trim()) return flash('Say what the team should settle first.');
-    setBusy(true);
-    try {
-      await startTeam({ root: ov.root, context, goal, limits, members, label: th ? th.name : '', onCreated: (record) => actions.openThread(record.id) });
-      flash('The team started: its lead is staffing the seats. Follow it here or in Activity.');
-      go({ view: 'activity' });
-    } catch (error) {
-      flash(error.message || String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
-  if (topic) crumbs.push({ label: shortTitle(topic.title, 40), go: { view: 'doc', path: topic.file } });
-  crumbs.push({ label: 'Start a team' });
-  return h('div', { className: 'atlas-page atlas-team' },
-    h(Crumbs, { items: crumbs, go }),
-    h('p', { className: 'atlas-kicker' }, 'Agent team'),
-    h('h1', null, th ? th.name : 'Start a team'),
-    h('p', { className: 'atlas-lede' }, 'A DSH session with Agent Teams on leads the work. Oh-My-BBFF Team gives each seat a role, its permissions and a model tier: a core member keeps its context across the work, a one-shot job ends with its report. You review what the team proposes for your notes.'),
-    h('form', { className: 'atlas-team-form', onSubmit: start },
-      h('label', { className: 'atlas-field' }, h('span', null, 'Goal'), h('textarea', { className: 'atlas-input', rows: 4, value: goal, onChange: (e) => setGoal(e.target.value), placeholder: 'What should the team settle?' })),
-      h('label', { className: 'atlas-field' }, h('span', null, 'Limits, one per line'), h('textarea', { className: 'atlas-input', rows: 3, value: limits, onChange: (e) => setLimits(e.target.value) })),
-      h('fieldset', { className: 'atlas-team-seats' },
-        h('legend', null, 'Seats'),
-        members.map((m, i) => {
-          const role = roleOf(m.role);
-          return h('div', { key: i, className: 'atlas-team-seat' },
-            h('label', { className: 'atlas-seat-role' }, h('span', null, 'Role'), h('select', { className: 'atlas-input', value: m.role, title: role.hint, onChange: (e) => setMember(i, { role: e.target.value }) }, TEAM_ROLES.map((r) => h('option', { key: r.id, value: r.id, title: r.hint }, r.name)))),
-            h('label', { className: 'atlas-seat-how' }, h('span', null, 'As'), h('select', { className: 'atlas-input', value: seatMode(m), disabled: role.kind === 'oneshot', title: role.kind === 'oneshot' ? 'This role only takes one-shot jobs' : 'A core member keeps its context across the work; a one-shot job ends with its report', onChange: (e) => setMember(i, { mode: e.target.value }) }, SEAT_MODES.map(([key, label]) => h('option', { key, value: key }, label)))),
-            h('label', { className: 'atlas-seat-task' }, h('span', null, 'Task'), h('input', { className: 'atlas-input', value: m.purpose, onChange: (e) => setMember(i, { purpose: e.target.value }) })),
-            h('label', { className: 'atlas-seat-model' }, h('span', null, 'Model tier'), h('input', { className: 'atlas-input', value: m.model, placeholder: 'role default', title: "A tier label from the role's model list in BBFF Settings", onChange: (e) => setMember(i, { model: e.target.value }) })),
-            h('button', { type: 'button', className: 'atlas-icon-button atlas-seat-remove', 'aria-label': 'Remove this seat', onClick: () => setMembers(members.filter((_, j) => j !== i)) }, h(Icon, { name: 'close', size: 14 })));
-        }),
-        h(TextButton, { onClick: () => setMembers([...members, { role: 'explorer', mode: 'oneshot', purpose: '', model: '' }]) }, '+ Add a seat')),
-      h('p', { className: 'atlas-muted' }, 'Each seat gets the Atlas context block (the topic note and the thread), never whole folders. Reports go to the topic\'s calculations folder; note edits come back to you.'),
-      h('div', { className: 'atlas-actions' },
-        h('button', { type: 'submit', className: 'atlas-button is-primary', disabled: busy || !ov.root }, busy ? 'Starting…' : 'Start the team'),
-        h(Button, { quiet: true, onClick: () => go({ back: true }) }, 'Cancel'))));
-}

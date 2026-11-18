@@ -72,6 +72,54 @@ function sideTitle(ov, entry) {
 // see the same keyed siblings when an editor or retained DSH session changes pane.
 const TAB_PLACES = { desk: ['Desk', 'desk'], discussions: ['Discussions', 'chat'], teams: ['Teams', 'team'], map: ['Map', 'universe'], library: ['Library', 'library'], learn: ['Learn', 'learn'], write: ['Write', 'writing'], search: ['Search', 'search'] };
 const tabPreviewable = (kind) => ['file', 'paper', 'topic'].includes(kind);
+const tabConversation = t => Boolean(t && (t.kind === 'discussion' || t.kind === 'member'));
+const tabMatches = (a,b) => a.key === b.key || (tabConversation(a) && tabConversation(b) && a.sessionId === b.sessionId);
+
+/** Only these bodies retain DSH SessionProviders. Current visible conversations
+ * come first, then the last ones actually shown, not the strip or mount order. */
+function retainedTabIds(tabs, order, visible, previous, cap = 6) {
+  return [...new Set([...visible,...previous,...order.slice().reverse()])]
+    .filter(id => tabConversation(tabs[id])).slice(0,cap);
+}
+
+/** Never select a merely open (hidden) conversation for a content action. */
+function besideDiscussion(tabs, layout, visible, from) {
+  if (!visible.includes(from)) return null;
+  const pane=paneOfTab(layout,from);
+  const id=pane && layout.active[otherPane(pane)];
+  return visible.includes(id) && tabs[id]?.kind === 'discussion' ? tabs[id].sessionId : null;
+}
+
+// The catalog's running→settled transition is a genuine turn signal; updated
+// alone can be a title, pin or filing change. A missing/disconnected catalog
+// is not a completion. Sequence local observations monotonically, even if two
+// transitions happen in the same millisecond.
+function discussionObservations(previous, records, rows, visibleSessions, now) {
+  const snapshots=new Map(), patches=[];
+  for (const record of records) {
+    const id=record.id, row=rowOf(rows,id), prior=previous.get(id);
+    const running=typeof row?.running==='boolean' ? row.running : null;
+    const seen=visibleSessions.includes(id) && Boolean(row);
+    const settled=prior?.running===true && running===false;
+    const turnAt=settled ? Math.max(now,1+(prior.turnAt || 0),1+(record.lastTurnAt || 0)) : Math.max(prior?.turnAt || 0,record.lastTurnAt || 0);
+    const patch={};
+    if (settled) {patch.lastTurnAt=turnAt;patch.updated=turnAt;}
+    if (seen && (!prior?.visible || turnAt > Math.max(record.seenAt || 0,prior?.seenAt || 0))) patch.seenAt=Math.max(now,turnAt);
+    if (Object.keys(patch).length) patches.push({id,patch});
+    snapshots.set(id,{running,visible:seen,turnAt,seenAt:patch.seenAt || prior?.seenAt || record.seenAt || 0});
+  }
+  return {snapshots,patches};
+}
+
+function discussionTargetRows(tabs, order, records, rows) {
+  const recordMap = new Map(records.map(r=>[r.id,r]));
+  const shown = order.map(id=>tabs[id]).filter(t=>t.kind==='discussion').map(t=>recordMap.get(t.sessionId)).filter(Boolean);
+  const recent=[...records].sort((a,b)=>(b.updated || b.created || 0)-(a.updated || a.created || 0));
+  const targets=new Map();
+  for (const r of [...shown,...recent]) if (!targets.has(r.id) && r.status!=='resolved' && knownThread(rows,r)) targets.set(r.id,{id:r.id,title:r.title || 'Discussion'});
+  return [...targets.values()];
+}
+
 
 function tabSpec(route, places) {
   if (!route) return null;
@@ -93,7 +141,7 @@ function emptyTabState() {
 /** RT-1…8. Existing tabs win even over modifiers. Narrow mode is a projection,
  * not a saved move: a previously split workspace comes back at full width. */
 function tabDestination(state, from, spec, opts = {}) {
-  const existing = Object.values(state.tabs).find(t => t.key === spec.key);
+  const existing = Object.values(state.tabs).find(t => tabMatches(t,spec));
   if (existing) return paneOfTab(state.layout, existing.id);
   if (opts.narrow || spec.kind === 'desk') return 'left';
   const source = paneOfTab(state.layout, from) || state.lastPane;
@@ -101,6 +149,7 @@ function tabDestination(state, from, spec, opts = {}) {
   if (opts.ctrlKey || opts.metaKey || opts.samePane) return source;
   if (spec.kind === 'place' || spec.kind === 'team') return 'left';
   if (spec.kind === 'member') return 'right';
+  if (spec.kind === 'discussion' && state.tabs[from]?.kind === 'place') return 'right';
   if (spec.kind === 'discussion' && state.tabs[from]?.kind === 'desk') return source;
   if (spec.kind === 'preview' || spec.kind === 'discussion') return otherPane(source);
   if (['desk', 'place'].includes(state.tabs[from]?.kind)) return 'right';
@@ -109,8 +158,9 @@ function tabDestination(state, from, spec, opts = {}) {
 
 function tabActivate(s, id) {
   const p = paneOfTab(s.layout, id);
-  if (!p || (s.lastPane === p && s.layout.active[p] === id)) return s;
-  return { ...s, lastPane: p, layout: { ...s.layout, active: { ...s.layout.active, [p]: id } } };
+  const remembered = s.tabs[id]?.kind==='discussion' ? s.tabs[id].sessionId : s.lastDiscussion;
+  if (!p || (s.lastPane === p && s.layout.active[p] === id && remembered===s.lastDiscussion)) return s;
+  return { ...s, lastPane: p, lastDiscussion:remembered, layout: { ...s.layout, active: { ...s.layout.active, [p]: id } } };
 }
 
 function tabPromote(s, id) {
@@ -140,19 +190,13 @@ function tabFoldPreviews(s) {
 function tabOpenState(s, from, spec, opts = {}, dirty = {}) {
   if (!spec) return s;
   const pane = tabDestination(s, from, spec, opts);
-  const existing = Object.values(s.tabs).find(t => t.key === spec.key);
+  const existing = Object.values(s.tabs).find(t => tabMatches(t,spec));
   const permanent = !tabPreviewable(spec.kind) || opts.permanent || opts.ctrlKey || opts.metaKey || opts.button === 1 || spec.edit || spec.created;
   if (existing) {
     const tab = { ...existing, ...spec, ...(existing.path && ['file','topic'].includes(spec.kind) ? {path: existing.path} : {}), id: existing.id, edit: Boolean(existing.edit || spec.edit), temporary: Boolean(existing.temporary && !permanent) };
     return tabActivate({ ...s, tabs: { ...s.tabs, [tab.id]: tab } }, tab.id);
   }
   let next = opts.narrow ? tabFoldPreviews(s) : s;
-  // M1: one actual DSH conversation at a time, but the v2 identity and
-  // reopen entry are always for a specific (never an anonymous) session.
-  if (spec.kind === 'discussion' || spec.kind === 'member') {
-    const old = Object.values(next.tabs).find(t => t.kind === 'discussion' || t.kind === 'member');
-    if (old) next = tabCloseState(next, old.id);
-  }
   if (!permanent) {
     const candidates = opts.narrow ? next.order : next.layout[pane];
     const old = candidates.find(id => next.tabs[id].temporary);
@@ -252,11 +296,11 @@ function restoreTabSnapshot(saved) {
   const s = emptyTabState();
   if (!saved?.layout) return s;
   const ids = new Set(['desk']), keys = new Set(['desk']);
-  let conversation = false;
+  const sessions = new Set();
   for (const raw of Array.isArray(saved.tabs) ? saved.tabs : []) {
     const t = readSavedTab(raw);
     if (!t || ids.has(t.id) || keys.has(t.key)) continue;
-    if (t.kind === 'discussion' || t.kind === 'member') { if (conversation) continue; conversation = true; }
+    if (tabConversation(t)) { if (sessions.has(t.sessionId)) continue; sessions.add(t.sessionId); }
     s.order.push(t.id); s.tabs[t.id] = t; ids.add(t.id); keys.add(t.key);
   }
   const assigned = new Set(['desk']);
@@ -352,13 +396,13 @@ function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width
       onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
     ids.map((id,i)=>{
       const t=tabs[id],label=tabV2Label(t,ov),on=id===active;
-      return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, tabIndex:on?0:-1, draggable:id!=='desk',
+      return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, 'aria-label':t.unread ? label+' · Unread reply' : undefined, tabIndex:on?0:-1, draggable:id!=='desk',
         title:t.path || t.url || label, className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert'),
         onClick:()=>onShow(id), onDoubleClick:()=>onPromote(id), onKeyDown:e=>handleKey(e,id), onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
         onDragStart:e=>{ e.dataTransfer.setData(TAB_DRAG,id); e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id); },onDragEnd:()=>onDrag(null)},
         h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label),
         h('span',{className:'atlas-tab-slot'},
-          running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
+          running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : t.unread ? h('span',{className:'atlas-tab-status atlas-tab-unread',title:'Unread reply','aria-hidden':true}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
           id !== 'desk' ? h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:e=>{e.stopPropagation();onClose(id);}},h(Icon,{name:'close',size:12})) : null));
     }),drop?.pane===pane&&drop.where==='strip'&&drop.index===ids.length ? h('span',{className:'atlas-ptab-end'}) : null),
     overflow && tool('list','List tabs','chevron'),
@@ -385,6 +429,7 @@ const ATLAS_TAB_CSS = `
 .atlas-tab-slot {width:var(--s-20);height:var(--s-20);flex:none;display:grid;place-items:center;}
 .atlas-tab-slot > * {grid-area:1/1;}
 .atlas-tab-dirty {width:var(--s-8);height:var(--s-8);border-radius:var(--r-full);background:var(--text-2);}
+.atlas-tab-unread {width:6px;height:6px;border-radius:var(--r-full);background:var(--accent);}
 .atlas-tab-working {width:var(--s-12);height:var(--s-12);background:var(--accent);clip-path:var(--star-shape);animation:atlas-twinkle var(--motion-twinkle) var(--ease) infinite alternate;}
 .atlas-ptab:hover .atlas-tab-status,.atlas-ptab.is-on .atlas-tab-status {visibility:hidden;}
 .atlas-shell-v2 .atlas-strip-tool {margin:0;flex:none;width:28px;height:28px;}

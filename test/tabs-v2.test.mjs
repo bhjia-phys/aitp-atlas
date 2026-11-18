@@ -7,7 +7,7 @@ const js = readdirSync(dir).filter(f => f.endsWith('.js') && f !== '90-register.
 function client(storage = new Map()) {
   const window = { localStorage: { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v) } };
   const React = { createElement() {}, createContext: () => ({}), Component: class {} };
-  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, tabFollowState, tabFoldPreviews, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, tabV2Label };')(n => n === 'react' ? React : {}, window);
+  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, tabFollowState, tabFoldPreviews, retainedTabIds, besideDiscussion, discussionObservations, discussionTargetRows, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, tabV2Label };')(n => n === 'react' ? React : {}, window);
 }
 const c = client();
 const spec = (view, props = {}) => c.tabSpec({view, ...props},new Set(['/r/topic.md']));
@@ -53,15 +53,49 @@ test('TB-2…4: preview replacement is local; pin, drag, edit and passage promot
   assert.equal(c.tabMoveState(s,'desk','right'),s); assert.equal(c.tabCloseState(s,'desk'),s);
 });
 
-test('TB-5: last 20 closed entries, original pane and position, single DSH session, no replay of a dirty editor', () => {
+test('TB-5: last 20 closed entries, original pane and position, independent DSH sessions, no replay of a dirty editor', () => {
   let s = c.emptyTabState();
   for (let i=0;i<23;i++) {s=open(s,file(String(i)),'desk',{permanent:true});s=c.tabCloseState(s,s.layout.active.right);}
   assert.equal(s.closed.length,20); s=c.tabReopen(s); assert.equal(s.tabs[s.layout.active.right].path,'/r/22.md');
   s=open(s,spec('discussion',{sessionId:'q'}));s=open(s,spec('discussion',{sessionId:'r'}));
-  assert.equal(s.tabs['discussion:q'],undefined); assert.equal(s.closed.at(-1).tab.sessionId,'q');
-  s=c.tabReopen(s); assert.equal(s.tabs['discussion:r'],undefined); assert.equal(s.tabs['discussion:q'].sessionId,'q');
+  assert.equal(s.tabs['discussion:q'].sessionId,'q'); s=c.tabCloseState(s,'discussion:q'); assert.equal(s.closed.at(-1).tab.sessionId,'q');
+  s=c.tabReopen(s); assert.equal(s.tabs['discussion:r'].sessionId,'r'); assert.equal(s.tabs['discussion:q'].sessionId,'q');
   s=open(s,{...file('dirty'), edit:true});s=c.tabCloseState(s,s.layout.active.right);s=c.tabReopen(s);
   assert.ok(!s.tabs[s.layout.active.right].edit); assert.ok(!s.tabs[s.layout.active.right].temporary);
+});
+
+test('DS-11: two conversations stay visible, move/close/reopen/restore keep their identity, only the least recently shown hidden provider is evicted',()=>{
+  let s=c.emptyTabState(),cache=[];
+  const q=i=>'discussion:q'+i, view=()=>{cache=c.retainedTabIds(s.tabs,s.order,[s.layout.active[s.lastPane],...Object.values(s.layout.active)],cache);};
+  s=open(s,spec('discussion',{sessionId:'q0'}));view();
+  for(let i=1;i<=5;i++){s=open(s,spec('discussion',{sessionId:'q'+i}),q(0),{otherPane:true});view();}
+  assert.deepEqual(s.layout.active,{left:q(0),right:q(5)}); assert.equal(cache.length,6);
+  s=c.tabActivate(s,q(1));view(); s=open(s,spec('discussion',{sessionId:'q6'}),q(0),{otherPane:true});view();
+  assert.ok(!cache.includes(q(2)));assert.ok(cache.includes(q(0)));assert.ok(cache.includes(q(1)));assert.ok(s.tabs[q(2)]);
+  s=c.tabActivate(s,q(2));view();assert.ok(cache.includes(q(2)));assert.ok(!cache.includes(q(3)));
+  const t=s.tabs[q(2)],order=s.order;s=c.tabMoveState(s,q(2),'left',0);assert.equal(s.tabs[q(2)],t);assert.equal(s.order,order);
+  s=c.tabCloseState(s,q(2));view();assert.ok(!cache.includes(q(2)));s=c.tabReopen(s);view();assert.equal(s.tabs[q(2)].sessionId,'q2');assert.equal(s.layout.active.left,q(2));
+  c.saveTabState(s);const restored=c.loadTabState();assert.deepEqual(restored.layout,s.layout);assert.equal(restored.order.filter(id=>id.startsWith('discussion:')).length,7);
+});
+
+test('DS-19/20: current is strictly the visible opposite discussion, never a hidden discussion, a member, or a discussion on the same side',()=>{
+  let s=open(c.emptyTabState(),file('note'),'desk',{samePane:true});const from=s.layout.active.left;
+  s=open(s,spec('discussion',{sessionId:'a'}),from);s=open(s,spec('discussion',{sessionId:'b'}),from);
+  const visible=Object.values(s.layout.active);assert.equal(c.besideDiscussion(s.tabs,s.layout,visible,from),'b');assert.equal(c.besideDiscussion(s.tabs,s.layout,visible,'desk'),null);
+  assert.equal(c.besideDiscussion(s.tabs,s.layout,[from],from),null);s=c.tabActivate(s,'discussion:a');assert.equal(c.besideDiscussion(s.tabs,s.layout,Object.values(s.layout.active),from),'a');
+  s=open(s,spec('member',{sessionId:'child'}),from);assert.equal(c.besideDiscussion(s.tabs,s.layout,Object.values(s.layout.active),from),null);assert.equal(c.besideDiscussion(s.tabs,c.tabScreenLayout(s,true),[from],from),null);
+  const records=[{id:'a',title:'Renamed A'},{id:'b',title:'Resolved B',status:'resolved'},{id:'c',title:'Other C'},{id:'d',title:'Deleted'}];
+  assert.deepEqual(c.discussionTargetRows(s.tabs,s.order,records,{phase:'ready',byId:{a:{},b:{},c:{}}}),[{id:'a',title:'Renamed A'},{id:'c',title:'Other C'}]);
+});
+
+test('DS-3/12: independent turn/seen transitions; rename, disconnect and row absence are not finished replies',()=>{
+  const records=[{id:'a'},{id:'b'}];let previous=new Map();
+  const step=(r,visible,time)=>{const out=c.discussionObservations(previous,records,{byId:r},visible,time);previous=out.snapshots;return out.patches;};
+  assert.deepEqual(step({a:{running:true},b:{running:true}},['b'],10),[{id:'b',patch:{seenAt:10}}]);
+  assert.deepEqual(step({a:{running:false},b:{running:false}},['b'],11),[{id:'a',patch:{lastTurnAt:11,updated:11}},{id:'b',patch:{lastTurnAt:11,updated:11,seenAt:11}}]);
+  records[0].title='New title';records[0].updated=15;assert.deepEqual(step({a:{running:false},b:{running:false}},['b'],16),[]);
+  assert.deepEqual(step({a:{running:false},b:{running:false}},['a'],20),[{id:'a',patch:{seenAt:20}}]);
+  step({a:{running:true}},[],21);assert.deepEqual(step({},[],22),[]);assert.deepEqual(step({a:{running:false}},[],23),[]);
 });
 
 test('MG-2: migrated route, old IDs/anchors/order, companion identity, one read of the old keys', () => {

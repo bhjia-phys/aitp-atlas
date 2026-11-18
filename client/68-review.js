@@ -43,7 +43,7 @@ function Marked({ parts, kind }) {
   return parts.map((p, i) => (p.changed ? h(kind, { key: i }, p.text) : h('span', { key: i }, p.text)));
 }
 
-function EditCard({ file, edit, busy, onKeep, onRevert }) {
+function EditCard({ file, edit, busy, shared, onKeep, onRevert }) {
   const marks = useMemo(() => wordDiff(edit.removed.join('\n'), edit.added.join('\n')), [edit.id]);
   return h('div', { className: 'atlas-edit' },
     h('div', { className: 'atlas-edit-where' }, `${baseName(file)} · ${edit.where || `line ${edit.line}`}`),
@@ -51,12 +51,13 @@ function EditCard({ file, edit, busy, onKeep, onRevert }) {
     edit.added.length ? h('div', { className: 'atlas-edit-ins' }, h('span', { className: 'atlas-edit-sign', 'aria-label': 'added' }, '+'), h('span', { className: 'atlas-edit-text' }, h(Marked, { parts: marks.after, kind: 'ins' }))) : null,
     h('div', { className: 'atlas-edit-actions' },
       h(Button, { small: true, disabled: Boolean(busy), onClick: onKeep }, 'Keep'),
-      h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
+      shared ? h('span', { className: 'atlas-muted' }, 'Shared or legacy baseline · inspect the note before changing it')
+        : h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
 }
 
 function ReviewPanel({ sessionId, running, flash }) {
   const [data, setData] = useState(null);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState('');
   const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
   // Poll more frequently while running; a change can also come from outside this session.
@@ -98,7 +99,7 @@ function ReviewPanel({ sessionId, running, flash }) {
       h('span', { className: 'atlas-review-toggle' }, open ? 'Hide' : 'Show')),
     open ? h('div', { className: 'atlas-review-body' },
       h('p', { className: 'atlas-muted' }, 'Compared with the copies saved for this discussion. These changes are already in the notes; the comparison does not identify who made them. Keep accepts the current text. Revert restores the earlier text.'),
-      files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
+      files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, shared: f.shared, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
       h('div', { className: 'atlas-review-actions' },
         h(Button, { small: true, primary: true, disabled: Boolean(busy), onClick: keepAll }, count > 1 ? 'Keep all' : 'Keep it'),
         h(Button, { small: true, quiet: true, onClick: () => draft(`Independently review the changes observed in ${names} since this discussion’s baseline. Check each against the work it reports; do not assume who wrote it.`) }, 'Run an independent review'),

@@ -70,16 +70,26 @@ function AtlasApp() {
   const theme = resolveTheme(mode, dshDark, themes);
   activeBase = theme.base;
 
-  const rows = useSessionRows(), threads = useThreadIndex();
+  const rows = useSessionRows();
+  const registry = useDiscussionRegistry(ov?.root);
+  const priorRetained = useRef([]), observations=useRef({root:null,values:new Map()});
+  const [foreground, setForeground] = useState(() => document.visibilityState !== 'hidden');
+  useEffect(()=>{
+    const change=()=>setForeground(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange',change);return ()=>document.removeEventListener('visibilitychange',change);
+  },[]);
+  const records = registry.records;
   const activeId = s => s.layout.active[s.lastPane] || 'desk';
   const active = activeId(state);
-  const conversation = Object.values(state.tabs).find(t => t.kind === 'discussion' || t.kind === 'member');
   const displayTabs = useMemo(() => {
-    if (!conversation) return state.tabs;
-    const row=rowOf(rows,conversation.sessionId), record=threads.find(t=>t.id===conversation.sessionId);
-    const title=(record?.title && threadLabel(record)) || row?.displayTitle || row?.title;
-    return title ? {...state.tabs,[conversation.id]:{...conversation,title}} : state.tabs;
-  }, [state.tabs, conversation, rows, threads]);
+    const result={...state.tabs}, bySession=new Map(records.map(r=>[r.id,r]));
+    for (const t of Object.values(state.tabs)) if (tabConversation(t)) {
+      const record=bySession.get(t.sessionId), row=rowOf(rows,t.sessionId);
+      result[t.id]={...t, title:record?.title || row?.displayTitle || row?.title || t.title,
+        unread:Boolean(record && record.lastTurnAt > (record.seenAt || 0))};
+    }
+    return result;
+  }, [state.tabs, rows, records]);
   const tab=displayTabs[active];
   const show = id => {update(s => tabActivate(s,id));setActivePane(id);};
   const promote = id => update(s => tabPromote(s,id));
@@ -133,47 +143,57 @@ function AtlasApp() {
   };
   const openThread = (id,from = activeId(stateRef.current),opts={}) => {
     if (!id) return;
-    const record=threadStore.get().find(t=>t.id===id),row=rowOf(rows,id);
-    const isMember=Boolean(row?.parentId || row?.parentSessionId);
-    nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Discussion'},opts);
+    const record=registryGet(id),row=rowOf(rows,id);
+    const isMember=!record && Boolean(row?.parentId || row?.parentSessionId);
+    nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:record?.title || row?.displayTitle || row?.title || 'Discussion'},opts);
   };
   // Desk submission activates the real session only after DSH accepts its first
   // message; failure is returned to the Desk so the researcher can retry.
-  const submitDesk = async ({question,topicId,attachments=[]}) => {
+  const submitDesk = async ({question,topicId,attachments=[],model=null,filing='none',candidates=[]}) => {
     const t = topicId == null ? null : ov?.topics?.[topicId];
     const context=focusContext({topic:t ? {id:t.id,title:t.title,path:t.file} : null});
     if (attachments.length) context.attachments=attachments;
-    const record = await startThread({root:ov.root,context,intent:'ask',question});
+    context.routing={filing,candidates};
+    const record = await startThread({root:ov.root,context,intent:'ask',question,origin:'desk',filing,candidates,model});
     if (live.current) openThread(record.id,'desk');
     return record;
   };
   const openAsk = () => {
-    for (const id of Object.values(layout.active)) {
-      if (!id || id===conversation?.id || !bodyRef(id).current) continue;
+    for (const id of visibleIds) {
+      if (!id || tabConversation(state.tabs[id]) || !bodyRef(id).current) continue;
       const got=captureSelection(bodyRef(id).current);
       if (got.selection) {show(id);setAsk({from:id,preset:got});return;}
     }
-    const from=active===conversation?.id ? layout.active[otherPane(paneOfTab(layout,active))] || active : active;
+    const across=layout.active[otherPane(paneOfTab(layout,active))];
+    const from=tabConversation(tab) && visibleIds.includes(across) && !tabConversation(state.tabs[across]) ? across : active;
     setAsk({from,preset:{}});
   };
-  const askFrom = async (from,context,intent,question,label) => {
+  const askFrom = async (from,context,intent,question,label,{targetId='new',origin='ask'}={}) => {
     if (!ov) return;
     promote(from); setStarting(true);
     try {
-      const record = await startThread({root:ov.root,context,intent,question,label});
-      if (live.current && stateRef.current.tabs[from]) openThread(record.id,from);
+      // Capture the chosen session before any await. Never replace a stale or
+      // closed target with whichever discussion happens to be active now.
+      if (targetId!=='new') {
+        const target=registryGet(targetId);
+        if (!target || target.status==='resolved' || !knownThread(rows,target)) throw new Error('The chosen discussion is no longer available.');
+        await keepBaseline(targetId,context);
+        await atlasSendToSession(targetId,promptOf(context,intent,question));
+        if (live.current && stateRef.current.tabs[from]) openThread(targetId,from);
+      } else {
+        const record=await startThread({root:ov.root,context,intent,question,label,origin,filing:context.topic?'user':'none'});
+        if (live.current && stateRef.current.tabs[from]) openThread(record.id,from);
+      }
     } catch (e) {
-      if (!live.current) return;
-      if (e.fallback) handOff(ov.root,promptOf(context,intent,question),flash);
-      else flash('The discussion could not start: '+e.message);
+      if (live.current) flash('The question could not be sent: '+e.message);
     } finally { if (live.current) setStarting(false); }
   };
   const onQuick = (kind,from=activeId(stateRef.current)) => setQuick({tab:kind || 'paper',from,at:Date.now()});
   const onRefresh = () => {
     if (Object.keys(stateRef.current.tabs).some(id=>editorDirty[id])) { flash('Save or discard your edits before reading the files again.'); return; }
-    setVersion(Date.now());
+    setVersion(Date.now()); registry.refresh();
   };
-  const chrome = useAtlasChrome({rootRef, overview:ov, mode, themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+  const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
     activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
     openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
     openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
@@ -185,6 +205,17 @@ function AtlasApp() {
   const visibleIds=focused ? [active] : Object.values(layout.active).filter(Boolean);
   const visibleLeft=visibleIds.includes(layout.active.left)?layout.active.left:null;
   const visibleRight=visibleIds.includes(layout.active.right)?layout.active.right:null;
+  const retained=retainedTabIds(state.tabs,state.order,[active,...visibleIds],priorRetained.current);
+  useLayoutEffect(()=>{ priorRetained.current=retained; });
+  useEffect(()=>{
+    if (!ov?.root || registry.root!==ov.root) return;
+    const prev=observations.current.root===ov.root ? observations.current.values : new Map();
+    const shownSessions=foreground ? [visibleLeft,visibleRight].map(id=>state.tabs[id]?.sessionId).filter(Boolean) : [];
+    const {snapshots,patches}=discussionObservations(prev,records,rows,shownSessions,Date.now());
+    observations.current={root:ov.root,values:snapshots};
+    for (const {id,patch} of patches) registryPatch(id,patch).catch(()=>{if (live.current) flash('Could not update the read status of a discussion.');});
+  },[ov?.root,registry.root,records,rows,visibleLeft,visibleRight,foreground]);
+  const targets=useMemo(()=>discussionTargetRows(state.tabs,state.order,records,rows),[state.tabs,state.order,records,rows]);
   useLayoutEffect(() => {
     const all=focusStore.get(), byTab={};
     for (const [id,data] of Object.entries(all.byTab)) if (state.tabs[id]) byTab[id]=data;
@@ -192,11 +223,12 @@ function AtlasApp() {
     focusStore.set({byTab,paneOf,active,visible:{left:visibleLeft,right:visibleRight}});
   }, [state.layout, active, narrow, visibleLeft, visibleRight]);
   const actionsFor = from => ({
-    current:conversation?.sessionId || null, keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
-    ask:(...args)=>askFrom(from,...args),openThread:id=>openThread(id,from),startAsk:preset=>setAsk({from,preset:preset||{}}),
+    current:besideDiscussion(state.tabs,layout,visibleIds,from), targets, openDiscussionIds:state.order.map(id=>state.tabs[id]).filter(t=>t.kind==='discussion').map(t=>t.sessionId), keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
+    ask:(...args)=>askFrom(from,...args),openThread:(id,opts)=>openThread(id,from,opts),startAsk:preset=>setAsk({from,preset:preset||{}}),
     addToThread(context) {
-      const sessionId = conversation?.sessionId;
-      if (!sessionId || stateRef.current.tabs[conversation.id]?.sessionId !== sessionId) {flash('The discussion is no longer open.');return;}
+      const sessionId = besideDiscussion(state.tabs,layout,visibleIds,from);
+      const cur=stateRef.current, screen=tabScreenLayout(cur,narrow), currentVisible=focused?[activeId(cur)]:Object.values(screen.active).filter(Boolean);
+      if (!sessionId || besideDiscussion(cur.tabs,screen,currentVisible,from)!==sessionId) {flash('There is no discussion open beside this tab.');return;}
       promote(from); const text=contextBlock(context);
       if (draftIntoThread(sessionId,text+'\n\n')) flash('The passage is in the discussion’s input box: add your question and send it.');
       else if (navigator.clipboard) navigator.clipboard.writeText(text).then(()=>flash('Copied the passage; paste it into the discussion.'),()=>flash('Atlas could not add it here.'));
@@ -219,7 +251,8 @@ function AtlasApp() {
     if (!ov) return h(Loading);
     if (t.kind==='place') {
       if (t.view==='library') return h(React.Fragment,null,h('label',{className:'atlas-library-local-filter'},h('input',{className:'atlas-input',type:'search',value:libFilter,placeholder:'Filter papers and entries','aria-label':'Filter papers and entries',onChange:e=>setLibFilter(e.target.value)})),h(LibraryView,{...props,filter:libFilter,tab:t.tab,focusAdd:t.add}));
-      if (t.view==='discussions' || t.view==='teams') return h(ActivityView,{...props,place:t.view,filter:t.filter||''});
+      if (t.view==='discussions') return h(DiscussionsPlace,{...props,filter:t.filter||''});
+      if (t.view==='teams') return h(LegacyTeamsPlace,{...props,filter:t.filter||''});
       if (t.view==='map') return h(UniverseView,{...props,filter:'',anchor:t.anchor});
       if (t.view==='learn') return h(LearnView,{...props,path:t.path});
       if (t.view==='search') return h(SearchView,{...props,q:t.q,at:t.at});
@@ -228,7 +261,7 @@ function AtlasApp() {
     if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
-    if (t.kind==='discussion' || t.kind==='member') return h(Companion,{threadId:t.sessionId,pending:false,onClose:()=>close(t.id),flash,root:ov.root,onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
+    if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
     return h(Empty,null,'This team room is not available in this version.');
   };
   const split=liveSplit ?? layout.split;
@@ -264,14 +297,14 @@ function AtlasApp() {
   };
   const wrap = (id,node) => h(PaneContext.Provider,{value:id},h(AtlasActions.Provider,{value:actionsFor(id)},node));
   const running=t=>Boolean(t.sessionId && rowOf(rows,t.sessionId)?.running);
-  return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused',conversation&&'has-companion'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
+  return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
     h('div',{className:'atlas-body'},
       !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,workspaceMenu:p===shown[0]?chrome.workspaceMenu:null,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
         menuItems:menuItems(p,layout.active[p]),onShow:show,onClose:close,onFocus:focus,onPromote:promote,onDrag:startDrag,onDropAt:dropHandlers,domId}))),
       h('div',{className:'atlas-panes',ref:panesRef},
         state.order.map(id=>{
           const t=state.tabs[id],visible=visibleIds.includes(id);
-          return h('div',{key:id,id:domId('panel',id),role:'tabpanel','aria-label':tabV2Label(t,ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
+          return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
             ref:bodyRef(id),className:cx('atlas-tab-body','is-'+t.kind,!visible&&'is-hidden'),style:geometry(paneOfTab(layout,id)),
             onFocusCapture:()=>show(id),onPointerDownCapture:()=>show(id),onClickCapture:e=>rememberGesture(e,id,e.nativeEvent?.atlasMiddle?{button:1}:{}),onAuxClickCapture:e=>middle(e,id)},
             wrap(id,h(Boundary,null,contentOf(t))));
@@ -282,7 +315,7 @@ function AtlasApp() {
           onDoubleClick:()=>update(s=>({...s,layout:{...s.layout,split:50}})),onKeyDown:e=>{const d=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;if(d){e.preventDefault();update(s=>({...s,layout:{...s.layout,split:Math.max(20,Math.min(80,s.layout.split+d))}}));}}}),
         drag && !focused && shown.map(p=>h('div',{key:'drop-'+p,className:cx('atlas-drop-pane',drop?.pane===p && drop.where==='pane'&&'is-over'),style:geometry(p),...dropHandlers(p,'pane')})),
         drag && !focused && !narrow && shown.length===1 && h('div',{className:cx('atlas-drop-split is-right',drop?.where==='split'&&'is-over'),...dropHandlers('right','split')},h(Icon,{name:'panel'}),'Drop here to split'),
-        visibleIds.filter(id=>id!==conversation?.id).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
+        visibleIds.filter(id=>!tabConversation(state.tabs[id])).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
         ask && state.tabs[ask.from] && wrap(ask.from,h(AskBar,{preset:ask.preset,onClose:()=>setAsk(null)})),
         quick && ov && wrap(quick.from,h(QuickAdd,{key:quick.at,tab:quick.tab,overview:ov,go:goOf(quick.from),flash,onClose:()=>setQuick(null)})),
         h(Toast,{message:message || (starting?'Starting the discussion…':null)}))),

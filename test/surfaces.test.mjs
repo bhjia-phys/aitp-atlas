@@ -30,13 +30,13 @@ test('a topic shelf caps the actual rows, keeps the full count, and reversibly r
   assert.equal(named(draw(items.slice(0, 5)).children[0](), 'button').length, 0);
 });
 
-test('topic discussions use only their local, known sessions and retain routing for resolved entries', () => {
-  const calls = []; const records = [ ['a', 'open', '/t', 2], ['b', 'resolved', '/t', 4], ['c', 'open', '/t', 3], ['gone', 'open', '/t', 1], ['other', 'open', '/r', 1] ]
-    .map(([id, status, path, created]) => ({ id, status, created, context: { topic: { path } } }));
+test('topic discussions use current registry filing, not the original context, and retain resolved entries', () => {
+  const calls = []; const records = [ ['a', 'open', '/t', 2], ['b', 'resolved', '/t', 4], ['c', 'open', '/t', 3], ['gone', 'open', '/t', 1], ['other', 'open', '/r', 1], ['unfiled', 'open', null, 1] ]
+    .map(([id, status, path, created]) => ({ id, status, created, topic: path ? { path } : null, context: { topic: { path: id === 'c' ? '/previous' : '/t' } } }));
   const view = component('30-topic', 'TopicDiscussionShelf', { h, ThreadRow: 'ThreadRow', React: { useContext: () => ({ openThread: (id) => calls.push(id), startAsk: () => calls.push('ask') }), Fragment: 'group' }, AtlasActions: {},
     useThreadIndex: () => records, useSessionRows: () => ({}), pathKey: (s) => s, knownThread: (_, t) => t.id !== 'gone', rowOf: () => ({}), Empty: 'Empty', Button: 'Button' });
   const shelf = view({ file: '/t' }); assert.deepEqual(shelf.props.items.map((t) => t.id), ['c', 'a', 'b']);
-  assert.match(shelf.props.hint, /this browser/); const row = shelf.props.renderItem(shelf.props.items[2]);
+  assert.match(shelf.props.hint, /workspace discussion registry/); const row = shelf.props.renderItem(shelf.props.items[2]);
   assert.match(textOf(row), /Resolved/); named(row, 'ThreadRow')[0].props.onOpen(); shelf.props.footer.props.onClick(); assert.deepEqual(calls, ['b', 'ask']);
 });
 
@@ -72,6 +72,7 @@ test('add-or-write keeps the chosen topic, dismisses the dialog, and forwards th
 test('the review explains an observed on-disk change and ties Keep/Revert to the right baseline', async () => {
   const hooks = state(); const calls = []; const record = { files: [{ path: '/fixture/n.md', edits: [{ id: 'e1' }] }] };
   hooks.slots[0] = record;
+  hooks.slots[1] = true; // user expanded the compact review banner
   const view = component('68-review', 'ReviewPanel', { h, useState: hooks.useState, useCallback: (f) => f, useEffect() {}, baseName: (s) => s.split('/').pop(), plural: (n, v) => `${n} ${v}`, Button: 'Button',
     api: async (op, req) => { calls.push([op, req.body]); return record; } });
   const el = view({ sessionId: 's', flash() {} });

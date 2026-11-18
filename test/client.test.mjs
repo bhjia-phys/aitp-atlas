@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, tabV2Label, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, legacyTeamGroups, membersOf, tabSpec, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, tabV2Label, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -198,10 +198,10 @@ test('activity: sessions group by topic, team members nest under their lead, del
     x: { title: 'Something else' },
     y: { title: 'Archived', archived: true },
   } };
-  const { groups, others } = client.activityGroups(index, rows);
-  assert.deepEqual(groups.map((g) => g.key), ['/r/topics/qc/research.md', '']);
-  assert.deepEqual(groups[0].items.map((t) => t.id), ['a', 'b']);
-  assert.deepEqual(others.map((o) => o.id), ['x']);
+  const { groups, others } = client.legacyTeamGroups(index, rows);
+  assert.deepEqual(groups.map((g) => g.key), ['/r/topics/qc/research.md']);
+  assert.deepEqual(groups[0].items.map((t) => t.id), ['a']);
+  assert.deepEqual(others, []);
   assert.deepEqual(client.membersOf(rows, 'a').map((m) => m.id), ['m1', 'm2']);
   const lead = { title: 'Lead', projectionValues: { agentTeam: { enabled: true, tasks: [{ status: 'completed' }, { status: 'in_progress' }, { status: 'pending' }] }, subagentCatalog: [
     { id: 'k1', name: 'derivation-checker', label: '[fixer] Runs the derivation checks.' },
@@ -216,27 +216,12 @@ test('activity: sessions group by topic, team members nest under their lead, del
   assert.equal(client.threadLabel({ title: 'Atlas team · Kicked top · Settle it' }), 'Settle it');
 });
 
-test('activity: a team brief points at the topic, states the goal, limits and seats, and keeps the rules', () => {
-  const context = client.focusContext({ topic: { id: 'topics/qc', title: 'Kicked top', path: '/r/topics/qc/research.md' } }, { section: 'Current work › Kicking sweep' });
-  const brief = client.teamBrief({
-    context,
-    goal: 'Settle the kicking sweep.',
-    limits: 'No cluster submission\n- Two days',
-    members: [{ role: 'librarian', mode: 'member', purpose: 'Find the sources', model: '' }, { role: 'fixer', mode: 'member', purpose: 'Check the derivation', model: 'strong' }, { role: 'writer', mode: 'oneshot', purpose: 'Draft the summary' }, { role: 'oracle', purpose: 'Review', model: '' }, { role: '', purpose: 'ignored' }],
-    reportDir: '/r/topics/qc/calculations/team-settle-the-kicking-sweep-20261116',
-  });
-  assert.ok(brief.startsWith('Atlas context (what I am looking at):\n- Topic: Kicked top — /r/topics/qc/research.md\n- Section: Current work › Kicking sweep\n'));
-  assert.match(brief, /\nGoal: Settle the kicking sweep\.\n/);
-  assert.match(brief, /\nLimits:\n- No cluster submission\n- Two days\n/);
-  assert.match(brief, /\nCore members to hire \(bbff_team_hire\):\n- fixer — Check the derivation \(model tier: strong\)\nOne-shot jobs to dispatch when their turn comes \(bbff_team_dispatch\):\n- librarian — Find the sources\n- writer — Draft the summary\n- oracle — Review\n/);
-  assert.ok(!brief.includes('ignored'));
-  assert.match(brief, /bbff-team-leading/);
-  assert.match(brief, /under \/r\/topics\/qc\/calculations\/team-settle-the-kicking-sweep-20261116\//);
-  assert.match(brief, /researcher's yes/);
-  assert.equal(client.slugOf('Settle "the" kicking sweep: p = 3!'), 'settle-the-kicking-sweep-p-3');
-  assert.equal(client.slugOf('???'), 'team');
+test('0.9 Activity and launcher bookmarks resolve to places, never the old write-capable team form', () => {
+  assert.equal(client.tabSpec({view:'activity'}).key,'place:discussions');
+  assert.equal(client.tabSpec({view:'team',path:'/r/topics/qc/research.md',thread:'Choose'}).key,'place:teams');
+  assert.doesNotMatch(body,/function (?:ActivityView|TeamView|startTeam)\(/);
+  assert.doesNotMatch(body,/bbff_team_(?:hire|dispatch)/);
 });
-
 test('discover: paper titles read as text', () => {
   assert.equal(client.texText('Anomaly Inflow and the $\\eta$-Invariant'), 'Anomaly Inflow and the η-Invariant');
   assert.equal(client.texText('Fractional Chern Insulator in Twisted Bilayer $\\mathrm{MoTe}_2$'), 'Fractional Chern Insulator in Twisted Bilayer MoTe2');
