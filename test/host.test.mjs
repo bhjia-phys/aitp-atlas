@@ -131,7 +131,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'discussions', 'discussions/import', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'needs', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'route', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'discussions', 'discussions/import', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'needs', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'route', 'save', 'search', 'teams', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
@@ -290,6 +290,31 @@ test('discussions: exact/prefix dispatch, authenticated same-origin mutations, w
   const observed=(await request('GET','needs')).json.reviews;
   assert.deepEqual(observed.map(r=>[r.session,r.edits,r.shared]).sort(),[['s2',1,true],['test-1',1,true]]);
   assert.deepEqual((await call(second.routes,'GET','needs')).json.reviews,[]);
+});
+
+test('teams routes use one authenticated owner, including nested decision and legacy writes',async t=>{
+  const fx=await makeFixture(); t.after(fx.cleanup); const {ctx,routes,registrations}=fakeContext(); apply(ctx,{root:fx.root,stateDir:fx.file('ui-state')});
+  const endpoint='/aitp-atlas/api/teams';assert.equal(registrations.filter(r=>r===`prefix:${endpoint}`).length,1);
+  const request=(method,name,opts)=>call(routes,method,name,opts);
+  for(const [method,resource] of [['GET','teams'],['PATCH','teams/test'],['POST','teams'],['POST','teams/preview'],['POST','teams/import'],['POST','teams/test/events'],['POST','teams/test/seats'],['POST','teams/test/decisions/D01/answer']]){
+    assert.equal((await request(method,resource,{cookie:false,body:method==='GET'?undefined:{}})).status,401);
+    if(method!=='GET')assert.equal((await request(method,resource,{headers:{origin:'https://different.test'},body:{}})).status,403);
+  }
+  const topic={id:'mc/worm',path:fx.file('topics/mc/worm/research.md')}, draft={requestId:'form-1',topic,goal:'Compare spectra',doneWhen:'Check the limit',seats:[]};
+  const kit=await request('POST','teams/preview',{body:draft});assert.equal(kit.status,200,JSON.stringify(kit.json));
+  const {team,brief}= (await request('POST','teams',{body:draft})).json;assert.equal(brief,kit.json.brief);
+  assert.equal((await request('PATCH',`teams/${team.id}`,{body:{leadId:'lead-id'}})).json.team.leadId,'lead-id');
+  assert.ok((await request('GET',`teams/${team.id}/artifacts`)).json.charter);
+  assert.equal((await request('POST','teams/import',{body:{expectedRoot:fx.knowledge,records:[{id:'wrong',kind:'team'}]}})).status,409);
+  assert.equal((await request('GET','teams')).json.teams.length,1);
+  const other=await makeFixture();t.after(other.cleanup);
+  const query=`expectedRoot=${encodeURIComponent(other.root)}`, before=await snapshot(fx.base);
+  for(const [method,resource,body] of [['GET','teams'],['GET','needs'],['GET',`teams/${team.id}/artifacts`],['POST','review/baseline',{session:'old-lead',files:[topic.path]}],['PATCH',`teams/${team.id}`,{paused:true}],['POST','teams/import',{records:[{kind:'team',id:'foreign'}]}]]){
+    const reply=await request(method,resource,{query,body});assert.equal(reply.status,409);assert.equal(reply.json.error.code,'WORKSPACE_CHANGED');assert.equal('teams' in reply.json,false);
+  }
+  assert.deepEqual(await snapshot(fx.base),before,'stale UI requests must not touch research or interface state');
+  const good=`expectedRoot=${encodeURIComponent(fx.root)}`;
+  for(const resource of ['teams','needs'])assert.equal((await request('GET',resource,{query:good})).json.root,fx.root);
 });
 
 test('write: the LaTeX documents the notes link, a section standing for its document, figures left out', async () => {
