@@ -170,12 +170,11 @@ const EDIT_HERE = new Set(['md', 'markdown', 'tex', 'bib', 'txt']);
 
 function directionColor(ov, slug) {
   const index = ov && ov.directions ? ov.directions.findIndex((d) => d.slug === slug) : -1;
-  const slots = DIRECTION_SLOTS[activeBase] || DIRECTION_SLOTS.night;
-  return index >= 0 && index < slots.length ? slots[index] : otherColor();
+  return index >= 0 && index < 8 ? `var(--n${index + 1})` : otherColor();
 }
 /** The color of what lies beyond the directions, in the theme being drawn. */
 function otherColor() {
-  return OTHER_SLOT[activeBase] || OTHER_SLOT.night;
+  return 'var(--dx)';
 }
 
 /** A topic's direction: its own, or the nearest ancestor's. */

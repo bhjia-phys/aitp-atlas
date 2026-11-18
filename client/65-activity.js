@@ -201,7 +201,7 @@ function ActivityView({ overview: ov, go }) {
   const { groups, others } = useMemo(() => activityGroups(index, rows), [index, rows]);
   const topicColor = (topic) => {
     const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
-    return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--link)';
+    return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--accent)';
   };
   const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
   return h('div', { className: 'atlas-page is-wide atlas-activity' },

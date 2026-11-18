@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, routeFor, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, restoreTabs, saveTabs, tabLabel, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, DIRECTION_SLOTS, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, routeFor, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, restoreTabs, saveTabs, tabLabel, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -414,27 +414,99 @@ test('themes: auto follows DSH, day and night are fixed, the config adds safe th
     'x y': { base: 'day' },
   });
   assert.deepEqual(Object.keys(themes), ['sepia'], 'shipped names and odd names are refused');
-  assert.deepEqual(themes.sepia, { base: 'day', label: 'Sepia', tokens: { 'sky-0': '#f4ecd8', 'ink-1': 'rgb(59, 47, 47)', 'accent-rgb': '120, 80, 40', 'shadow-k': '.2' } });
+  assert.deepEqual([themes.sepia.base, themes.sepia.label], ['day', 'Sepia']);
   const sepia = client.resolveTheme('sepia', true, themes);
   assert.deepEqual([sepia.name, sepia.base], ['sepia', 'day']);
-  assert.deepEqual(client.themeStyle(sepia), { '--sky-0': '#f4ecd8', '--ink-1': 'rgb(59, 47, 47)', '--accent-rgb': '120, 80, 40', '--shadow-k': '.2' });
+  const inline = client.themeStyle(sepia);
+  assert.equal(inline['--bg'], '#f4ecd8');
+  assert.equal(inline['--text-1'], 'rgb(59, 47, 47)');
+  assert.equal(inline['--accent-rgb'], '120, 80, 40');
+  assert.equal(inline['--accent'], 'rgb(120, 80, 40)');
+  assert.match(inline['--accent-soft'], /120, 80, 40/);
+  assert.match(inline['--shadow-3'], /rgba\(60, 50, 30, 0\.04/);
+  for (const key of ['sky-0', 'ink-1', 'shadow-k', 'bad', 'link']) assert.ok(!('--' + key in inline));
+  for (const pair of [[['link', '#abc'], ['accent', '#def']], [['accent', '#def'], ['link', '#abc']]]) {
+    assert.equal(client.cleanThemes({ x: { tokens: Object.fromEntries(pair) } }).x.tokens.accent, '#def', '1.0 wins in either order');
+  }
+  assert.deepEqual(client.cleanThemes({ x: { tokens: { 'n1': 'url(bad)', 'surface': '#12345', 'border-control': 'red; color: red' } } }).x.tokens, {});
   assert.deepEqual(client.themeCycle(themes), ['auto', 'day', 'night', 'sepia']);
   assert.deepEqual(client.cleanThemes(['x']), {});
 });
 
-test('themes: every token the styles use is defined by both themes, and night keeps the observatory', () => {
-  const used = new Set([...client.STYLES.matchAll(/var\(--([a-z0-9-]+)/g)].map((m) => m[1]));
-  // Set by PDF.js on its text layer, or by Atlas inline: not theme tokens.
-  const own = new Set(['dir', 'serif', 'sans', 'mono', 'write-split', 'total-scale-factor', 'min-font-size', 'min-font-size-inv', 'text-scale-factor', 'font-height', 'rotate', 'scale-x']);
-  const missing = (base) => [...used].filter((t) => !own.has(t) && !t.startsWith('dsw-') && !(t in client.THEME_TOKENS[base]));
-  assert.deepEqual(missing('night'), []);
-  assert.deepEqual(missing('day'), []);
-  assert.deepEqual(Object.keys(client.THEME_TOKENS.day).sort(), Object.keys(client.THEME_TOKENS.night).sort(), 'both themes define the same tokens');
-  assert.equal(client.THEME_TOKENS.night['sky-0'], '#070b16');
-  assert.equal(client.THEME_TOKENS.night['accent-rgb'], '157, 184, 255');
+test('themes: both moods define all referenced variables; color literals stay in the theme or Map', () => {
+  const source = readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => [f, readFileSync(new URL(f, dir), 'utf8')]);
+  const all = source.map(([, js]) => js).join('\n');
+  const used = [...all.matchAll(/var\(--([\w-]+)(?=[,)])/g)].map((m) => m[1]);
+  const defined = [...all.matchAll(/--([\w-]+)(?:\s*:|['"]\s*:)/g)].map((m) => m[1]);
+  const { night, day } = client.THEME_TOKENS;
+  assert.deepEqual(Object.keys(night).sort(), Object.keys(day).sort());
+  for (const base of [night, day]) {
+    const available = new Set([...defined, ...Object.keys(base)]);
+    assert.deepEqual([...new Set(used.filter((key) => !available.has(key)))], []);
+    for (const key of ['panel', 'ink-1', 'link', 'sky-0', 'line', 'deep', 'glow-rgb', 'danger-ink']) assert.ok(!(key in base));
+  }
+  for (const [file, js] of source) if (!['05-theme.js', '20-universe.js'].includes(file)) {
+    assert.doesNotMatch(js, /(?<!&)#[\da-f]{3,8}\b/i, `${file}: hex outside the theme/Map`);
+  }
+  assert.deepEqual([night.bg, day.bg], ['#070B17', '#ECE7DC']);
+  assert.deepEqual([night.table, day.table], ['#050811', '#E3DDCF']);
   assert.match(client.themeCss(), /\.atlas-root\[data-theme-base="day"\] \{ color-scheme: light;/);
-  assert.equal(client.DIRECTION_SLOTS.day.length, client.DIRECTION_SLOTS.night.length);
-  assert.deepEqual([...client.STYLES.matchAll(/#[0-9a-f]{3,8}\b/gi)].map((m) => m[0].toLowerCase()).filter((x) => x !== '#fff' && x !== '#000'), [], 'no literal colors but paper white and video black');
+});
+
+// Palette validator, test-time only. Use linear sRGB for both luminance and the
+// Machado et al. 100% protan/deutan simulation, clip simulated colors to the display
+// gamut, and measure perceptual differences in 100 × OKLab (not Euclidean RGB).
+function validateNebula(hex, surface, band) {
+  const dot = (row, x) => row.reduce((v, c, i) => v + c * x[i], 0);
+  const mul = (matrix, x) => matrix.map((row) => dot(row, x));
+  const linear = (h) => h.slice(1).match(/../g).map((v) => {
+    const c = parseInt(v, 16) / 255;
+    return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4;
+  });
+  const lab = (rgb) => mul([
+    [.21045426, .79361779, -.00407205], [1.97799850, -2.42859221, .45059371], [.02590404, .78277177, -.80867577],
+  ], mul([
+    [.41222147, .53633254, .05144599], [.21190350, .68069955, .10739696], [.08830246, .28171884, .62997870],
+  ], rgb).map(Math.cbrt));
+  const sims = [
+    [[.152286, 1.052583, -.204868], [.114503, .786281, .099216], [-.003882, -.048116, 1.051998]],
+    [[.367322, .860646, -.227968], [.280085, .672501, .047413], [-.011820, .042940, .968881]],
+  ];
+  const colors = hex.map(linear), ok = colors.map(lab);
+  const adjacent = (arr) => Math.min(...arr.slice(1).map((v, i) => 100 * Math.hypot(...v.map((x, k) => x - arr[i][k]))));
+  const y = (rgb) => dot([.2126, .7152, .0722], rgb) + .05;
+  const bg = y(linear(surface));
+  return {
+    lightness: ok.every(([l]) => l >= band[0] && l <= band[1]),
+    chroma: Math.min(...ok.map(([, a, b]) => Math.hypot(a, b))),
+    contrast: Math.min(...colors.map(y).map((lum) => Math.max(lum, bg) / Math.min(lum, bg))),
+    normal: adjacent(ok), cvd: Math.min(...sims.map((m) => adjacent(colors.map((x) => lab(mul(m, x).map((v) => Math.max(0, Math.min(1, v)))))))),
+  };
+}
+
+test('themes: the eight named nebula slots match VISUAL §2.3 and pass the perceptual validator', () => {
+  for (const [mood, hex, band, cvdMin] of [
+    ['night', '#588CDA #03886D #BD891C #CB5E93 #6B5FCA #C5582F #31A1BD #66A43E', [.55, .70], '11.1'],
+    ['day', '#3067B8 #08856A #A77601 #A93772 #5341B1 #B84412 #0B8FAA #4A871B', [.45, .65], '9.1'],
+  ]) {
+    const theme = client.THEME_TOKENS[mood];
+    const slots = Array.from({ length: 8 }, (_, i) => theme[`n${i + 1}`]);
+    assert.deepEqual(slots, hex.split(' '));
+    for (const background of new Set([theme.surface, mood === 'night' ? '#0D1325' : theme.surface])) {
+      const v = validateNebula(slots, background, band);
+      assert.ok(v.lightness && v.chroma >= .10 && v.contrast >= 3, JSON.stringify(v));
+      assert.ok(v.cvd >= 8 && v.normal >= 15, JSON.stringify(v));
+      assert.equal(v.cvd.toFixed(1), cvdMin);
+      assert.equal(v.normal.toFixed(1), '17.3');
+    }
+    const invalid = validateNebula([theme.surface, theme.surface], theme.surface, band);
+    assert.ok(!invalid.lightness && invalid.chroma < .10 && invalid.contrast < 3 && invalid.cvd < 8 && invalid.normal < 15);
+  }
+  const ov = { directions: Array.from({ length: 10 }, (_, i) => ({ slug: `d${i}` })) };
+  assert.deepEqual(ov.directions.map(({ slug }) => client.directionColor(ov, slug)), [
+    'var(--n1)', 'var(--n2)', 'var(--n3)', 'var(--n4)', 'var(--n5)', 'var(--n6)', 'var(--n7)', 'var(--n8)', 'var(--dx)', 'var(--dx)',
+  ]);
+  assert.equal(client.directionColor(ov, 'absent'), 'var(--dx)');
 });
 
 test("markdown: DSH's renderer gets the labels its code blocks and footnotes read", () => {

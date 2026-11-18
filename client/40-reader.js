@@ -50,7 +50,7 @@ function DocFrame({ path, type, ov, go, flash, navigate, data, editing, children
     };
   }, [path, type, Boolean(data)]);
   const owner = (data && data.owner) || (info && info.owner) || fileOwner || null;
-  const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--link)';
+  const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--accent)';
   const title = (data && data.title) || baseName(path) || path;
   const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
   if (owner) crumbs.push({ label: shortTitle(owner.title, 34), dot: color, go: { view: 'doc', path: owner.file } });
