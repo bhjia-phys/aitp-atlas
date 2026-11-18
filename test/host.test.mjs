@@ -17,13 +17,17 @@ const COOKIE = 'dsh-browser=signed';
 
 function fakeContext({ withConnection = true } = {}) {
   const routes = new Map();
-  const touched = [];
+  const touched = [], registrations = [];
   const record = (name) => new Proxy({}, { get: (_t, key) => (...args) => touched.push(`${name}.${String(key)}`) });
   // DSH's connection service: a signed cookie admits, anything else is 401.
   const connection = { requestRejection: (req) => (String((req.headers || {}).cookie || '').includes(COOKIE) ? undefined : 401) };
   const web = {
     effect: (fn) => fn(),
-    webServer: { register: (route) => routes.set(route.path, route) },
+    webServer: { register: (route) => {
+      registrations.push(`${route.kind}:${route.path}`);
+      if (routes.has(route.path)) throw new Error('Duplicate route owner');
+      routes.set(route.path, route);
+    } },
     get: (name) => (name === 'connection' && withConnection ? connection : undefined),
   };
   const ctx = {
@@ -36,11 +40,12 @@ function fakeContext({ withConnection = true } = {}) {
       fn(web);
     },
   };
-  return { ctx, routes, touched };
+  return { ctx, routes, touched, registrations };
 }
 
 async function call(routes, method, name, { query = '', body, headers, cookie = true, raw = false } = {}) {
-  const route = routes.get(`/aitp-atlas/api/${name}`);
+  const pathname = `/aitp-atlas/api/${name}`;
+  const route = routes.get(pathname) || [...routes.values()].filter((r) => r.kind === 'prefix' && pathname.startsWith(`${r.path}/`)).sort((a,b) => b.path.length - a.path.length)[0];
   assert.ok(route, `route ${name}`);
   const req = Readable.from(body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]);
   req.method = method;
@@ -126,7 +131,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'discussions', 'discussions/import', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'needs', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'route', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
@@ -251,6 +256,40 @@ test('host: without DSH authentication only this computer is answered', async ()
   } finally {
     await fx.cleanup();
   }
+});
+
+test('discussions: exact/prefix dispatch, authenticated same-origin mutations, workspace isolation and needs', async (t) => {
+  const fx = await makeFixture(), other = await makeFixture(); t.after(fx.cleanup); t.after(other.cleanup);
+  const stateDir = fx.file('interface-state');
+  const h = fakeContext(); apply(h.ctx, {root:fx.root,stateDir});
+  assert.equal(new Set(h.registrations).size, h.registrations.length);
+  assert.equal(h.routes.get('/aitp-atlas/api/discussions').kind,'prefix');
+  assert.equal(h.routes.get('/aitp-atlas/api/discussions/import').kind,'exact');
+  const payload = {id:'test-1',title:'Question',topic:'mc/worm',filing:'auto',origin:'desk'};
+  const request = (method, name, opts) => call(h.routes,method,name,opts);
+  assert.equal((await request('POST','discussions',{body:payload,cookie:false})).status,401);
+  const made = await request('POST','discussions',{body:payload,headers:{origin:'http://127.0.0.1:3000'}}); assert.equal(made.status,200); assert.equal(made.json.discussion.topic.path,fx.file('topics/mc/worm/research.md'));
+  for (const headers of [{origin:'https://wrong.test'},{origin:'https://127.0.0.1:3000'},{origin:'null'},{'content-type':'application/json-evil'}]) {
+    assert.equal((await request('PATCH','discussions/test-1',{body:{pinned:true},headers})).status,403);
+  }
+  assert.equal((await request('PATCH','discussions/test-1',{body:{pinned:true},cookie:false})).status,401);
+  assert.equal((await request('PATCH','discussions/test-1',{body:{pinned:true}})).json.discussion.pinned,true);
+  assert.equal((await request('GET','discussions/import')).status,405);
+  assert.equal((await request('POST','discussions/import',{body:{records:[{id:'s2'},{id:'legacy',kind:'team'}]}})).json.imported,1);
+  assert.equal((await request('GET','discussions',{query:'topic=mc%2Fworm'})).json.discussions.length,1);
+  assert.equal((await request('PATCH','discussions/unknown',{body:{pinned:true}})).json.error.code,'NOT_FOUND');
+  assert.equal((await request('PATCH','discussions/nested/file',{body:{pinned:true}})).status,404);
+  const second = fakeContext(); apply(second.ctx,{root:other.root,stateDir});
+  assert.deepEqual((await call(second.routes,'GET','discussions')).json.discussions,[]);
+  const route=await request('GET','route',{query:'q=worm'}); assert.equal(route.status,200); assert.ok(Array.isArray(route.json.candidates));
+  const needs=await request('GET','needs'); assert.equal(needs.status,200,JSON.stringify(needs.json)); assert.ok(needs.json.waiting.length); assert.deepEqual(needs.json.decisions,[]); assert.deepEqual(needs.json.reviews,[]);
+  // Both sessions watch one file; a direct human edit counts as an observation, not an author claim.
+  const note=made.json.discussion.topic.path;
+  for (const session of ['test-1','s2']) await request('POST','review/baseline',{body:{session,files:[note]}});
+  await fsp.appendFile(note,'\nIndependent edit observed by both discussions.\n');
+  const observed=(await request('GET','needs')).json.reviews;
+  assert.deepEqual(observed.map(r=>[r.session,r.edits,r.shared]).sort(),[['s2',1,true],['test-1',1,true]]);
+  assert.deepEqual((await call(second.routes,'GET','needs')).json.reviews,[]);
 });
 
 test('write: the LaTeX documents the notes link, a section standing for its document, figures left out', async () => {

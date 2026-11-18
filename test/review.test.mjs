@@ -12,7 +12,7 @@ import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import test from 'node:test';
 import { apply } from '../index.js';
-import { diffLines, editsOf, placeOf } from '../lib/review.js';
+import { createReview, diffLines, editsOf, placeOf } from '../lib/review.js';
 import { makeFixture, snapshot } from './fixture.mjs';
 
 test('review: line edits, and where each sits', () => {
@@ -28,6 +28,28 @@ test('review: line edits, and where each sits', () => {
   assert.equal(edits.length, 1);
   assert.deepEqual([edits[0].removed, edits[0].added, edits[0].line], [['y'], ['Y'], 2]);
   assert.match(edits[0].id, /^[0-9a-f]{12}-1$/);
+});
+
+test('review: two sessions and a human edit are a shared observation, never a per-discussion rollback', async t => {
+  const fx = await makeFixture(); t.after(() => fx.cleanup());
+  const stateDir = fx.file('review-state');
+  const a = createReview({ stateDir, workspace: fx.root });
+  const b = createReview({ stateDir, workspace: fx.root });
+  const file = fx.file('topics/mc/worm/research.md');
+  await Promise.all([a.baseline('first', [file]), b.baseline('second', [file])]);
+  const human = (await fsp.readFile(file, 'utf8')) + '\nHuman correction after both comparisons began.\n';
+  await fsp.writeFile(file, human);
+  for (const id of ['first', 'second']) {
+    const [{ edits, shared }] = (await a.changes(id)).files;
+    assert.equal(shared, true); await assert.rejects(a.revert(id, file, edits[0].id), e => e.statusCode === 409);
+  }
+  assert.deepEqual(await b.rollup(['first','second','first'], () => true), [{session:'first',edits:1,shared:true},{session:'second',edits:1,shared:true}]);
+  assert.deepEqual(await a.rollup(['first'], () => false), []);
+  await a.keep('first', file, 'all'); await a.forget('first');
+  const reloaded = createReview({ stateDir, workspace: fx.root });
+  const remaining = (await reloaded.changes('second')).files[0];
+  assert.ok(remaining.shared); await assert.rejects(reloaded.revert('second', file, remaining.edits[0].id), /will not revert/);
+  assert.equal(await fsp.readFile(file, 'utf8'), human);
 });
 
 const COOKIE = 'dsh-browser=signed';

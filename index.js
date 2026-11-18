@@ -58,7 +58,7 @@ export function apply(ctx, rawConfig) {
     };
     for (const route of routes) {
       try {
-        web.effect(() => web.webServer.register({ kind: 'exact', path: route.path, handler: handlerFor(route, connectionOf, { startedAt, graceMs: settings.authGraceMs }) }));
+        web.effect(() => web.webServer.register({ kind: route.kind || 'exact', path: route.path, handler: handlerFor(route, connectionOf, { startedAt, graceMs: settings.authGraceMs }) }));
       } catch (error) {
         console.error('[aitp-atlas] route registration failed:', route.path, error);
       }
