@@ -51,13 +51,36 @@ await runBrowserSmoke(async function migrationAndLatency({c,ev,q,click,key,wait,
   const topic={id:'mc/worm',title:'Worm algorithm',path:fx.file('topics/mc/worm/research.md')};
   const legacy={id,title:'Legacy fixture: worm estimator',question:'Which fixture made this estimate?',created:Date.now()-10000,status:'open',intent:'ask',context:{topic,doc:null,page:'',section:'',lines:'',selection:''}};
   const saved=JSON.stringify([legacy]);
-  await ev(`localStorage.setItem('aitp-atlas:threads', ${JSON.stringify(saved)})`);
+  // Old tabs.v2 had no root discriminator. Both synthetic foreign session ids have no
+  // row in DSH/registry. The sibling directory name is only a fixture string, never read.
+  const foreign = suffix => ({kind:'discussion', id:'discussion:fixture-foreign-'+suffix, sessionId:'fixture-foreign-'+suffix,
+    title:'Foreign fixture '+suffix, topic:fx.file('other-research/topics/research.md')});
+  const active=foreign('active'), closed=foreign('closed');
+  const oldTabs=JSON.stringify({tabs:[active],layout:{left:['desk'],right:[active.id],active:{left:'desk',right:active.id},split:50},
+    lastPane:'right',lastDiscussion:active.sessionId,closed:[{pane:'right',index:0,tab:closed}]});
+  assert.match(new URL(await ev('location.href')).hostname,/^127\.77\.\d+\.\d+$/);
+  await ev(`(()=>{for(const k of Object.keys(localStorage))if(k.startsWith('aitp-atlas:tabs.v2:root:'))localStorage.removeItem(k);
+    localStorage.setItem('aitp-atlas:threads',${JSON.stringify(saved)});localStorage.setItem('aitp-atlas:tabs.v2',${JSON.stringify(oldTabs)});})()`);
+  // Observe before startup, not just after Atlas has had a chance to discard a mounted tab.
+  await c.call('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{window.foreignTabFrames=[];
+    const selector='[data-session-id^="fixture-foreign-"], [role="tab"][title^="Foreign fixture"], [role="tabpanel"][aria-label^="Foreign fixture"]';
+    new MutationObserver(records=>{for(const record of records)for(const el of [record.target,...record.addedNodes])if(el.nodeType===1 && (el.matches(selector)||el.querySelector(selector)))window.foreignTabFrames.push('mounted');}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['aria-label','title','data-session-id']});})();`});
   for(let pass=1;pass<=2;pass++) {
     await reload();await place('Discussions');
     const row=await wait(`(async()=>{const r=${registry};return r.length===1 && r[0].id===${JSON.stringify(id)} && r[0];})()`,'exactly one migrated registry row');
     assert.equal(row.origin,'import');assert.equal(row.topic.id,'mc/worm');assert.equal(row.title,legacy.title);
     await wait(`Boolean(${q('.atlas-disc-results',`el.innerText.includes(${JSON.stringify(legacy.title)})`)})`,'imported real row visible in Discussions');
     assert.equal(await ev(`localStorage.getItem('aitp-atlas:threads')`),saved);
+    assert.equal(await ev(`localStorage.getItem('aitp-atlas:tabs.v2')`),oldTabs);
+    await click(q('[aria-label="Pane menu"]'),'inspect real Reopen action');
+    const reopen=q('[role="menuitem"]',`el.textContent.includes('Reopen closed tab')`);
+    await wait(`Boolean(${reopen})`,'Reopen menu item');
+    assert.ok(await ev(`(${reopen}).disabled || (${reopen}).getAttribute('aria-disabled')==='true'`),'foreign closed entry must not enable Reopen');
+    await key('Escape','Escape');
+    assert.deepEqual(await ev(`window.foreignTabFrames`),[],'no foreign title/panel mounted even transiently');
+    await wait(`Object.keys(localStorage).some(k=>k.startsWith('aitp-atlas:tabs.v2:root:'))`, 'save the scoped layout once catalogs are ready');
+    const scoped=await ev(`Object.keys(localStorage).filter(k=>k.startsWith('aitp-atlas:tabs.v2:root:')).map(k=>localStorage.getItem(k))`);
+    assert.ok(scoped.length); assert.ok(scoped.every(s=>!s.includes('fixture-foreign-')),'new root-scoped state must not persist another root’s active, closed, or last discussion');
   }
   console.log('PASS same-browser 0.9 import: native DSH session, one visible imported record on two refreshes; original localStorage retained unchanged.');
   assert.ok(timings.slice(1).every(x=>x<=400), 'one or more warm key-to-chip samples exceeded 400 ms');

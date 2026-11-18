@@ -7,7 +7,7 @@ const js = readdirSync(dir).filter(f => f.endsWith('.js') && f !== '90-register.
 function client(storage = new Map()) {
   const window = { localStorage: { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v) } };
   const React = { createElement() {}, createContext: () => ({}), Component: class {} };
-  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, tabFollowState, tabFoldPreviews, retainedTabIds, besideDiscussion, discussionObservations, discussionTargetRows, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, tabV2Label };')(n => n === 'react' ? React : {}, window);
+  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, tabFollowState, tabFoldPreviews, retainedTabIds, besideDiscussion, discussionObservations, discussionTargetRows, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, readTabSource, scopedTabState, tabStorageKey, tabSessionInScope, tabV2Label };')(n => n === 'react' ? React : {}, window);
 }
 const c = client();
 const spec = (view, props = {}) => c.tabSpec({view, ...props},new Set(['/r/topic.md']));
@@ -75,7 +75,7 @@ test('DS-11: two conversations stay visible, move/close/reopen/restore keep thei
   s=c.tabActivate(s,q(2));view();assert.ok(cache.includes(q(2)));assert.ok(!cache.includes(q(3)));
   const t=s.tabs[q(2)],order=s.order;s=c.tabMoveState(s,q(2),'left',0);assert.equal(s.tabs[q(2)],t);assert.equal(s.order,order);
   s=c.tabCloseState(s,q(2));view();assert.ok(!cache.includes(q(2)));s=c.tabReopen(s);view();assert.equal(s.tabs[q(2)].sessionId,'q2');assert.equal(s.layout.active.left,q(2));
-  c.saveTabState(s);const restored=c.loadTabState();assert.deepEqual(restored.layout,s.layout);assert.equal(restored.order.filter(id=>id.startsWith('discussion:')).length,7);
+  c.saveTabState(s,'/r');const restored=c.loadTabState('/r',{registry:{root:'/r', records:Array.from({length:7},(_,i)=>({id:'q'+i}))}});assert.deepEqual(restored.layout,s.layout);assert.equal(restored.order.filter(id=>id.startsWith('discussion:')).length,7);
 });
 
 test('DS-19/20: current is strictly the visible opposite discussion, never a hidden discussion, a member, or a discussion on the same side',()=>{
@@ -91,10 +91,10 @@ test('DS-19/20: current is strictly the visible opposite discussion, never a hid
 test('DS-3/12: independent turn/seen transitions; rename, disconnect and row absence are not finished replies',()=>{
   const records=[{id:'a'},{id:'b'}];let previous=new Map();
   const step=(r,visible,time)=>{const out=c.discussionObservations(previous,records,{byId:r},visible,time);previous=out.snapshots;return out.patches;};
-  assert.deepEqual(step({a:{running:true},b:{running:true}},['b'],10),[{id:'b',patch:{seenAt:10}}]);
-  assert.deepEqual(step({a:{running:false},b:{running:false}},['b'],11),[{id:'a',patch:{lastTurnAt:11,updated:11}},{id:'b',patch:{lastTurnAt:11,updated:11,seenAt:11}}]);
+  assert.deepEqual(step({a:{running:true},b:{running:true}},['b'],10),[]);
+  assert.deepEqual(step({a:{running:false},b:{running:false}},['b'],11),[{id:'a',patch:{observeTurn:{after:0,seen:false}}},{id:'b',patch:{observeTurn:{after:0,seen:true}}}]);
   records[0].title='New title';records[0].updated=15;assert.deepEqual(step({a:{running:false},b:{running:false}},['b'],16),[]);
-  assert.deepEqual(step({a:{running:false},b:{running:false}},['a'],20),[{id:'a',patch:{seenAt:20}}]);
+  assert.deepEqual(step({a:{running:false},b:{running:false}},['a'],20),[{id:'a',patch:{observeTurn:{after:0,seen:true}}}]);
   step({a:{running:true}},[],21);assert.deepEqual(step({},[],22),[]);assert.deepEqual(step({a:{running:false}},[],23),[]);
 });
 
@@ -103,12 +103,44 @@ test('MG-2: migrated route, old IDs/anchors/order, companion identity, one read 
   const set=(k,v)=>store.set('aitp-atlas:'+k,JSON.stringify(v));
   set('tabs',{tabs:[{id:'f1',kind:'file',path:'/r/x.md',anchor:'h'},{id:'pdf1',kind:'preview',main:'/r/doc.tex',pdf:'/r/doc.pdf'}],layout:{left:['discussion'],right:['f1','page','pdf1'],active:{left:'discussion',right:'page'},split:77}});
   set('route',{view:'doc',path:'/r/x.md',anchor:'new'});set('companion',{id:'real'});set('companion-last','older');
-  let s=local.loadTabState();assert.deepEqual(s.layout.left,['desk','discussion:real']);assert.deepEqual(s.layout.right,['f1','pdf1']);assert.equal(s.tabs.f1.anchor,'new');assert.equal(s.layout.active.right,'f1');
+  const scope={registry:{root:'/r',records:[{id:'real'}]}};
+  let s=local.loadTabState('/r',scope);assert.deepEqual(s.layout.left,['desk','discussion:real']);assert.deepEqual(s.layout.right,['f1','pdf1']);assert.equal(s.tabs.f1.anchor,'new');assert.equal(s.layout.active.right,'f1');
   assert.equal(s.lastDiscussion,'real');assert.equal(s.layout.split,77);
-  local.saveTabState(s);set('companion',{id:'obsolete'});set('route',{view:'search'});const v2=local.loadTabState();assert.deepEqual(v2.layout,s.layout);assert.equal(v2.tabs['discussion:obsolete'],undefined);assert.ok(store.has('aitp-atlas:tabs'));
+  local.saveTabState(s,'/r');set('companion',{id:'obsolete'});set('route',{view:'search'});const v2=local.loadTabState('/r',scope);assert.deepEqual(v2.layout,s.layout);assert.equal(v2.tabs['discussion:obsolete'],undefined);assert.ok(store.has('aitp-atlas:tabs'));
   assert.equal(local.migrateTabState(null,{view:'activity'},null,'last').tabs['place:discussions'].view,'discussions');
   assert.equal(local.migrateTabState(null,{view:'doc',path:'/r/topic.md'},null,null,null,new Set(['/r/topic.md'])).tabs['file:/r/topic.md'].kind,'topic');
   assert.deepEqual(local.migrateTabState(null,{view:'home'},null,null,{path:'/r/x.md',anchor:'h'}).layout.right,['file:/r/x.md']);
+});
+
+test('root-bound layout never retains another root’s transcript or reopens its closed history, even during catalog startup',()=>{
+  const store=new Map(), local=client(store), a='/fixture/Research', b='/fixture/research';
+  const aRegistry={root:a,records:[{id:'A'}]}, bRegistry={root:b,records:[{id:'B'}]};
+  let s=open(c.emptyTabState(),spec('discussion',{sessionId:'A',title:'A private title'}));
+  s=open(s,spec('discussion',{sessionId:'closed-A'}));s=c.tabCloseState(s,'discussion:closed-A');
+  local.saveTabState(s,a); assert.notEqual(local.tabStorageKey(a),local.tabStorageKey(b));
+  assert.equal(local.tabStorageKey('C:\\Fixture\\ROOT\\'),local.tabStorageKey('c:/fixture/root'));
+  const snapshot=store.get('aitp-atlas:'+local.tabStorageKey(a));store.set('aitp-atlas:tabs.v2',snapshot);
+  const rows={phase:'ready',byId:{A:{cwd:a},'closed-A':{cwd:a},B:{cwd:b}}};
+  const buckets=[{}, {registry:aRegistry,rows}, {registry:{...bRegistry,loading:true},rows}, {registry:{...bRegistry,error:'offline'},rows}, {registry:bRegistry,rows}];
+  for (const scope of buckets) {
+    const view=local.loadTabState(b,scope);assert.deepEqual(c.retainedTabIds(view.tabs,view.order,Object.values(view.layout.active),[]),[]);assert.deepEqual(view.closed,[]);assert.equal(view.lastDiscussion,null);assert.ok(!JSON.stringify(view).includes('private title'));
+    assert.equal(c.tabReopen(view),view);
+  }
+  assert.deepEqual(local.loadTabState(a,{registry:aRegistry,rows}).layout,s.layout);assert.equal(local.loadTabState(a,{registry:aRegistry,rows}).closed[0].tab.sessionId,'closed-A');assert.equal(store.get('aitp-atlas:tabs.v2'),snapshot);
+});
+
+test('legacy migration demands matching path/owner evidence; DSH-confirmed hand-offs remain accessible despite an external destination',()=>{
+  const root='/fixture/r',elsewhere='/fixture/r-long', nested=root+'/nested';
+  const registry={root,records:[{id:'here',movedTo:'handoff'}]};
+  const rows={phase:'ready',byId:{here:{cwd:root},mine:{cwd:root},foreign:{cwd:elsewhere},collision:{cwd:nested},child:{parentId:'mine'},shared:{cwd:elsewhere},handoff:{cwd:elsewhere}}};
+  const workspaces={phase:'ready',items:[{path:root,sessionIds:['here','mine']},{path:nested,sessionIds:['collision']},{path:elsewhere,sessionIds:['foreign','handoff','shared']}]};
+  const scope={root,registry,rows,workspaces,legacy:[{id:'shared',context:{topic:{path:root+'/shared.md'}}}]};
+  for(const id of ['here','mine','child','handoff'])assert.equal(c.tabSessionInScope(id,scope),true,id);
+  for(const id of ['foreign','collision','shared','unknown'])assert.equal(c.tabSessionInScope(id,scope),false,id);
+  assert.equal(c.tabSessionInScope('mine',{...scope,registry:{root:elsewhere,records:[{id:'mine'}]}}),false);
+  assert.equal(c.tabSessionInScope('foreign',{...scope,workspaces:null,rows:{phase:'pending',byId:{foreign:{cwd:root}}}}),false);
+  let s=c.emptyTabState();for(const [view,fields] of [['doc',{path:root+'/mine.md'}],['doc',{path:elsewhere+'/secret.md'}],['doc',{path:root+'/../else.md'}],['preview',{main:root+'/ok.tex',pdf:elsewhere+'/secret.pdf'}],['paper',{url:'https://example.invalid/private'}],['search',{q:'foreign query'}]])s=open(s,spec(view,fields),'desk',{permanent:true});
+  const recovered=c.scopedTabState({state:s,legacy:true},scope);assert.deepEqual(recovered.order,['desk','file:'+root+'/mine.md','place:search']);assert.ok(!JSON.stringify(recovered).includes('foreign query'));
 });
 
 test('in-place anchors and LaTeX jumps guard the originating editor, including case-folded aliases and an already-open target', () => {

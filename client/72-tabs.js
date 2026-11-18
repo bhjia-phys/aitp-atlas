@@ -90,23 +90,30 @@ function besideDiscussion(tabs, layout, visible, from) {
   return visible.includes(id) && tabs[id]?.kind === 'discussion' ? tabs[id].sessionId : null;
 }
 
-// The catalog's running→settled transition is a genuine turn signal; updated
-// alone can be a title, pin or filing change. A missing/disconnected catalog
-// is not a completion. Sequence local observations monotonically, even if two
-// transitions happen in the same millisecond.
-function discussionObservations(previous, records, rows, visibleSessions, now) {
+// Each window reports the observed edge, never its clock. Freeze the registry
+// predecessor at running *start*: a refresh while running may already contain
+// this very completion from a faster window. DSH summaries need not include
+// turnBoundary; use its number only when its turn/start was actually open.
+function discussionObservations(previous, records, rows, visibleSessions) {
   const snapshots=new Map(), patches=[];
   for (const record of records) {
-    const id=record.id, row=rowOf(rows,id), prior=previous.get(id);
-    const running=typeof row?.running==='boolean' ? row.running : null;
-    const seen=visibleSessions.includes(id) && Boolean(row);
+    const id=record.id, row=rowOf(rows,id), prior=previous.get(id), current=record.lastTurnAt || 0;
+    const ready=!rows?.phase || rows.phase==='ready';
+    const running=ready && typeof row?.running==='boolean' ? row.running : null;
+    const seen=running!==null && visibleSessions.includes(id);
+    const after=prior?.running===true ? prior.after : current;
+    const b=row?.projectionValues?.turnBoundary;
+    const number=running && Number.isSafeInteger(b?.openTurnStartSeq) && Number.isSafeInteger(b.lastTurn) && b.lastTurn>0 ? b.lastTurn : prior?.running===true ? prior.number : null;
     const settled=prior?.running===true && running===false;
-    const turnAt=settled ? Math.max(now,1+(prior.turnAt || 0),1+(record.lastTurnAt || 0)) : Math.max(prior?.turnAt || 0,record.lastTurnAt || 0);
-    const patch={};
-    if (settled) {patch.lastTurnAt=turnAt;patch.updated=turnAt;}
-    if (seen && (!prior?.visible || turnAt > Math.max(record.seenAt || 0,prior?.seenAt || 0))) patch.seenAt=Math.max(now,turnAt);
-    if (Object.keys(patch).length) patches.push({id,patch});
-    snapshots.set(id,{running,visible:seen,turnAt,seenAt:patch.seenAt || prior?.seenAt || record.seenAt || 0});
+    const edge=settled ? {after,...(number ? {number} : {})} : running===false ? prior?.edge : null;
+    if (settled || (seen && !prior?.visible && edge)) {
+      // Showing a just-finished turn can precede its registry round trip.
+      // Replay that edge with a receipt; do not read whatever is newest now.
+      patches.push({id,patch:{observeTurn:{...edge,seen}}});
+    } else if (seen && !prior?.visible && current > (record.seenAt || 0)) {
+      patches.push({id,patch:{readTurn:current}});
+    }
+    snapshots.set(id,{running,after,number,edge,visible:seen});
   }
   return {snapshots,patches};
 }
@@ -277,8 +284,21 @@ function persistedTab(t) {
   for (const k of ['id', 'kind', 'key', 'view', 'path', 'url', 'topic', 'anchor', 'main', 'pdf', 'tab', 'filter', 'thread', 'sessionId', 'title', 'q', 'temporary']) if (typeof t[k] === 'string' || typeof t[k] === 'boolean') safe[k] = t[k];
   return safe;
 }
-function saveTabState(s) {
-  storageSet('tabs.v2', { tabs: s.order.map(id => persistedTab(s.tabs[id])), layout: s.layout, lastPane: s.lastPane, lastDiscussion: s.lastDiscussion, closed: s.closed.map(e => ({ ...e, tab: persistedTab(e.tab) })) });
+function tabRootKey(root) {
+  if (typeof root!=='string' || !root || root.includes('\0')) return '';
+  const p=root.replace(/\\/g,'/');
+  if (!/^(?:\/|[A-Za-z]:\/)/.test(p) || p.split('/').some(v=>v==='.' || v==='..')) return '';
+  const key=p.replace(/\/+$/,'') || '/';
+  return /^(?:[A-Za-z]:|\/\/)/.test(key) ? key.toLowerCase() : key;
+}
+function tabInside(root, path) {
+  const r=tabRootKey(root), p=tabRootKey(path);
+  return Boolean(r && p && (p===r || (r==='/' ? p.startsWith('/') && !p.startsWith('//') : p.startsWith(r+'/'))));
+}
+function tabStorageKey(root) { const key=tabRootKey(root); return key && 'tabs.v2:root:'+encodeURIComponent(key); }
+function saveTabState(s,root) {
+  const key=tabStorageKey(root);
+  if (key) storageSet(key, { root:tabRootKey(root), tabs: s.order.map(id => persistedTab(s.tabs[id])), layout: s.layout, lastPane: s.lastPane, lastDiscussion: s.lastDiscussion, closed: s.closed.map(e => ({ ...e, tab: persistedTab(e.tab) })) });
 }
 
 function readSavedTab(raw) {
@@ -437,8 +457,77 @@ const ATLAS_TAB_CSS = `
 @media (prefers-reduced-motion:reduce){.atlas-tab-working {animation:none;}}
 `;
 
-function loadTabState() {
-  const saved = storageGet('tabs.v2', null);
-  if (saved?.layout) return restoreTabSnapshot(saved);
-  return migrateTabState(storageGet('tabs', null), storageGet('route', null), storageGet('companion', null), storageGet('companion-last', null), storageGet('side', null));
+/** The old unbucketed keys remain read-only for rollback. Read only after the
+ * overview identifies this root; loading the source is NOT permission to use it. */
+function readTabSource(root) {
+  const key=tabStorageKey(root);
+  if (!key) return {state:emptyTabState(),legacy:false};
+  const own=storageGet(key,null);
+  if (own?.layout && own.root===tabRootKey(root)) return {state:restoreTabSnapshot(own),legacy:false};
+  const old=storageGet('tabs.v2',null);
+  return {legacy:true,state:old?.layout ? restoreTabSnapshot(old) : migrateTabState(storageGet('tabs', null), storageGet('route', null), storageGet('companion', null), storageGet('companion-last', null), storageGet('side', null))};
 }
+
+function tabScopeReady(scope) {
+  const r=tabRootKey(scope?.root);
+  return Boolean(r && r===tabRootKey(scope.registry?.root) && !scope.registry.loading && !scope.registry.error);
+}
+
+// DSH's list is host-wide. Existence, a saved title, a bare id, and a shared
+// knowledge file are NOT membership witnesses. An explicit DS-22 movedTo link
+// in this root's registry is the one intentional cross-workspace exception.
+function tabSessionInScope(id,scope,visited=new Set()) {
+  if (!id || !tabScopeReady(scope) || visited.has(id)) return false;
+  visited.add(id);
+  const {root,registry,rows,workspaces,legacy}=scope, records=registry.records || [];
+  if (records.some(r=>r.movedTo===id)) return true;
+  const ownerList=Array.isArray(workspaces?.items) && workspaces.phase==='ready' && workspaces.state!=='error';
+  if (workspaces && !Array.isArray(workspaces) && !ownerList) return false;
+  const owners=ownerList ? workspaces.items.filter(w=>w.sessionIds?.includes(id)) : [];
+  if (owners.length) return owners.length===1 && tabRootKey(owners[0].path)===tabRootKey(root);
+  const row=rowOf(rows,id);
+  if (row?.cwd && !tabInside(root,row.cwd)) return false;
+  if (records.some(r=>r.id===id)) return true;
+  // A child without a workspace row inherits its verified lead's scope.
+  const parent=row?.parentId || row?.parentSessionId;
+  if (parent) return tabSessionInScope(parent,scope,visited);
+  if (rows?.phase==='ready' && !row) return false;
+  const previous=Array.isArray(legacy) && legacy.find(r=>r?.id===id);
+  if (previous?.context?.topic?.path && !tabInside(root,previous.context.topic.path)) return false;
+  if (row?.cwd && rows?.phase==='ready') {
+    // A ready workspace catalog can disambiguate nested research roots even
+    // when its sessionIds have not yet caught up with the new row.
+    const nearest=ownerList && workspaces.items.filter(w=>tabInside(w.path,row.cwd)).sort((a,b)=>tabRootKey(b.path).length-tabRootKey(a.path).length)[0];
+    return nearest ? tabRootKey(nearest.path)===tabRootKey(root) : tabInside(root,row.cwd);
+  }
+  return Boolean(previous?.context?.topic?.path && tabInside(root,previous.context.topic.path));
+}
+
+function scopedTabState(source,scope) {
+  if (!tabStorageKey(scope?.root)) return emptyTabState();
+  const s=source.state,legacy=source.legacy;
+  const admit=t=>{
+    if (!t) return null;
+    if (tabConversation(t) || t.kind==='team') return tabSessionInScope(t.sessionId,scope) ? t : null;
+    if (t.kind==='file' || t.kind==='topic') {
+      if (legacy && !tabInside(scope.root,t.path)) return null;
+      const kind=scope.places ? (scope.places.has(pathKey(t.path))?'topic':'file') : t.kind;
+      return kind===t.kind ? t : {...t,kind};
+    }
+    if (!legacy || t.kind==='desk') return t;
+    if (t.kind==='place') {
+      // The place name is harmless. Old search terms, filters and opener
+      // paths are not known to belong to this root.
+      return {id:t.id,key:t.key,kind:'place',view:t.view};
+    }
+    if (t.kind==='preview') return tabInside(scope.root,t.main) && (!t.pdf || tabInside(scope.root,t.pdf)) ? t : null;
+    return t.kind==='paper' && tabInside(scope.root,t.topic) ? t : null;
+  };
+  const tabs={}, order=[];
+  for (const id of s.order) { const t=admit(s.tabs[id]);if (t) {tabs[id]=t;order.push(id);} }
+  const layout=fixActive({...s.layout,left:s.layout.left.filter(id=>tabs[id]),right:s.layout.right.filter(id=>tabs[id])});
+  const closed=s.closed.map(e=>({...e,tab:admit(e.tab)})).filter(e=>e.tab);
+  return {...s,tabs,order,layout,closed,lastPane:layout[s.lastPane].length ? s.lastPane : 'left',lastDiscussion:tabSessionInScope(s.lastDiscussion,scope) ? s.lastDiscussion : null};
+}
+
+function loadTabState(root,scope) { return scopedTabState(readTabSource(root),{...scope,root}); }

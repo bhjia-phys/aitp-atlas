@@ -3,28 +3,41 @@
 function AtlasApp() {
   const [version, setVersion] = useState(0);
   const overview = useApi('overview', version ? { fresh: 1 } : null, 'overview', version);
-  const ov = overview.data;
+  const root=overview.data?.root;
+  const registry=useDiscussionRegistry(root), rows=useSessionRows(), legacy=useThreadIndex();
+  const workspaces=useAtlasCatalog(svc('workspaces')?.list);
+  // Key the entire body plane (including its focus, action callbacks and LRU).
+  // No render under B may inherit a single retained SessionProvider from A.
+  return h(AtlasRootShell,{key:tabStorageKey(root) || 'setup',overview,version,setVersion,registry,rows,legacy,workspaces});
+}
+
+function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,workspaces}) {
+  const ov = overview.data, root=ov?.root;
   const places = useMemo(() => placeKeys(ov), [ov]);
-  const [state, setState] = useState(loadTabState);
-  const stateRef = useRef(state);
-  const update = useCallback(fn => {
-    const prior = stateRef.current, next = fn(prior);
-    if (next === prior) return;
-    stateRef.current = next; setState(next); saveTabState(next);
-  }, []);
-  // Persist even an untouched migration, without updating the old keys.
-  useEffect(() => { saveTabState(stateRef.current); }, []);
-  useEffect(() => {
-    if (!ov) return;
-    update(s => {
-      let tabs = s.tabs;
-      for (const t of Object.values(s.tabs)) if (['file','topic'].includes(t.kind)) {
-        const kind = places.has(pathKey(t.path)) ? 'topic' : 'file';
-        if (kind !== t.kind) tabs = { ...tabs, [t.id]: { ...t, kind } };
-      }
-      return tabs === s.tabs ? s : { ...s, tabs };
-    });
-  }, [ov, places, update]);
+  const scope=useMemo(()=>({root,registry,rows,legacy,workspaces,places}),[root,registry.root,registry.records,registry.loading,registry.error,rows,legacy,workspaces,places]);
+  const [source,setSource]=useState(()=>readTabSource(root));
+  // Keep unverified legacy storage OUT of React's rendered plane and closed
+  // stack, even while a catalog lags the overview. Re-project on new evidence.
+  const state=useMemo(()=>scopedTabState(source,scope),[source,scope]);
+  const stateRef=useRef(state), scopeRef=useRef(scope);
+  stateRef.current=state;scopeRef.current=scope;
+  const update=useCallback(fn=>{
+    const prior=stateRef.current,next=fn(prior);
+    if (next===prior) return;
+    const scoped={state:next,legacy:false};
+    const now={...scopeRef.current,registry:registryState.get()};
+    const safe=scopedTabState(scoped,now);
+    stateRef.current=safe;setSource({state:safe,legacy:false,changed:true});
+  },[]);
+  const canMigrate=tabScopeReady(scope) && (!rows || rows.phase==='ready') && (Array.isArray(workspaces) || workspaces?.phase==='ready');
+  const savedNavigation=useRef(null);
+  useEffect(()=>{
+    if (!canMigrate || (!source.legacy && !source.changed)) return;
+    // A place can be opened before the catalogs finish. Persist it when scope
+    // becomes provable, not only on the next click. Ignore unrelated row ticks.
+    const signature=JSON.stringify(state);
+    if (savedNavigation.current!==signature) { saveTabState(state,root); savedNavigation.current=signature; }
+  },[source,canMigrate,state,root]);
 
   const [message, flash] = useFlash();
   const [quick, setQuick] = useState(null);
@@ -71,15 +84,13 @@ function AtlasApp() {
   const theme = resolveTheme(mode, dshDark, themes);
   activeBase = theme.base;
 
-  const rows = useSessionRows();
-  const registry = useDiscussionRegistry(ov?.root);
   const priorRetained = useRef([]), observations=useRef({root:null,values:new Map()});
   const [foreground, setForeground] = useState(() => document.visibilityState !== 'hidden');
   useEffect(()=>{
     const change=()=>setForeground(document.visibilityState !== 'hidden');
     document.addEventListener('visibilitychange',change);return ()=>document.removeEventListener('visibilitychange',change);
   },[]);
-  const records = registry.records;
+  const records = useMemo(()=>tabScopeReady(scope) ? registry.records.filter(r=>tabSessionInScope(r.id,scope)) : [],[scope]);
   const activeId = s => s.layout.active[s.lastPane] || 'desk';
   const active = activeId(state);
   const displayTabs = useMemo(() => {
@@ -133,6 +144,9 @@ function AtlasApp() {
     const routing = { narrow,ctrlKey:opts.ctrlKey, metaKey:opts.metaKey,shiftKey:opts.shiftKey, button:opts.button,permanent:opts.permanent, otherPane:opts.otherPane, samePane:opts.samePane };
     const spec = tabSpec(next,places);
     if (!spec) return;
+    if (spec.sessionId && !tabSessionInScope(spec.sessionId,{...scopeRef.current,registry:registryState.get()})) {
+      flash('This session is not verified for the current research workspace.'); return;
+    }
     if (spec.kind==='desk' && opts.focusComposer) setDeskRequest(n=>n+1);
     if (spec.kind==='place' && ['discussions','teams'].includes(spec.view) && !spec.filter) spec.filter='';
     spec.at = Date.now();
@@ -177,7 +191,7 @@ function AtlasApp() {
       // closed target with whichever discussion happens to be active now.
       if (targetId!=='new') {
         const target=registryGet(targetId);
-        if (!target || target.status==='resolved' || !knownThread(rows,target)) throw new Error('The chosen discussion is no longer available.');
+        if (!target || target.status==='resolved' || !knownThread(rows,target) || !tabSessionInScope(targetId,{...scopeRef.current,registry:registryState.get()})) throw new Error('The chosen discussion is no longer available.');
         await keepBaseline(targetId,context);
         await atlasSendToSession(targetId,promptOf(context,intent,question));
         if (live.current && stateRef.current.tabs[from]) openThread(targetId,from);
