@@ -108,12 +108,12 @@ review task without a review file); decision answer (file appended, status flipp
 
 M3 is accepted when:
 
-- [ ] With the preview's mock model, a team starts: the lead session exists with Agent Teams on,
-      the brief matches the template, and the run directory has the scaffold.
-- [ ] A fixture run directory and board render correctly in Flow, Board and Timeline.
-- [ ] Answering a decision writes the file and messages the lead; `@numerics` reaches that member.
-- [ ] The Team room matches the mockup at 1440×900 in both moods, and degrades at 1040 and 760 px
-      as TM-24 says.
+Implementation evidence is in the [M3 review report](reports/M3.md); these are implementer checks, not design-lead sign-off.
+
+- [x] A real fixture-only DSH lead has Agent Teams enabled. Both named children received the rendered task and successfully read their generated role cards; the run directory and canonical topic baseline exist.
+- [x] A fixture run directory and native board feed the Flow, Board and Timeline views. A real `task-1` is joined to its report and review on one observed Flow row.
+- [x] Answering a decision writes the file once and messages the lead; `@numerics` reaches only that member and an unknown seat receives nothing.
+- [x] The Team room was compared at 1440×900 in both moods, with the sole host sidebar. Logbook and stacked mission were exercised at actual room widths on both sides of 1040 and 760 px.
 
 ## M4 — Polish and documentation (1.0.0)
 

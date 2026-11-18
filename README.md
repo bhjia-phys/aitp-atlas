@@ -12,11 +12,11 @@
 
 Atlas is built to serve research and the search for truth in physics. A derivation should lead back to its assumptions, and a numerical result to the calculation that produced it. A failed check or an unresolved objection belongs in the record when it changes what we can claim. Atlas keeps the question, its evidence and the discussion within reach as the work develops.
 
-## Preview the redesigned Desk and discussions (0.11.0 review branch)
+## Preview the research workbench and native teams (0.12.0 review branch)
 
 From this source checkout with a compatible local DSH runtime, run `node build-client.mjs` then `npm run preview`. Open the **exact private URL** printed by the launcher and select **Atlas** in the DSH sidebar. This opens a disposable research programme and a local streaming mock model, not your profile or research. Press `q` then Enter in the terminal to discard it. Rebuild and restart the preview after editing the plugin.
 
-Start on **Desk** to draft a question. **Auto** suggests topics; a weak match stays unfiled. Select **Atlas ▾ → Discussions** (or **Alt+2**) for research discussions, filters and filing. A tab is already-open content; **Atlas ▾** opens a destination, and DSH keeps its own sidebar. Try two discussions side by side, or move one to a topic and undo before its six-second notification window ends. The native research-team launcher is scheduled for M3. See the [M2 review and limitations](design/1.0/reports/M2.md) and [navigation comparison](design/1.0/reports/nav/nav-comparison-final.png).
+Start on **Desk** to draft a question. **Auto** suggests topics; a weak match stays unfiled. Select **Atlas ▾ → Discussions** (or **Alt+2**) for research discussions, filters and filing. A tab is already-open content; **Atlas ▾** opens a destination, and DSH keeps its own sidebar. Try two discussions side by side, or move one to a topic and undo before its six-second notification window ends. To assemble a native research team, choose **Atlas ▾ → Teams → New team**. State the question, evidence that would settle it, owning topic and crew. Nothing starts until you confirm. The Team room distinguishes the lead’s actual DSH board, files submitted by members, independent reviews and decisions awaiting your answer. The ordinary preview model only replies with sample text; the [M3 review](design/1.0/reports/M3.md) describes the opt-in native-seat demonstration. See also the [M2 review](design/1.0/reports/M2.md) and [navigation comparison](design/1.0/reports/nav/nav-comparison-final.png).
 
 The installation instructions and [user guide](docs/guide.md) below describe the released 0.9.2 baseline; this review build does not require installing it.
 

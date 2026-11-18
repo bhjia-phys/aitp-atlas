@@ -1,6 +1,6 @@
 {
   "name": "aitp-atlas",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "AITP Atlas for DeepSeek Harness: draft physics questions at the Desk, explore a map of research notes, and read papers, discuss passages and edit LaTeX in two panes. Review observed changes against saved note baselines.",
   "type": "module",
   "license": "MIT",
