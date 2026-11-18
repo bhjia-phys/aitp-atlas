@@ -1368,6 +1368,9 @@ window.__ModuleLoader__.load({
             const r = 0.38 + 0.56 * ((phase + j / 33) % 1);
             p = point(angle, r);
             if (!keepOut || !overlaps(box(p, 20, 20), keepOut)) break;
+            // A wide greeting in a short band can consume this ray's entire
+            // outer annulus. The inner horizon is still free on the same ray.
+            if (j === 32) p = point(angle, 0.15 + phase * 0.04);
           }
           const last = Date.parse(member.t.latest?.date || '');
           const days = Math.max(0, (ov.scannedAt - last) / 86400000);
@@ -1403,7 +1406,8 @@ window.__ModuleLoader__.load({
       // Lay out in pane pixels. Scaling a fixed 1000-unit SVG into a split pane
       // also shrank its 11.5px labels and pointer targets down to a third of size.
       const scale = Math.min(width / 1000, height / 740);
-      return atlasChartLayout(ov, { width, height, cx: width / 2, cy: height / 2, rx: 466 * scale, ry: 327 * scale, start: -Math.PI / 2, span: Math.PI * 2, labelLimit: Math.max(12, Math.min(38, Math.floor(width / 28))) });
+      // The smallest Map zoom is 75%: 16 chart units still give 12 CSS px radius.
+      return atlasChartLayout(ov, { width, height, hitRadius: 16, cx: width / 2, cy: height / 2, rx: 466 * scale, ry: 327 * scale, start: -Math.PI / 2, span: Math.PI * 2, labelLimit: Math.max(12, Math.min(38, Math.floor(width / 28))) });
     }
 
     function atlasSkyArc(g, a, b, scale) {
@@ -1428,7 +1432,7 @@ window.__ModuleLoader__.load({
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s, e); }
             if (e.key === 'ArrowDown') { e.preventDefault(); onInspect(s, e.currentTarget); }
           } }, h('title', null, `${s.t.title} · ${s.direction}`),
-          h('circle', { cx: s.x, cy: s.y, r: s.size, fill: 'var(--star)' }), h('circle', { cx: s.x, cy: s.y, r: 10, className: 'atlas-cart-star-target' }))));
+          h('circle', { cx: s.x, cy: s.y, r: s.size, fill: 'var(--star)' }), h('circle', { cx: s.x, cy: s.y, r: g.hitRadius, className: 'atlas-cart-star-target' }))));
     }
 
     // Both skies share the mouse-to-card grace period and the keyboard path:
@@ -1447,7 +1451,10 @@ window.__ModuleLoader__.load({
           const parent = host.current.getBoundingClientRect(), a = el.getBoundingClientRect();
           origin.current = el;
           const left = Math.min(Math.max(4, parent.width - 284), Math.max(4, a.right - parent.left));
-          setTip({ star, left, top: Math.max(0, a.top - parent.top), flip: a.top - parent.top > parent.height * 0.6, focus });
+          const flip = a.top - parent.top > parent.height * 0.6;
+          // A clipped 280px-wide card may be wider than either side of its star.
+          // Always keep the star itself clickable after the hover delay.
+          setTip({ star, left, top: Math.max(0, (flip ? a.top - 2 : a.bottom + 2) - parent.top), flip, focus });
         };
         if (immediate) show(); else timer.current = setTimeout(show, 300);
       };
@@ -1518,7 +1525,7 @@ window.__ModuleLoader__.load({
     .atlas-cart-edge { fill:none; stroke:var(--sky-line-2); }
     .atlas-cart-label { fill:var(--text-3); font:var(--t-cap); font-size:11.5px; font-variant-caps:all-small-caps; letter-spacing:.14em; pointer-events:none; }
     .atlas-cart-star { cursor:pointer; outline:none; }
-    .atlas-cart-star-target { fill:transparent; }
+    .atlas-cart-star-target { fill:transparent; pointer-events:all; }
     .atlas-cart-star:is(:focus-visible,:hover) .atlas-cart-star-target { stroke:var(--accent); fill:var(--accent-soft); }
     .atlas-cart-card { position:absolute; z-index:var(--z-popover); width:280px; max-width:calc(100% - var(--s-8)); box-sizing:border-box; padding:var(--s-12); border:1px solid var(--border); border-radius:var(--r-md); background:var(--raised); box-shadow:var(--shadow-2); color:var(--text-1); }
     .atlas-cart-card.is-above { transform:translateY(-100%); }
@@ -1544,6 +1551,267 @@ window.__ModuleLoader__.load({
     .atlas-map-list h2 { font:var(--t-h2); } .atlas-map-list h3 { font:var(--t-h3); }
     .atlas-map-empty { place-self:center; font:var(--t-count); color:var(--text-2); }
     `;
+
+    // ===== client/21-desk.js
+    // Desk in M1: send through the shell's existing startThread (no registry,
+    // auto-routing, model overrides or native-team creation). Drafts are per root.
+    function deskDraft(root) {
+      const saved = storageGet('prefs.v1', {})?.deskDraft;
+      return saved?.root === root ? { question: typeof saved.question === 'string' ? saved.question : '', topicId: saved.topicId || '', attachments: Array.isArray(saved.attachments) ? saved.attachments.filter((a) => typeof a?.path === 'string' && typeof a?.label === 'string') : [] } : { question: '', topicId: '', attachments: [] };
+    }
+
+    function deskAlmanacData(ov, index, rows) {
+      const items = [];
+      for (const t of index) {
+        const row = rowOf(rows, t.id);
+        if (t.status === 'resolved' || row?.archived || !knownThread(rows, t)) continue;
+        // Old records expose creation time, not last-turn timestamps. Do not make
+        // absence of live rows look like a claim that nothing is running.
+        items.push({ id: t.id, title: threadLabel(t), at: t.created || 0, running: !!row?.running, team: t.kind === 'team' });
+      }
+      items.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
+      return { items, waiting: waitingItems(ov), running: items.filter((t) => t.running) };
+    }
+
+    function DeskAlmanac({ ov, go, onOpenThread }) {
+      const rows = useSessionRows(), index = useThreadIndex(), actions = React.useContext(AtlasActions);
+      const { items, waiting, running } = useMemo(() => deskAlmanacData(ov, index, rows), [ov, index, rows]);
+      const row = (t, active) => h('button', { type: 'button', className: 'atlas-almanac-row', key: t.id, title: `${t.running ? 'Working' : 'Open'} · ${t.title}${t.at ? ` · Started ${dateOf(t.at)}` : ''}`, onClick: () => onOpenThread(t.id) },
+        h('span', { className: cx('atlas-almanac-mark', t.running && 'is-working'), 'aria-label': t.running ? 'Working' : 'Open' }), h('span', { className: 'atlas-almanac-title' }, t.team ? 'Team · ' : '', t.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h('em', null, active ? (t.team ? 'working' : 'replying') : ago(t.at)));
+      const decide = ({ topic, thread }) => actions.ask(focusContext({ topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide “${thread.name}”: lay out the options my note records, what each would settle, and what you recommend.`, `Decide ${thread.name}`);
+      const group = (name, n, link, filter, children, empty) => h('section', { className: 'atlas-almanac-group', 'aria-label': name },
+        h('header', null, h('h2', null, name), n ? h('em', null, n) : null, h(TextButton, { onClick: () => go({ view: 'discussions', filter }), title: filter ? `All · ${name}` : 'All discussions' }, link)),
+        children.length ? children : h('p', { className: 'atlas-almanac-empty' }, empty));
+      return h('div', { className: 'atlas-desk-almanac' },
+        group('Continue', 0, 'All discussions', '', items.slice(0, 5).map((t) => row(t, false)), 'Your open discussions will appear here.'),
+        group('Needs you', waiting.length, 'All', 'needs', waiting.slice(0, 5).map((w, i) => h('div', { className: 'atlas-almanac-row', key: w.topic.id + ':' + i },
+          h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Waiting' }), h('button', { type: 'button', 'data-atlas-open': true, className: 'atlas-almanac-title', title: `${w.topic.title} · ${w.thread.name}`, onClick: (e) => go({ view: 'doc', path: w.topic.file, anchor: 'current-work' }, e) }, w.thread.name),
+          h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => decide(w), title: 'Discuss this decision' }, 'Decide'))), 'Nothing in your notes waits on a decision.'),
+        group('Running', running.length, 'All', 'running', running.slice(0, 5).map((t) => row(t, true)), rows?.phase === 'ready' ? 'Nothing is in motion.' : 'Live session state is unavailable.'));
+    }
+
+    function DeskTopics({ ov, anchor, selected, onChoose, onClose }) {
+      const [find, setFind] = useState('');
+      const groups = useMemo(() => atlasStarCatalogue(ov), [ov]);
+      const term = find.trim().toLowerCase();
+      const choice = (id, text, color, depth) => h('button', { type: 'button', key: id, className: 'atlas-desk-choice', style: { paddingInlineStart: `calc(var(--s-8) + ${Math.min(depth, 5)} * var(--s-16))` }, 'aria-pressed': selected === id, onClick: () => onChoose(id) },
+        color ? h('span', { className: 'atlas-dot', style: { background: color } }) : null, text, selected === id ? ' ✓' : '');
+      return h(Popover, { anchor, label: 'Choose discussion topic', onClose, className: 'atlas-desk-picker' },
+        h(Input, { label: 'Find a topic', type: 'search', value: find, onChange: (e) => setFind(e.target.value), placeholder: 'Find a topic…' }),
+        choice('', 'No topic', null, 0), groups.map((s) => {
+          const hits = s.members.filter(({ t }) => `${s.title} ${t.title} ${t.id}`.toLowerCase().includes(term));
+          return hits.length ? h('section', { key: String(s.key) }, h('h3', null, s.title), hits.map(({ id, t, depth }) => choice(id, t.title, s.color, depth))) : null;
+        }));
+    }
+
+    function deskAttachment(raw, mode) {
+      const value = String(raw || '').trim();
+      if (!value || /[\r\n\u0000]/.test(value)) return null;
+      if (mode === 'file') return /^(?:[a-z]:[\\/]|\/|\\\\)/i.test(value) ? { label: baseName(value) || value, path: value } : null;
+      let url = value;
+      if (!/^https?:\/\//i.test(value)) {
+        const id = value.replace(/^arxiv\s*:\s*/i, '');
+        if (/^10\.\d{4,9}\/\S+$/i.test(id)) url = 'https://doi.org/' + id;
+        else url = 'https://arxiv.org/abs/' + id;
+      }
+      const paper = paperLink(url);
+      if (paper) return { label: paper.label, path: url };
+      // Other publishers' canonical URLs are pointers too; no lookup or download.
+      if (/^https?:\/\//i.test(value)) { try { const u = new URL(value); if (!u.username && !u.password) return { label: u.hostname + u.pathname, path: u.href }; } catch {} }
+      return null;
+    }
+
+    function DeskAttach({ anchor, ov, beside, onAttach, onClose }) {
+      const [mode, setMode] = useState('file'), [raw, setRaw] = useState(''), [error, setError] = useState('');
+      const list = React.useId();
+      const add = () => {
+        const pick = deskAttachment(raw, mode);
+        if (!pick) { setError(mode === 'file' ? 'Choose a note or enter an absolute file path on the DSH machine.' : 'Enter a paper URL, DOI or arXiv ID.'); return; }
+        onAttach(pick);
+      };
+      return h(Popover, { anchor, label: 'Attach a reference', onClose, className: 'atlas-desk-attach' },
+        h(Segmented, { label: 'Reference type', options: [{ value: 'file', label: 'File' }, { value: 'paper', label: 'Paper' }], value: mode, onChange: (v) => { setMode(v); setRaw(''); setError(''); } }),
+        h('p', null, mode === 'file' ? 'Choose a topic note or enter a file path on the DSH machine. Only the path is shared.' : 'Share the paper link, DOI or arXiv ID without copying the paper.'),
+        h(Input, { label: mode === 'file' ? 'Absolute file path' : 'Paper URL, DOI or arXiv ID', value: raw, list: mode === 'file' ? list : undefined, onChange: (e) => { setRaw(e.target.value); setError(''); }, onKeyDown: (e) => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing) { e.preventDefault(); add(); } } }),
+        h('datalist', { id: list }, Object.values(ov.topics).map((t) => h('option', { key: t.id, value: t.file, label: t.title }))),
+        error ? h('p', { role: 'alert' }, error) : null,
+        h('div', { className: 'atlas-cart-actions' }, h(Button, { small: true, disabled: !raw.trim(), onClick: add }, 'Attach'), beside ? h(Button, { quiet: true, small: true, onClick: () => onAttach({ label: beside.title, path: beside.path }) }, 'Include open beside') : null));
+    }
+
+    function DeskView(props) {
+      // Switching roots must not send the last root's draft or attachments.
+      return h(DeskWorkspace, { key: props.overview?.root || 'setup', ...props });
+    }
+
+    function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStartDiscussion, onOpenThread }) {
+      const [draft, setDraft] = useState(() => deskDraft(ov?.root));
+      const [error, setError] = useState(''), [busy, setBusy] = useState(false), [popup, setPopup] = useState(null);
+      const input = useRef(null), topicButton = useRef(null), attachButton = useRef(null), latch = useRef(false);
+      const otherPane = useFocus().beside;
+      const topic = draft.topicId ? ov?.topics[draft.topicId] : null;
+      const sessions = svc('sessions');
+      const disabledReason = setup || !ov ? 'Set up a research workspace before starting a discussion.' : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
+      const disabled = !!disabledReason || busy;
+      const waiting = useMemo(() => ov ? waitingItems(ov).length : 0, [ov]);
+      const patch = (change) => { setDraft((prev) => ({ ...prev, ...change })); setError(''); };
+      usePublishFocus({ kind: 'universe', topic: ov ? { id: '', title: ov.title, path: ov.rootFile } : null }, [ov?.rootFile, ov?.title]);
+      useEffect(() => { if (focusRequest && !disabledReason) input.current?.focus(); }, [focusRequest, disabledReason]);
+      useEffect(() => {
+        if (ov?.root) storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), deskDraft: { root: ov.root, ...draft } });
+      }, [draft, ov?.root]);
+      useLayoutEffect(() => {
+        const el = input.current; if (!el) return;
+        const fit = () => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+        fit();
+        const parent = el.parentElement;
+        let width = parent.clientWidth;
+        const ro = typeof ResizeObserver !== 'undefined' && new ResizeObserver(() => { if (parent.clientWidth !== width) { width = parent.clientWidth; fit(); } });
+        if (ro) ro.observe(parent); return () => { if (ro) ro.disconnect(); };
+      }, [draft.question]);
+      const send = async () => {
+        if (latch.current || disabled || !draft.question.trim()) return;
+        latch.current = true; setPopup(null); setBusy(true); setError('');
+        try {
+          await onStartDiscussion({ question: draft.question.trim(), topicId: topic?.id || null, attachments: draft.attachments });
+          setDraft({ topicId: '', question: '', attachments: [] });
+        } catch (cause) { setError(cause?.message || 'The discussion could not start.'); }
+        finally { latch.current = false; setBusy(false); }
+      };
+      const choose = (id) => { patch({ topicId: id }); setPopup(null); requestAnimationFrame(() => input.current?.focus()); };
+      const attach = (a) => { patch({ attachments: [...draft.attachments.filter((x) => x.path !== a.path), a] }); setPopup(null); requestAnimationFrame(() => input.current?.focus()); };
+      const starter = (s) => { patch({ question: s }); input.current?.focus(); };
+      return h('div', { className: 'atlas-desk' },
+        ov ? h(DeskSky, { ov, go, hasDraft: !!draft.question.trim(), onDiscuss: (s) => choose(s.id) }) : h('header', { className: 'atlas-desk-welcome' }, h('h1', null, 'Your research desk')),
+        h('section', { className: 'atlas-desk-composer', 'aria-label': 'Start a discussion', 'aria-busy': busy },
+          h('textarea', { rows: 3, 'aria-label': 'Discussion question', placeholder: 'Ask, think out loud, or start a line of work…', ref: input, disabled, value: draft.question, onChange: (e) => patch({ question: e.target.value }), onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent?.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } } }),
+          draft.attachments.length ? h('ul', { className: 'atlas-desk-attachments', 'aria-label': 'Attached references' }, draft.attachments.map((a) => h('li', { key: a.path }, h('span', { title: a.path }, a.label), h(IconButton, { small: true, label: 'Remove ' + a.label, icon: 'close', disabled, onClick: () => patch({ attachments: draft.attachments.filter((x) => x.path !== a.path) }) })))) : null,
+          h('div', { className: 'atlas-desk-controls' }, h(IconButton, { label: 'Attach a reference', icon: 'plus', buttonRef: attachButton, disabled, 'aria-expanded': popup === 'attach', onClick: () => setPopup(popup === 'attach' ? null : 'attach') }),
+            h('button', { type: 'button', className: 'atlas-desk-topic', ref: topicButton, disabled, 'aria-label': `Choose topic: ${topic?.title || 'No topic'}`, 'aria-expanded': popup === 'topic', onClick: () => setPopup(popup === 'topic' ? null : 'topic') }, topic ? h('i', { className: 'atlas-dot', style: { background: directionColor(ov, topicDirection(ov, topic.id)) } }) : null, h('span', null, topic?.title || 'No topic'), h('span', { 'aria-hidden': true }, '⌄')),
+            h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
+            h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+          popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: topic?.id || '', onChoose: choose, onClose: () => setPopup(null) }) : null,
+          popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
+        disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
+        error ? h('div', { className: 'atlas-desk-message', role: 'alert' }, error, ' ', h(Button, { small: true, onClick: send, disabled }, 'Retry')) : null,
+        !disabled && !draft.question.trim() ? h('div', { className: 'atlas-desk-starters', 'aria-label': 'Discussion starters' }, ['What should I work on next?', 'Continue the research', 'Develop a new idea', ...(waiting ? [`Review what is waiting (${waiting})`] : [])].map((s) => h(Chip, { key: s, variant: 'suggestion', onClick: () => starter(s) }, s))) : null,
+        setup ? h(WorkspaceSetup, { setup, onRetry }) : ov ? h(DeskAlmanac, { ov, go, onOpenThread }) : null);
+    }
+
+    const ATLAS_DESK_CSS = `
+    .atlas-desk { box-sizing:border-box; max-width:1120px; margin:0 auto; padding:0 var(--s-32) var(--s-56); background:var(--surface); }
+    .atlas-desk-sky { position:relative; margin:0 calc(-1 * var(--s-32)); }
+    .atlas-desk-sky > svg { position:absolute; bottom:0; width:100%; }
+    .atlas-desk-sky.is-stacked > svg { bottom:34px; }
+    .atlas-desk-sky.is-narrow .atlas-cart-label:not(.is-revealed) { visibility:hidden; }
+    .atlas-desk-greeting { position:absolute; width:min(320px,100%); left:50%; transform:translate(-50%,-50%); text-align:center; pointer-events:none; }
+    .atlas-desk-greeting p { font:var(--t-cap); font-variant-caps:all-small-caps; letter-spacing:.09em; color:var(--text-3); margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .atlas-desk-greeting h1,.atlas-desk-welcome h1 { font:var(--t-display); letter-spacing:-.01em; color:var(--text-1); margin:var(--s-4) 0 0; }
+    .atlas-desk-sky.is-stacked .atlas-desk-greeting { top:var(--s-8); transform:translateX(-50%); }
+    .atlas-desk-welcome { text-align:center; padding:var(--s-48) 0 var(--s-72); }
+    .atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-strong); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
+    .atlas-desk-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 var(--s-4) var(--accent-soft),var(--shadow-2); }
+    .atlas-desk-composer textarea { display:block; width:100%; min-height:69px; max-height:276px; margin:0; padding:0; border:none; background:none; resize:none; color:var(--text-1); font:15px/23px var(--font-ui); }
+    .atlas-desk-composer textarea:focus { outline:none; } .atlas-desk-composer textarea::placeholder { color:var(--text-3); }
+    .atlas-desk-controls { display:flex; align-items:center; min-height:var(--control-32); gap:6px; margin-top:10px; }
+    .atlas-desk-topic { display:flex; align-items:center; gap:6px; min-width:0; max-width:50%; height:var(--control-28); padding:0 var(--s-8); border:0; border-radius:var(--r-full); background:none; color:var(--text-2); font:var(--t-ui); cursor:pointer; }
+    .atlas-desk-topic > span:first-of-type { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .atlas-desk-topic:hover,.atlas-desk-choice:hover { background:var(--hover); }
+    .atlas-desk-hint { margin-left:auto; font:var(--t-meta); color:var(--text-3); }
+    .atlas-desk-controls .atlas-desk-send { width:var(--control-32); height:var(--control-32); flex:none; border-radius:var(--r-full); color:var(--text-on-accent); background:var(--accent); box-shadow:0 0 0 var(--s-4) var(--accent-soft); }
+    .atlas-desk-controls .atlas-desk-send:not(:disabled):hover { background:var(--accent-hover); }
+    .atlas-desk-controls .atlas-desk-send:disabled { opacity:.4; }
+    .atlas-desk-message,.atlas-desk-starters { max-width:720px; margin:14px auto 0; }
+    .atlas-desk-message { color:var(--text-2); font:var(--t-meta); } .atlas-desk-message[role=alert] { color:var(--danger-text); }
+    .atlas-desk-starters,.atlas-desk-attachments { display:flex; align-items:center; flex-wrap:wrap; gap:var(--s-8); }
+    .atlas-desk-starters { justify-content:center; } .atlas-desk-attachments { padding:0; margin:var(--s-8) 0; list-style:none; }
+    .atlas-desk-attachments li { display:flex; gap:var(--s-4); align-items:center; padding-left:var(--s-8); max-width:100%; border:1px solid var(--border); border-radius:var(--r-full); font:var(--t-meta); }
+    .atlas-desk-attachments li > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .atlas-desk-picker,.atlas-desk-attach { width:320px; padding:var(--s-12); overflow:auto; }
+    .atlas-desk-picker input,.atlas-desk-attach input { width:100%; }
+    .atlas-desk-picker section h3 { margin:var(--s-8) 0 var(--s-4); font:var(--t-cap); font-variant-caps:all-small-caps; color:var(--text-3); }
+    .atlas-desk-choice { width:100%; display:flex; gap:var(--s-8); align-items:center; text-align:start; min-height:var(--control-32); border:0; background:transparent; color:var(--text-2); font:var(--t-ui); cursor:pointer; }
+    .atlas-desk-choice[aria-pressed=true] { color:var(--accent); background:var(--selected); }
+    .atlas-desk-attach p { font:var(--t-meta); color:var(--text-2); } .atlas-desk-attach .atlas-cart-actions { margin-top:var(--s-8); }
+    .atlas-desk-almanac { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:var(--s-48); border-top:1px solid var(--border); }
+    .atlas-almanac-group { padding:18px var(--s-24) 0; min-width:0; }
+    .atlas-almanac-group + .atlas-almanac-group { border-left:1px solid var(--border); }
+    .atlas-almanac-group header { display:flex; gap:var(--s-8); align-items:baseline; margin-bottom:var(--s-8); }
+    .atlas-almanac-group h2 { margin:0; font:600 15px/20px var(--font-serif); font-variant-caps:all-small-caps; letter-spacing:.1em; color:var(--text-1); }
+    .atlas-almanac-group:nth-child(2) h2 { color:var(--gold); }
+    .atlas-almanac-group em,.atlas-almanac-empty { font:var(--t-count); color:var(--text-3); white-space:nowrap; }
+    .atlas-almanac-empty { white-space:normal; margin:10px 0; }
+    .atlas-almanac-group header .atlas-link { margin-left:auto; font:var(--t-meta); }
+    .atlas-almanac-row { width:100%; display:flex; align-items:center; gap:10px; height:var(--row-40); padding:0; text-align:left; color:var(--text-1); background:none; border:none; }
+    button.atlas-almanac-row { cursor:pointer; } button.atlas-almanac-row:hover { background:var(--hover); }
+    .atlas-almanac-title { font:var(--t-body); color:var(--text-1); min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    button.atlas-almanac-title { text-align:start; border:0; background:none; padding:0; cursor:pointer; }
+    .atlas-almanac-row > .atlas-button { flex:none; }
+    .atlas-almanac-leader { flex:1; min-width:var(--s-16); height:2px; margin-top:var(--s-4); background:radial-gradient(circle,var(--border-strong) 1px,transparent 1.2px) 0 50% / 6px 2px repeat-x; }
+    .atlas-almanac-mark { width:7px; height:7px; flex:none; border-radius:50%; background:var(--idle); }
+    .atlas-almanac-mark.is-waiting { background:var(--gold); box-shadow:0 0 0 var(--s-4) var(--gold-soft); }
+    .atlas-almanac-mark.is-working { border-radius:0; background:var(--accent); clip-path:polygon(50% 0,60% 38%,100% 50%,60% 62%,50% 100%,40% 62%,0 50%,40% 38%); animation:atlas-desk-twinkle var(--motion-twinkle) ease-in-out infinite alternate; }
+    @keyframes atlas-desk-twinkle { from { transform:scale(.75); opacity:.65; } to { transform:scale(1.1) rotate(45deg); opacity:1; } }
+    @media (prefers-reduced-motion:reduce) { .atlas-almanac-mark.is-working { animation:none; } }
+    @container (max-width:959px) { .atlas-desk-almanac { grid-template-columns:repeat(2,minmax(0,1fr)); } .atlas-almanac-group:nth-child(3) { border-left:0; } }
+    @container (max-width:639px) { .atlas-desk { padding-inline:var(--s-16); } .atlas-desk-sky { margin-inline:calc(-1 * var(--s-16)); } .atlas-desk-almanac { grid-template-columns:1fr; } .atlas-almanac-group { padding:var(--s-16) 0; } .atlas-almanac-group + .atlas-almanac-group { border-left:0; border-top:1px solid var(--border); } }
+    @container (max-width:599px) { .atlas-desk-hint { display:none; } .atlas-desk-controls > :last-child { margin-left:auto; } }
+    `;
+
+    // ===== client/22-sky.js
+    // Desk window onto the Map. All drawing coordinates (including exclusions and
+    // label boxes) belong to the layout, not to mouse position, Date.now or the DOM.
+    function layoutDeskSky(ov, { paneWidth = 1120, hasDraft = false } = {}) {
+      const bandHeight = paneWidth < 900 || !hasDraft ? 240 : 330;
+      // At phone widths, keep the readable greeting above the dome rather than
+      // shrinking it to an illegible SVG label. Reserve the horizon underlap below.
+      const stacked = paneWidth < 640;
+      const skyHeight = stacked ? bandHeight - 108 : bandHeight;
+      const scale = Math.min(Math.max(1, paneWidth) / 1000, skyHeight / 330);
+      const greetingWidth = paneWidth >= 900 ? 400 : 320;
+      const w = Math.max(360, stacked ? 0 : greetingWidth / scale), h = Math.max(110, stacked ? 0 : 76 / scale);
+      const keepOut = { left: 500 - w / 2, right: 500 + w / 2, top: 188 - h / 2, bottom: 188 + h / 2 };
+      const g = atlasChartLayout(ov, { width: 1000, height: 330, hitRadius: Math.ceil(12 / scale), cx: 500, cy: 312, rx: 440, ry: 270, start: Math.PI, span: Math.PI, keepOut });
+      let seed = 1 + g.stars.length;
+      const unit = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+      const dust = [];
+      while (dust.length < 12) {
+        const x = 20 + 960 * unit(), y = 12 + 285 * unit(), r = 0.7 + 0.4 * unit();
+        if (x + r < keepOut.left || x - r > keepOut.right || y + r < keepOut.top || y - r > keepOut.bottom) dust.push({ x, y, r });
+      }
+      // The wide composer can cover even the outer rays when the SVG is letterboxed.
+      // Lift the art (not the horizon-overlapping composer) just enough that a
+      // whole star is above its top edge, including in a very dense first sector.
+      const skyBottom = stacked ? 34 : Math.max(0, 34 - (330 - 312 - 3) * scale);
+      return { ...g, dust, bandHeight, skyHeight, skyBottom, scale, stacked, greetingWidth, greetingY: bandHeight - skyBottom - (330 - 188) * scale, showNames: paneWidth >= 900 };
+    }
+
+    function DeskSky({ ov, go, hasDraft, onDiscuss }) {
+      const host = useRef(null), card = useAtlasStarCard(host), id = React.useId();
+      const [width, setWidth] = useState(1120);
+      useLayoutEffect(() => {
+        const el = host.current;
+        if (!el) return;
+        const readWidth = () => { if (el.clientWidth) setWidth(el.clientWidth); };
+        readWidth();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(readWidth); ro.observe(el); return () => ro.disconnect();
+      }, []);
+      const g = useMemo(() => layoutDeskSky(ov, { paneWidth: width, hasDraft }), [ov, width, hasDraft]);
+      const [now, setNow] = useState(() => new Date());
+      useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(timer); }, []);
+      const hour = now.getHours(), greeting = hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
+      const date = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+      const open = (s, e) => go({ view: 'doc', path: s.t.file }, e);
+      return h('div', { className: cx('atlas-desk-sky', !g.showNames && 'is-narrow', g.stacked && 'is-stacked'), style: { height: g.bandHeight }, ref: host, onKeyDown: card.dismiss },
+        h('svg', { viewBox: '0 0 1000 330', preserveAspectRatio: 'xMidYMax meet', role: 'group', 'aria-label': `Research sky, ${plural(g.stars.length, 'topic')}. The topic picker lists the same topics.`, style: { height: g.skyHeight, bottom: g.skyBottom } },
+          h('defs', null, h('radialGradient', { id: id + '-sun', cx: '50%', cy: '100%', r: '62%' }, h('stop', { offset: 0, stopColor: 'var(--accent)', stopOpacity: 0.16 }), h('stop', { offset: 1, stopColor: 'var(--accent)', stopOpacity: 0 }))),
+          h('rect', { width: 1000, height: 330, fill: `url(#${id}-sun)` }),
+          h('g', { 'aria-hidden': true, fill: 'var(--star)', opacity: 0.35 }, g.dust.map((d, i) => h('circle', { key: i, cx: d.x, cy: d.y, r: d.r }))),
+          h('g', { 'aria-hidden': true, stroke: 'var(--sky-line-2)' }, h('line', { x1: 20, y1: 312, x2: 980, y2: 312 }), Array.from({ length: 9 }, (_, i) => h('line', { key: i, x1: 60 + i * 110, x2: 60 + i * 110, y1: 312, y2: i === 4 ? 303 : 306 }))),
+          h(ChartMarks, { g, ov, onOpen: open, onPoint: card.point, onLeave: card.leave, onInspect: card.inspect, hoverSector: card.tip?.star.sector })),
+        h('header', { className: 'atlas-desk-greeting', style: g.stacked ? undefined : { top: g.greetingY, width: g.greetingWidth } }, h('p', { title: `${ov.title} · ${date}` }, `${ov.title} · ${date}`), h('h1', null, greeting)),
+        h(ChartCard, { state: card, onOpen: open, onDiscuss }));
+    }
 
     // ===== client/30-topic.js
     // ------------------------------------------------------------------ topic ---
@@ -3957,11 +4225,14 @@ window.__ModuleLoader__.load({
       const paneOf = all.paneOf || {};
       const across = (id) => (paneOf[id] ? visible[paneOf[id] === 'left' ? 'right' : 'left'] : null);
       let id = tab && tab !== 'global' ? tab : all.active;
-      if (id === 'discussion') {
-        const other = across('discussion');
-        id = other && byTab[other] ? other : all.active;
+      if (isContextConversation(id)) {
+        const other = across(id);
+        // No content pointer when two conversations face one another. A hidden file
+        // or a previously used place must not accidentally be sent to the AI.
+        if (isContextConversation(other) || (!other && id !== 'discussion')) return { kind: 'universe' };
+        id = other || all.active;
       }
-      if (!id || id === 'discussion' || !byTab[id]) id = 'page';
+      if (!id || isContextConversation(id) || !byTab[id]) id = byTab.desk ? 'desk' : 'page';
       const own = byTab[id] || { kind: 'universe' };
       const other = across(id);
       const beside = other && other !== id ? besideOf(own, byTab[other]) : null;
@@ -3976,6 +4247,10 @@ window.__ModuleLoader__.load({
         : other.topic ? { label: other.topic.id === '' ? 'Root note' : 'Topic', title: other.topic.title, path: other.topic.path } : null;
       if (!item) return null;
       return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
+    }
+
+    function isContextConversation(id) {
+      return id === 'discussion' || /^(?:discussion|member):/.test(id || '');
     }
 
     /** The tab used last (a click, a key, a selection in it). The discussion never is: asking from it is about what you read. */
@@ -4046,8 +4321,25 @@ window.__ModuleLoader__.load({
     };
     const INTENT_ORDER = ['ask', 'explain', 'derive', 'check', 'papers', 'task'];
 
+    /** File and paper attachments are pointers, never file contents or uploaded copies. */
+    function threadAttachments(value) {
+      if (!Array.isArray(value)) return [];
+      const seen = new Set();
+      const pointers = [];
+      for (const item of value) {
+        if (!item || typeof item.path !== 'string') continue;
+        const path = item.path.trim();
+        if (!path || /[\r\n\0]/.test(path) || seen.has(path)) continue;
+        seen.add(path);
+        const label = typeof item.label === 'string' ? item.label.replace(/\s+/g, ' ').trim() : '';
+        pointers.push({ label: label || baseName(path) || path, path });
+      }
+      return pointers;
+    }
+
     /** The context of what is in focus, plus what a selection adds. */
     function focusContext(focus, extra = {}) {
+      const attachments = threadAttachments(extra.attachments ?? focus.attachments);
       return {
         topic: focus.topic || null,
         doc: focus.doc || null,
@@ -4056,6 +4348,7 @@ window.__ModuleLoader__.load({
         lines: extra.lines || '',
         selection: extra.selection || '',
         ...(focus.beside ? { beside: focus.beside } : {}),
+        ...(attachments.length ? { attachments } : {}),
       };
     }
 
@@ -4072,6 +4365,7 @@ window.__ModuleLoader__.load({
       if (c.lines) lines.push(`- Lines: ${c.lines}`);
       if (c.page) lines.push(`- Page: ${c.page}`);
       if (c.beside) lines.push(`- Open beside it: ${c.beside.label}: ${c.beside.title} — ${c.beside.path}`);
+      for (const a of threadAttachments(c.attachments)) lines.push(`- Attached: ${a.label} — ${a.path}`);
       if (c.selection) {
         lines.push('- Selected passage:');
         for (const line of String(c.selection).split('\n').slice(0, 80)) lines.push(`  > ${line}`);
@@ -4089,6 +4383,7 @@ window.__ModuleLoader__.load({
       if (c.lines) chips.push({ label: 'Lines', text: c.lines });
       if (c.page) chips.push({ label: 'Page', text: c.page });
       if (c.beside) chips.push({ label: 'Beside', text: shortTitle(c.beside.title, 26), title: c.beside.path });
+      for (const a of threadAttachments(c.attachments)) chips.push({ label: 'Attached', text: shortTitle(a.label, 34), title: a.path });
       if (c.selection) chips.push({ label: 'Passage', text: shortTitle(c.selection.replace(/\s+/g, ' '), 38), title: c.selection, accent: true });
       return chips;
     }
@@ -4409,6 +4704,8 @@ window.__ModuleLoader__.load({
     }
 
     function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
+      const actions = React.useContext(AtlasActions);
+      const tabId = usePaneName();
       const threads = useThreadIndex();
       const rows = useSessionRows();
       const focus = useFocus();
@@ -4437,7 +4734,7 @@ window.__ModuleLoader__.load({
         if (!resolved) {
           const pending = await api('review/changes', { query: { session: threadId } }).catch(() => null);
           const count = pending ? pending.files.reduce((n, f) => n + f.edits.length, 0) : 0;
-          if (count && !window.confirm(`${plural(count, 'edit')} of this discussion are not reviewed. Resolve anyway? They stay in the notes as they are.`)) return;
+          if (count && !window.confirm(`Unreviewed changes since this discussion’s baseline: ${count}. Resolve anyway? The changes stay in the notes; the baseline is discarded.`)) return;
           api('review/forget', { method: 'POST', body: { session: threadId } }).catch(() => {});
         }
         patchThread(threadId, { status: resolved ? 'open' : 'resolved' });
@@ -4469,6 +4766,7 @@ window.__ModuleLoader__.load({
         h('header', { className: 'atlas-companion-head' },
           h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
           h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
+          actions.focusPane ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Focus this pane', 'aria-label': 'Focus discussion pane', onClick: () => actions.focusPane(tabId) }, h(Icon, { name: 'expand', size: 15 })) : null,
           h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
           h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
         thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
@@ -4523,6 +4821,7 @@ window.__ModuleLoader__.load({
     /** The moves over a text selection: ask in place, a research move, or add it to the open discussion. */
     function SelectionTools({ container, host }) {
       const actions = React.useContext(AtlasActions);
+      const tabId = usePaneName();
       const focus = useFocus();
       const reading = React.useSyncExternalStore(readingStore.subscribe, readingStore.get);
       const [pick, setPick] = useState(null);
@@ -4594,7 +4893,7 @@ window.__ModuleLoader__.load({
             ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
             actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
             actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
-            keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
+            keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { actions.keepTab?.(tabId); keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
           ]);
     }
 
@@ -4716,7 +5015,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
     }
 
-    function WaitingList({ ov, go, compact, limit }) {
+    function WaitingList({ ov, go, compact, limit, allowTeamStart = true }) {
       const actions = React.useContext(AtlasActions);
       const items = useMemo(() => waitingItems(ov), [ov]);
       if (items.length === 0) return compact ? null : h('section', { className: 'atlas-waiting is-empty' }, h('h2', null, 'Waiting on you'), h(Empty, null, 'Nothing in your notes waits on a decision from you.'));
@@ -4732,7 +5031,7 @@ window.__ModuleLoader__.load({
           compact ? null : h('div', { className: 'atlas-waiting-actions' },
             h(Button, { small: true, onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, 'Open the thread'),
             h(Button, { small: true, quiet: true, onClick: () => actions && actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide "${thread.name}": lay out the options my note records, what each would settle, and what you would recommend.`, 'Decide ' + thread.name) }, 'Discuss'),
-            h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team')),
+            allowTeamStart ? h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team') : null),
           compact ? null : h(DecideButtons, { topic, thread })))),
         compact && items.length > shown.length ? h(TextButton, { onClick: () => go({ view: 'activity' }) }, `All ${items.length} in Activity`) : null);
     }
@@ -4751,12 +5050,20 @@ window.__ModuleLoader__.load({
     }
 
     /** Discussions and teams Atlas started, by topic; DSH's other recent sessions after them. */
-    function activityGroups(index, rows) {
+    function activityGroups(index, rows, place, filter) {
+      // Classify the full index before taking a list slice. A team deliberately
+      // omitted from Discussions is still Atlas-owned, not an 'other' session.
+      const matchesPlace = (t, row, id) => {
+        const team = Boolean(t?.kind === 'team' || teamOf(row));
+        if ((place === 'teams' && !team) || (place === 'discussions' && team) || filter === 'needs') return false;
+        return filter !== 'running' || row?.running || (team && membersOf(rows, id).some((m) => m.row?.running));
+      };
       const byTopic = new Map();
       const seen = new Set();
       for (const t of index) {
         if (!knownThread(rows, t)) continue;
         seen.add(t.id);
+        if (!matchesPlace(t, rowOf(rows, t.id), t.id)) continue;
         const topic = (t.context && t.context.topic) || null;
         const key = topic ? topic.path : '';
         if (!byTopic.has(key)) byTopic.set(key, { key, topic, items: [], latest: 0 });
@@ -4768,9 +5075,9 @@ window.__ModuleLoader__.load({
       const groups = [...byTopic.values()].sort((a, b) => b.latest - a.latest);
       const others = rows && rows.byId ? Object.entries(rows.byId)
         .map(([id, row]) => ({ id, row }))
-        .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank)
-        .slice(-12).reverse() : [];
-      return { groups, others };
+        .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank && matchesPlace(null, row, id))
+        .reverse() : [];
+      return { groups, others: place ? others : others.slice(0, 12) };
     }
 
     /** What DSH's session list says about a session (its projection), or nothing. */
@@ -4844,25 +5151,30 @@ window.__ModuleLoader__.load({
         when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
     }
 
-    function ActivityView({ overview: ov, go }) {
+    function ActivityView({ overview: ov, go, place, filter = '' }) {
       const actions = React.useContext(AtlasActions);
       const index = useThreadIndex();
       const rows = useSessionRows();
       usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title || 'Root note', path: ov.rootFile } }, [ov.rootFile, ov.title]);
-      const { groups, others } = useMemo(() => activityGroups(index, rows), [index, rows]);
+      const scoped = place === 'teams' || place === 'discussions';
+      const teams = place === 'teams';
+      const needs = scoped && filter === 'needs';
+      const { groups, others } = useMemo(() => activityGroups(index, rows, scoped ? place : undefined, scoped ? filter : ''), [index, rows, scoped, place, filter]);
       const topicColor = (topic) => {
         const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
         return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--accent)';
       };
       const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
       return h('div', { className: 'atlas-page is-wide atlas-activity' },
-        h('p', { className: 'atlas-kicker' }, 'Activity'),
-        h('h1', null, "What's running"),
-        h('p', { className: 'atlas-lede' }, 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
-        h(WaitingList, { ov, go }),
-        h('section', { className: 'atlas-section' },
+        h('p', { className: 'atlas-kicker' }, scoped ? 'Research desk' : 'Activity'),
+        h('h1', null, scoped ? teams ? 'Teams' : 'Discussions' : "What's running"),
+        h('p', { className: 'atlas-lede' }, teams ? 'Inspect existing team leads, members and task counts from DSH.' : scoped ? 'Decisions in your notes and discussions by topic, from the Atlas index on this device.' : 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
+        scoped ? h('div', { className: 'atlas-actions', role: 'group', 'aria-label': 'Filter ' + place },
+          (teams ? [['', 'All'], ['running', 'Running']] : [['', 'All'], ['needs', 'Needs you'], ['running', 'Running']]).map(([value, text]) => h('button', { key: value, type: 'button', className: cx('atlas-button is-small', filter === value && 'is-primary'), 'aria-pressed': filter === value, onClick: () => go({ view: place, filter: value }) }, text))) : null,
+        !teams && (!scoped || filter !== 'running') ? h(WaitingList, { ov, go, allowTeamStart: !scoped }) : null,
+        needs ? (teams ? h(Empty, null, 'This team index does not track decision requests.') : null) : h('section', { className: 'atlas-section' },
           h('h2', null, 'By topic', h('span', { className: 'atlas-count' }, groups.length)),
-          groups.length === 0 ? h(Empty, null, 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
+          groups.length === 0 ? h(Empty, null, scoped ? (filter === 'running' ? 'Nothing is running in this list.' : teams ? 'No teams in the local Atlas index.' : 'No discussions in the local Atlas index yet. Ask from the Desk or a topic.') : 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
           groups.map((group) => h('div', { key: group.key || 'none', className: 'atlas-activity-group' },
             h('h3', null,
               h('span', { className: 'atlas-dot', style: { background: topicColor(group.topic) } }),
@@ -7359,7 +7671,7 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || document.getElementById('aitp-atlas-styles')) return;
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
-      style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS + '\n' + ATLAS_MAP_CSS;
+      style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS + '\n' + ATLAS_MAP_CSS + '\n' + ATLAS_DESK_CSS;
       document.head.appendChild(style);
     }
 

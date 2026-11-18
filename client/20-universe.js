@@ -45,6 +45,9 @@ function atlasChartLayout(ov, geometry) {
         const r = 0.38 + 0.56 * ((phase + j / 33) % 1);
         p = point(angle, r);
         if (!keepOut || !overlaps(box(p, 20, 20), keepOut)) break;
+        // A wide greeting in a short band can consume this ray's entire
+        // outer annulus. The inner horizon is still free on the same ray.
+        if (j === 32) p = point(angle, 0.15 + phase * 0.04);
       }
       const last = Date.parse(member.t.latest?.date || '');
       const days = Math.max(0, (ov.scannedAt - last) / 86400000);
@@ -80,7 +83,8 @@ function layoutUniverse(ov, { width = 1000, height = 740 } = {}) {
   // Lay out in pane pixels. Scaling a fixed 1000-unit SVG into a split pane
   // also shrank its 11.5px labels and pointer targets down to a third of size.
   const scale = Math.min(width / 1000, height / 740);
-  return atlasChartLayout(ov, { width, height, cx: width / 2, cy: height / 2, rx: 466 * scale, ry: 327 * scale, start: -Math.PI / 2, span: Math.PI * 2, labelLimit: Math.max(12, Math.min(38, Math.floor(width / 28))) });
+  // The smallest Map zoom is 75%: 16 chart units still give 12 CSS px radius.
+  return atlasChartLayout(ov, { width, height, hitRadius: 16, cx: width / 2, cy: height / 2, rx: 466 * scale, ry: 327 * scale, start: -Math.PI / 2, span: Math.PI * 2, labelLimit: Math.max(12, Math.min(38, Math.floor(width / 28))) });
 }
 
 function atlasSkyArc(g, a, b, scale) {
@@ -105,7 +109,7 @@ function ChartMarks({ g, ov, onOpen, onPoint, onLeave, onInspect, hoverSector })
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s, e); }
         if (e.key === 'ArrowDown') { e.preventDefault(); onInspect(s, e.currentTarget); }
       } }, h('title', null, `${s.t.title} · ${s.direction}`),
-      h('circle', { cx: s.x, cy: s.y, r: s.size, fill: 'var(--star)' }), h('circle', { cx: s.x, cy: s.y, r: 10, className: 'atlas-cart-star-target' }))));
+      h('circle', { cx: s.x, cy: s.y, r: s.size, fill: 'var(--star)' }), h('circle', { cx: s.x, cy: s.y, r: g.hitRadius, className: 'atlas-cart-star-target' }))));
 }
 
 // Both skies share the mouse-to-card grace period and the keyboard path:
@@ -124,7 +128,10 @@ function useAtlasStarCard(host) {
       const parent = host.current.getBoundingClientRect(), a = el.getBoundingClientRect();
       origin.current = el;
       const left = Math.min(Math.max(4, parent.width - 284), Math.max(4, a.right - parent.left));
-      setTip({ star, left, top: Math.max(0, a.top - parent.top), flip: a.top - parent.top > parent.height * 0.6, focus });
+      const flip = a.top - parent.top > parent.height * 0.6;
+      // A clipped 280px-wide card may be wider than either side of its star.
+      // Always keep the star itself clickable after the hover delay.
+      setTip({ star, left, top: Math.max(0, (flip ? a.top - 2 : a.bottom + 2) - parent.top), flip, focus });
     };
     if (immediate) show(); else timer.current = setTimeout(show, 300);
   };
@@ -195,7 +202,7 @@ const ATLAS_MAP_CSS = `
 .atlas-cart-edge { fill:none; stroke:var(--sky-line-2); }
 .atlas-cart-label { fill:var(--text-3); font:var(--t-cap); font-size:11.5px; font-variant-caps:all-small-caps; letter-spacing:.14em; pointer-events:none; }
 .atlas-cart-star { cursor:pointer; outline:none; }
-.atlas-cart-star-target { fill:transparent; }
+.atlas-cart-star-target { fill:transparent; pointer-events:all; }
 .atlas-cart-star:is(:focus-visible,:hover) .atlas-cart-star-target { stroke:var(--accent); fill:var(--accent-soft); }
 .atlas-cart-card { position:absolute; z-index:var(--z-popover); width:280px; max-width:calc(100% - var(--s-8)); box-sizing:border-box; padding:var(--s-12); border:1px solid var(--border); border-radius:var(--r-md); background:var(--raised); box-shadow:var(--shadow-2); color:var(--text-1); }
 .atlas-cart-card.is-above { transform:translateY(-100%); }

@@ -57,11 +57,14 @@ function paneFocus(all, tab) {
   const paneOf = all.paneOf || {};
   const across = (id) => (paneOf[id] ? visible[paneOf[id] === 'left' ? 'right' : 'left'] : null);
   let id = tab && tab !== 'global' ? tab : all.active;
-  if (id === 'discussion') {
-    const other = across('discussion');
-    id = other && byTab[other] ? other : all.active;
+  if (isContextConversation(id)) {
+    const other = across(id);
+    // No content pointer when two conversations face one another. A hidden file
+    // or a previously used place must not accidentally be sent to the AI.
+    if (isContextConversation(other) || (!other && id !== 'discussion')) return { kind: 'universe' };
+    id = other || all.active;
   }
-  if (!id || id === 'discussion' || !byTab[id]) id = 'page';
+  if (!id || isContextConversation(id) || !byTab[id]) id = byTab.desk ? 'desk' : 'page';
   const own = byTab[id] || { kind: 'universe' };
   const other = across(id);
   const beside = other && other !== id ? besideOf(own, byTab[other]) : null;
@@ -76,6 +79,10 @@ function besideOf(own, other) {
     : other.topic ? { label: other.topic.id === '' ? 'Root note' : 'Topic', title: other.topic.title, path: other.topic.path } : null;
   if (!item) return null;
   return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
+}
+
+function isContextConversation(id) {
+  return id === 'discussion' || /^(?:discussion|member):/.test(id || '');
 }
 
 /** The tab used last (a click, a key, a selection in it). The discussion never is: asking from it is about what you read. */
@@ -146,8 +153,25 @@ const INTENTS = {
 };
 const INTENT_ORDER = ['ask', 'explain', 'derive', 'check', 'papers', 'task'];
 
+/** File and paper attachments are pointers, never file contents or uploaded copies. */
+function threadAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const pointers = [];
+  for (const item of value) {
+    if (!item || typeof item.path !== 'string') continue;
+    const path = item.path.trim();
+    if (!path || /[\r\n\0]/.test(path) || seen.has(path)) continue;
+    seen.add(path);
+    const label = typeof item.label === 'string' ? item.label.replace(/\s+/g, ' ').trim() : '';
+    pointers.push({ label: label || baseName(path) || path, path });
+  }
+  return pointers;
+}
+
 /** The context of what is in focus, plus what a selection adds. */
 function focusContext(focus, extra = {}) {
+  const attachments = threadAttachments(extra.attachments ?? focus.attachments);
   return {
     topic: focus.topic || null,
     doc: focus.doc || null,
@@ -156,6 +180,7 @@ function focusContext(focus, extra = {}) {
     lines: extra.lines || '',
     selection: extra.selection || '',
     ...(focus.beside ? { beside: focus.beside } : {}),
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 
@@ -172,6 +197,7 @@ function contextBlock(c) {
   if (c.lines) lines.push(`- Lines: ${c.lines}`);
   if (c.page) lines.push(`- Page: ${c.page}`);
   if (c.beside) lines.push(`- Open beside it: ${c.beside.label}: ${c.beside.title} — ${c.beside.path}`);
+  for (const a of threadAttachments(c.attachments)) lines.push(`- Attached: ${a.label} — ${a.path}`);
   if (c.selection) {
     lines.push('- Selected passage:');
     for (const line of String(c.selection).split('\n').slice(0, 80)) lines.push(`  > ${line}`);
@@ -189,6 +215,7 @@ function chipsOf(c) {
   if (c.lines) chips.push({ label: 'Lines', text: c.lines });
   if (c.page) chips.push({ label: 'Page', text: c.page });
   if (c.beside) chips.push({ label: 'Beside', text: shortTitle(c.beside.title, 26), title: c.beside.path });
+  for (const a of threadAttachments(c.attachments)) chips.push({ label: 'Attached', text: shortTitle(a.label, 34), title: a.path });
   if (c.selection) chips.push({ label: 'Passage', text: shortTitle(c.selection.replace(/\s+/g, ' '), 38), title: c.selection, accent: true });
   return chips;
 }
@@ -509,6 +536,8 @@ function conversationLink(target, root) {
 }
 
 function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
+  const actions = React.useContext(AtlasActions);
+  const tabId = usePaneName();
   const threads = useThreadIndex();
   const rows = useSessionRows();
   const focus = useFocus();
@@ -537,7 +566,7 @@ function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
     if (!resolved) {
       const pending = await api('review/changes', { query: { session: threadId } }).catch(() => null);
       const count = pending ? pending.files.reduce((n, f) => n + f.edits.length, 0) : 0;
-      if (count && !window.confirm(`${plural(count, 'edit')} of this discussion are not reviewed. Resolve anyway? They stay in the notes as they are.`)) return;
+      if (count && !window.confirm(`Unreviewed changes since this discussion’s baseline: ${count}. Resolve anyway? The changes stay in the notes; the baseline is discarded.`)) return;
       api('review/forget', { method: 'POST', body: { session: threadId } }).catch(() => {});
     }
     patchThread(threadId, { status: resolved ? 'open' : 'resolved' });
@@ -569,6 +598,7 @@ function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
     h('header', { className: 'atlas-companion-head' },
       h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
       h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
+      actions.focusPane ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Focus this pane', 'aria-label': 'Focus discussion pane', onClick: () => actions.focusPane(tabId) }, h(Icon, { name: 'expand', size: 15 })) : null,
       h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
       h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
     thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
@@ -623,6 +653,7 @@ function AskBar({ preset, onClose }) {
 /** The moves over a text selection: ask in place, a research move, or add it to the open discussion. */
 function SelectionTools({ container, host }) {
   const actions = React.useContext(AtlasActions);
+  const tabId = usePaneName();
   const focus = useFocus();
   const reading = React.useSyncExternalStore(readingStore.subscribe, readingStore.get);
   const [pick, setPick] = useState(null);
@@ -694,7 +725,7 @@ function SelectionTools({ container, host }) {
         ...INTENT_ORDER.map((k) => h('button', { key: k, type: 'button', className: cx('atlas-seltool', k === 'ask' && 'is-primary'), title: INTENTS[k].text || 'Ask your own question about this passage', onClick: () => (k === 'ask' ? setAsking(true) : go(k)) }, k === 'ask' ? h(Icon, { name: 'spark', size: 13 }) : null, INTENTS[k].label)),
         actions.current ? h('span', { key: 'sep', className: 'atlas-seltools-sep', 'aria-hidden': true }) : null,
         actions.current ? h('button', { key: 'add', type: 'button', className: 'atlas-seltool', title: 'Put this passage into the open discussion’s input box', onClick: () => { actions.addToThread(context); done(); } }, h(Icon, { name: 'plus', size: 13 }), 'Add to discussion') : null,
-        keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
+        keepable ? h('button', { key: 'keep', type: 'button', className: 'atlas-seltool', title: 'Add this passage, with a link to its page, to the paper map’s “Your reading”', onClick: () => { actions.keepTab?.(tabId); keepPassage(current, pick).catch((e) => console.warn('[aitp-atlas] keep:', e.message)); done(); } }, h(Icon, { name: 'note', size: 13 }), 'Keep in note') : null,
       ]);
 }
 

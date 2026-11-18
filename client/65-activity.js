@@ -65,7 +65,7 @@ function DecideButtons({ topic, thread, onDone }) {
       h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
 }
 
-function WaitingList({ ov, go, compact, limit }) {
+function WaitingList({ ov, go, compact, limit, allowTeamStart = true }) {
   const actions = React.useContext(AtlasActions);
   const items = useMemo(() => waitingItems(ov), [ov]);
   if (items.length === 0) return compact ? null : h('section', { className: 'atlas-waiting is-empty' }, h('h2', null, 'Waiting on you'), h(Empty, null, 'Nothing in your notes waits on a decision from you.'));
@@ -81,7 +81,7 @@ function WaitingList({ ov, go, compact, limit }) {
       compact ? null : h('div', { className: 'atlas-waiting-actions' },
         h(Button, { small: true, onClick: () => go({ view: 'doc', path: topic.file, anchor: 'current-work' }) }, 'Open the thread'),
         h(Button, { small: true, quiet: true, onClick: () => actions && actions.ask(focusContext({ kind: 'topic', topic: { id: topic.id, title: topic.title, path: topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide "${thread.name}": lay out the options my note records, what each would settle, and what you would recommend.`, 'Decide ' + thread.name) }, 'Discuss'),
-        h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team')),
+        allowTeamStart ? h(Button, { small: true, quiet: true, icon: 'team', onClick: () => go({ view: 'team', path: topic.file, thread: thread.name }) }, 'Start a team') : null),
       compact ? null : h(DecideButtons, { topic, thread })))),
     compact && items.length > shown.length ? h(TextButton, { onClick: () => go({ view: 'activity' }) }, `All ${items.length} in Activity`) : null);
 }
@@ -100,12 +100,20 @@ function parentOf(row) {
 }
 
 /** Discussions and teams Atlas started, by topic; DSH's other recent sessions after them. */
-function activityGroups(index, rows) {
+function activityGroups(index, rows, place, filter) {
+  // Classify the full index before taking a list slice. A team deliberately
+  // omitted from Discussions is still Atlas-owned, not an 'other' session.
+  const matchesPlace = (t, row, id) => {
+    const team = Boolean(t?.kind === 'team' || teamOf(row));
+    if ((place === 'teams' && !team) || (place === 'discussions' && team) || filter === 'needs') return false;
+    return filter !== 'running' || row?.running || (team && membersOf(rows, id).some((m) => m.row?.running));
+  };
   const byTopic = new Map();
   const seen = new Set();
   for (const t of index) {
     if (!knownThread(rows, t)) continue;
     seen.add(t.id);
+    if (!matchesPlace(t, rowOf(rows, t.id), t.id)) continue;
     const topic = (t.context && t.context.topic) || null;
     const key = topic ? topic.path : '';
     if (!byTopic.has(key)) byTopic.set(key, { key, topic, items: [], latest: 0 });
@@ -117,9 +125,9 @@ function activityGroups(index, rows) {
   const groups = [...byTopic.values()].sort((a, b) => b.latest - a.latest);
   const others = rows && rows.byId ? Object.entries(rows.byId)
     .map(([id, row]) => ({ id, row }))
-    .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank)
-    .slice(-12).reverse() : [];
-  return { groups, others };
+    .filter(({ id, row }) => !seen.has(id) && !parentOf(row) && !row.archived && !row.blank && matchesPlace(null, row, id))
+    .reverse() : [];
+  return { groups, others: place ? others : others.slice(0, 12) };
 }
 
 /** What DSH's session list says about a session (its projection), or nothing. */
@@ -193,25 +201,30 @@ function ActivityRow({ id, kind, title, row, record, onOpen, children }) {
     when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
 }
 
-function ActivityView({ overview: ov, go }) {
+function ActivityView({ overview: ov, go, place, filter = '' }) {
   const actions = React.useContext(AtlasActions);
   const index = useThreadIndex();
   const rows = useSessionRows();
   usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title || 'Root note', path: ov.rootFile } }, [ov.rootFile, ov.title]);
-  const { groups, others } = useMemo(() => activityGroups(index, rows), [index, rows]);
+  const scoped = place === 'teams' || place === 'discussions';
+  const teams = place === 'teams';
+  const needs = scoped && filter === 'needs';
+  const { groups, others } = useMemo(() => activityGroups(index, rows, scoped ? place : undefined, scoped ? filter : ''), [index, rows, scoped, place, filter]);
   const topicColor = (topic) => {
     const t = topic && Object.values(ov.topics).find((x) => x.file === topic.path);
     return t ? directionColor(ov, topicDirection(ov, t.id)) : 'var(--accent)';
   };
   const label = (t) => (t.kind === 'team' || teamOf(rowOf(rows, t.id)) ? 'Team' : 'Discussion');
   return h('div', { className: 'atlas-page is-wide atlas-activity' },
-    h('p', { className: 'atlas-kicker' }, 'Activity'),
-    h('h1', null, "What's running"),
-    h('p', { className: 'atlas-lede' }, 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
-    h(WaitingList, { ov, go }),
-    h('section', { className: 'atlas-section' },
+    h('p', { className: 'atlas-kicker' }, scoped ? 'Research desk' : 'Activity'),
+    h('h1', null, scoped ? teams ? 'Teams' : 'Discussions' : "What's running"),
+    h('p', { className: 'atlas-lede' }, teams ? 'Inspect existing team leads, members and task counts from DSH.' : scoped ? 'Decisions in your notes and discussions by topic, from the Atlas index on this device.' : 'Decisions your notes wait on, and the discussions, teams and other sessions in DSH, grouped by topic.'),
+    scoped ? h('div', { className: 'atlas-actions', role: 'group', 'aria-label': 'Filter ' + place },
+      (teams ? [['', 'All'], ['running', 'Running']] : [['', 'All'], ['needs', 'Needs you'], ['running', 'Running']]).map(([value, text]) => h('button', { key: value, type: 'button', className: cx('atlas-button is-small', filter === value && 'is-primary'), 'aria-pressed': filter === value, onClick: () => go({ view: place, filter: value }) }, text))) : null,
+    !teams && (!scoped || filter !== 'running') ? h(WaitingList, { ov, go, allowTeamStart: !scoped }) : null,
+    needs ? (teams ? h(Empty, null, 'This team index does not track decision requests.') : null) : h('section', { className: 'atlas-section' },
       h('h2', null, 'By topic', h('span', { className: 'atlas-count' }, groups.length)),
-      groups.length === 0 ? h(Empty, null, 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
+      groups.length === 0 ? h(Empty, null, scoped ? (filter === 'running' ? 'Nothing is running in this list.' : teams ? 'No teams in the local Atlas index.' : 'No discussions in the local Atlas index yet. Ask from the Desk or a topic.') : 'Nothing started from Atlas yet. Ask about a topic, or start a team from a thread that waits on you.') : null,
       groups.map((group) => h('div', { key: group.key || 'none', className: 'atlas-activity-group' },
         h('h3', null,
           h('span', { className: 'atlas-dot', style: { background: topicColor(group.topic) } }),
