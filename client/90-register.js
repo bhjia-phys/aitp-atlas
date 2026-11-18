@@ -8,6 +8,7 @@ return {
   apply(ctx) {
     pluginCtx = ctx;
     injectStyles();
+    installAtlasModelAccess(ctx);
     // For development: with localStorage `aitp-atlas:debug` set, the console can reach DSH's services.
     try {
       if (window.localStorage.getItem('aitp-atlas:debug')) window.__aitpAtlas = { svc, team: () => teamScope };

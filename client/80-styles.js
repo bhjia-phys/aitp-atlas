@@ -717,7 +717,7 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'aitp-atlas-styles';
   style.textContent = [ATLAS_FONT_CSS, themeCss(), STYLES, ATLAS_CONTROL_CSS, ATLAS_RAIL_CSS, ATLAS_TAB_CSS,
-    ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS].join('\n');
+    ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS, ATLAS_DISCUSSION_CSS, registryViewStyles].join('\n');
   document.head.appendChild(style);
 }
 

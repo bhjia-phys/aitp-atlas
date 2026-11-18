@@ -5304,6 +5304,196 @@ window.__ModuleLoader__.load({
     @container (max-width:640px){.atlas-discussions-place{display:block}.atlas-disc-filters{border:0;display:flex;align-items:center;gap:var(--s-4);overflow:auto}.atlas-disc-filters h2{display:none}.atlas-disc-filter{width:auto;white-space:nowrap}.atlas-disc-results{padding:var(--s-12)}.atlas-disc-row-actions button:not(:last-child){display:none}}
     `;
 
+    // ===== client/62-models.js
+    // DSH 0.2.2: modelCatalog() is host-wide and needs no session; selectModel is
+    // session-specific and applies on its next request. Never change the host default.
+    const atlasModelAccess = externalStore(null);
+    function installAtlasModelAccess(ctx) {
+      ctx.inject(['remote', 'remote.session'], scope => scope.effect(() => {
+        const service = scope.remote.session;
+        atlasModelAccess.set(service);
+        return () => { if (atlasModelAccess.get() === service) atlasModelAccess.set(null); };
+      }, 'aitp-atlas: discussion model selection'));
+    }
+    function atlasRequireResult(result, label) {
+      if (!result?.ok) throw new Error(result?.error?.message || label);
+      return result.value;
+    }
+    function atlasModelValue(selection) {
+      return selection?.provider && selection?.model ? { provider: selection.provider, model: selection.model, effort: selection.reasoningEffort || selection.effort || '' } : null;
+    }
+    function atlasCatalogEntry(catalog, choice) {
+      return catalog?.groups?.find(g => g.id === choice?.provider)?.models.find(m => m.id === choice.model);
+    }
+    async function atlasFetchModelCatalog(service = atlasModelAccess.get()) {
+      if (!service?.modelCatalog || !service?.selectModel) throw new Error('DSH model selection is unavailable. Use the session default.');
+      return atlasRequireResult(await service.modelCatalog(), 'DSH could not load its model catalog.');
+    }
+    async function atlasSelectSessionModel(id, choice) {
+      const service = atlasModelAccess.get();
+      if (!service?.selectModel) throw new Error('DSH model selection is unavailable. No model was changed.');
+      const entry = atlasCatalogEntry(await atlasFetchModelCatalog(service), choice);
+      if (!entry || (choice.effort && !entry.reasoning?.efforts?.some(e => e.id === choice.effort))) throw new Error('That model or effort is no longer available. Choose another model or use the DSH default.');
+      atlasRequireResult(await service.selectModel({ sessionId: id, provider: choice.provider, model: choice.model,
+        ...(choice.effort ? { reasoningEffort: choice.effort } : {}) }), 'DSH did not accept the model selection.');
+    }
+    function AtlasModelPicker({ value, onChange, sessionId, disabled }) {
+      const service = React.useSyncExternalStore(atlasModelAccess.subscribe, atlasModelAccess.get);
+      const [open, setOpen] = useState(false), [catalog, setCatalog] = useState(null), [error, setError] = useState('');
+      const [selected, select] = useState(null), [busy, setBusy] = useState(false);
+      const trigger = useRef(null), pending = useRef(false);
+      useEffect(() => {
+        if (!open) return;
+        let here = true; setError(''); setCatalog(null);
+        atlasFetchModelCatalog(service).then(next => { if (here) setCatalog(next); }, e => { if (here) setError(e.message); });
+        return () => { here = false; };
+      }, [open, service]);
+      const choose = async choice => {
+        if (pending.current) return;
+        pending.current = true; setBusy(true); setError('');
+        try { await onChange(choice); setOpen(false); } catch (e) { setError(e.message); }
+        finally { pending.current = false; setBusy(false); }
+      };
+      const entry = atlasCatalogEntry(catalog, selected), chosen = atlasCatalogEntry(catalog, value);
+      const title = value ? `${chosen?.name || value.model}${value.effort ? ' · ' + value.effort : ''}` : 'DSH default';
+      const row = (label, onClick, active, dis = false, key = label) => h('button', { key, type: 'button', className: 'atlas-model-option', onClick, disabled: busy || dis, 'aria-pressed': !!active }, label);
+      return h(React.Fragment, null, h('button', { ref: trigger, type: 'button', className: 'atlas-model-chip', title: `Model: ${title}`, disabled, 'aria-label': `Model: ${title}`, 'aria-expanded': open, 'aria-haspopup': 'dialog', onClick: () => { select(null); setOpen(!open); } }, h(Icon, { name: 'spark', size: 14 }), h('span', null, title)),
+        open && h(Popover, { label: 'Choose a model', anchor: trigger, onClose: () => { if (!pending.current) setOpen(false); }, className: 'atlas-model-popup' },
+          error && h(Banner, { tone: 'error' }, error),
+          catalog && value && (!chosen || (value.effort && !chosen.reasoning?.efforts?.some(e => e.id === value.effort))) && h('p', null, 'The saved model or effort is no longer available.'),
+          !sessionId && row('Use DSH default', () => choose(null), !value),
+          !catalog && !error && h('p', { role: 'status' }, 'Reading DSH model catalog…'),
+          entry ? h(React.Fragment, null, row('Back to models', () => select(null)), h('h4', null, entry.name, ' · Effort'),
+            row('Model default', () => choose({ ...selected, effort: '' }), !value?.effort && value?.model === selected.model),
+            entry.reasoning.efforts.map(e => row(e.name || e.id, () => choose({ ...selected, effort: e.id }), value?.provider === selected.provider && value?.model === selected.model && value.effort === e.id, false, e.id))) : catalog?.groups.map(g => h('section', { key: g.id }, h('h4', null, g.name), g.models.map(m => row(m.name, () => {
+              const choice = { provider: g.id, model: m.id, effort: '' };
+              if (m.reasoning?.efforts?.length) select(choice); else choose(choice);
+            }, value?.provider === g.id && value.model === m.id, false, m.id)))),
+          catalog && !catalog.groups.length && h('p', null, 'No models are available in DSH.'),
+          catalog?.failures?.map(f => h('p', { key: f.id, className: 'atlas-muted' }, `${f.name}: ${f.message}`))));
+    }
+
+    const ATLAS_DISCUSSION_CSS = `
+    .atlas-ask-target { display:flex; align-items:center; gap:var(--s-8); margin:var(--s-4) 0 var(--s-8); font:var(--t-meta); color:var(--text-2); }
+    .atlas-ask-target select { min-width:0; max-width:80%; }
+    .atlas-model-chip,.atlas-disc-topic { display:inline-flex; align-items:center; justify-content:center; gap:var(--s-4); min-width:var(--control-24); max-width:200px; height:var(--control-24); padding:0 var(--s-8); background:transparent; color:var(--text-2); border:1px solid var(--border-strong); border-radius:var(--r-full); font:var(--t-meta); cursor:pointer; }
+    .atlas-model-chip>span,.atlas-disc-topic>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .atlas-model-popup { width:max-content; min-width:min(200px,100%); }
+    .atlas-model-popup h4 { font:var(--t-cap); font-variant-caps:var(--cap-variant); color:var(--text-3); margin:var(--s-8) 0 var(--s-4); }
+    .atlas-model-option { display:block; width:100%; padding:var(--s-4) var(--s-8); min-height:var(--control-28); text-align:start; border:0; border-radius:var(--r-sm); font:var(--t-ui); color:var(--text-1); background:transparent; cursor:pointer; }
+    .atlas-model-option:hover { background:var(--hover); }.atlas-model-option[aria-pressed=true] { background:var(--selected); }
+    .atlas-disc-panel { container-type:inline-size; display:flex; flex-direction:column; min-height:0; height:100%; }
+    .atlas-disc-header { display:flex; align-items:center; gap:var(--s-8); height:var(--s-48); flex:none; padding:0 var(--s-12); border-bottom:1px solid var(--border); background:var(--surface); }
+    .atlas-disc-title { flex:1 0 140px; min-width:min(140px,100%); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:var(--t-h3); color:var(--text-1); text-align:start; padding:0; background:transparent; border:0; }
+    button.atlas-disc-title { cursor:text; }.atlas-disc-topic.is-auto { border-style:dashed; }
+    .atlas-disc-mark { flex:none; color:var(--text-3); }.atlas-disc-mark.is-running { color:var(--accent); animation:atlas-disc-work var(--motion-twinkle) var(--ease) infinite; }
+    @keyframes atlas-disc-work {0%,100%{opacity:.65;transform:scale(.75)}50%{opacity:1;transform:scale(1.1)}}
+    @media(prefers-reduced-motion:reduce){.atlas-disc-mark.is-running {animation:none}}
+    .atlas-disc-context { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-4); padding:var(--s-8); border-bottom:1px solid var(--border); }
+    .atlas-disc-context button { font:var(--t-meta); color:var(--text-2); border:0; background:transparent; cursor:pointer; }
+    @container(max-width:719px){.atlas-disc-header .atlas-model-chip{width:var(--control-24);padding:0}.atlas-disc-header .atlas-model-chip>span{display:none}.atlas-disc-header{gap:var(--s-4)}}
+    `;
+
+    // ===== client/63-handoff.js
+    // DS-22: this is an explicitly confirmed NEW session, not an in-place move or
+    // fork. Never retain the source, read its transcript, copy a selection, or
+    // inspect workspace files. The chosen WorkspaceView is checked again at submit.
+    function handoffWorkspaceChoices(snapshot, sourceId, currentWorkspaceId) {
+      if (snapshot?.phase !== 'ready' || snapshot.state === 'error' || !Array.isArray(snapshot.items)) return [];
+      const rows = snapshot.items.filter(w => w && typeof w.workspaceId === 'string' && w.workspaceId && typeof w.path === 'string' && w.path);
+      const owners = rows.filter(w => w.sessionIds?.includes(sourceId));
+      // WorkspaceView.sessionIds is the service's actual membership projection.
+      // Fail closed for an unaccounted session, a stale hint, or ambiguous membership.
+      if (owners.length !== 1 || (currentWorkspaceId && currentWorkspaceId !== owners[0].workspaceId)) return [];
+      return rows.filter(w => w.workspaceId !== owners[0].workspaceId);
+    }
+    function handoffPointerText(record, includeQuestion = false) {
+      const line = v => typeof v === 'string' ? v.replace(/[\r\n\t\0]+/g, ' ').trim().slice(0, 1024) : '';
+      const t = record.topic, c = record.context || {}, d = c.doc;
+      // Only the separately opted-in original question may contain authored text.
+      // Heading/page/line labels locate the source; never include transcript or excerpts.
+      return ['Atlas discussion hand-off', `Original DSH session: ${line(record.id)}`,
+        t?.path ? 'Filed topic: ' + line(t.path) : 'Filed topic: Unfiled',
+        d?.path && 'Document: ' + line(d.path), d?.path && c.page && 'Page: ' + line(c.page),
+        d?.path && c.section && 'Section: ' + line(c.section), d?.path && c.lines && 'Lines: ' + line(c.lines),
+        ...((Array.isArray(c.attachments) ? c.attachments : []).slice(0, 6).map(a => a?.path && 'Reference: ' + line(a.path))),
+        includeQuestion === true && typeof record.question === 'string' && record.question.trim() && 'Original question: ' + record.question.trim(),
+        'For prior history, use session_event_search and session_event_read with the original session ID only if authorized for that workspace. If access is unavailable, ask the researcher for context. Files and permissions were not transferred.'
+      ].filter(Boolean).join('\n');
+    }
+
+    async function handoffDiscussion({ record, targetId, currentWorkspaceId, confirmed, includeQuestion = false, workspaces, sessions, createRecord, patchRecord }) {
+      if (!record?.id || record.movedTo) throw new Error('This discussion is missing or already has a continuation.');
+      if (confirmed !== true || !targetId) throw new Error('Choose another workspace and confirm the hand-off.');
+      if (typeof workspaces?.list?.getSnapshot !== 'function' || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function') throw new Error('This DSH version cannot create a session in another workspace.');
+      const targets = handoffWorkspaceChoices(workspaces.list.getSnapshot(), record.id, currentWorkspaceId);
+      if (!targets.some(w => w.workspaceId === targetId)) throw new Error('The chosen destination is no longer available, or the source workspace is unknown.');
+      const prompt = handoffPointerText(record, includeQuestion);
+      const id = await sessions.create({ workspaceId: targetId }); // Never send a cwd or reuse a named session.
+      if (typeof id !== 'string' || !id || id === record.id) throw new Error('DSH did not return a new session. Nothing was sent.');
+      let attempted = false;
+      try {
+        // A generated source title can itself quote the question. Do not leak it via rename.
+        const title = 'Continuation of session ' + record.id;
+        // Durable link before any send: reopening or losing the connection must
+        // never replay a hand-off. An incomplete session is recoverable by its id.
+        await patchRecord(record.id, { movedTo: id });
+        await createRecord({ id, title, topic: null, filing: 'none', context: {}, origin: 'ask', question: '' });
+        const ref = sessions.retain(id, { source: 'atlas' });
+        try {
+          const session = (await ref.ready)?.session;
+          if (typeof session?.prompt !== 'function') throw new Error('The new session cannot accept prompts.');
+          if (typeof session.rename === 'function') await Promise.resolve(session.rename(title)).catch(() => {});
+          attempted = true;
+          const result = await session.prompt([{ type:'text', text:prompt }], 'queue');
+          if (result?.ok === false) throw new Error(result.error?.message || 'DSH refused the hand-off.');
+        } finally { ref.release(); }
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw Object.assign(new Error(`DSH created session ${id}. ${attempted ? 'Delivery was not confirmed; check its conversation before sending anything again.' : 'No hand-off was sent.'} ${detail}`), { sessionId: id });
+      }
+      return id;
+    }
+
+    function DiscussionHandoffDialog({ record, currentWorkspaceId, onOpen, onClose, flash }) {
+      const workspaces = svc('workspaces'), sessions = svc('sessions');
+      const snap = useAtlasCatalog(workspaces?.list);
+      const targets = handoffWorkspaceChoices(snap, record?.id, currentWorkspaceId);
+      const [selected, setSelected] = useState(''); // Deliberately no preselected destination.
+      const [includeQuestion, setIncludeQuestion] = useState(false);
+      const [busy, setBusy] = useState(false), [error, setError] = useState(''), [partial, setPartial] = useState('');
+      const doing = useRef(false), live = useRef(true);
+      useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+      const available = typeof sessions?.create === 'function' && typeof sessions?.retain === 'function';
+      const chosen = targets.some(w => w.workspaceId === selected);
+      const close = () => { if (!doing.current) onClose(); };
+      const submit = async () => {
+        if (doing.current || partial || record?.movedTo || !chosen || !available) return;
+        doing.current = true; setBusy(true); setError('');
+        try {
+          const fresh = registryGet(record.id);
+          if (!fresh) throw new Error('The original Atlas record is no longer available.');
+          const id = await handoffDiscussion({ record:fresh, currentWorkspaceId, targetId:selected, confirmed:true, includeQuestion, workspaces, sessions, createRecord:registryCreate, patchRecord:registryPatch });
+          if (live.current) { flash?.('Hand-off sent to the new workspace.'); onClose(); onOpen?.(id); }
+        } catch (e) { if (live.current) { setError(e.message); if (e.sessionId) setPartial(e.sessionId); } }
+        finally { doing.current = false; if (live.current) setBusy(false); }
+      };
+      const existing = partial || record?.movedTo;
+      return h(Dialog, { title: 'Continue in another workspace', onClose: close,
+        footer: h(React.Fragment, null, h(Button, { onClick: close, disabled:busy }, 'Cancel'), existing
+          ? h(Button, { primary:true, onClick: () => { onClose(); onOpen?.(existing); } }, 'Open continuation')
+          : h(Button, { primary:true, disabled:busy || !chosen || !available, onClick:submit }, busy ? 'Starting…' : 'Create and send hand-off')) },
+        h('p', null, 'The original session stays here. The new session receives only the source session ID, research pointers, and your question if you choose to include it. The transcript stays here.'),
+        !existing && available && targets.length > 0 && h('label', null, 'Destination workspace', h('select', { className:'atlas-control-select', value:selected, disabled:busy, onChange:e=>setSelected(e.target.value) },
+          h('option', {value:''}, 'Choose a workspace…'), targets.map(w=>h('option',{key:w.workspaceId,value:w.workspaceId}, `${w.title || 'Workspace'} — ${w.path}`)))),
+        existing && !partial && h('p', null, 'This discussion already has a continuation.'),
+        !existing && (!available || !targets.length) && h('p', { role:'status' }, !available ? 'DSH session creation is unavailable.' : snap?.phase === 'pending' ? 'Loading DSH workspaces…' : 'No other registered workspace is available, or the source workspace could not be verified.'),
+        !existing && record?.question && h('label', null, h('input', { type:'checkbox', checked:includeQuestion, disabled:busy, onChange:e=>setIncludeQuestion(e.target.checked) }), ' Include the original question'),
+        !existing && record?.question && h('details', null, h('summary', null, 'Preview the original question'), h('p', null, record.question)),
+        !existing && chosen && h('details', null, h('summary', null, 'Preview the hand-off'), h('pre', null, handoffPointerText(record, includeQuestion))),
+        error && h('p', { role:'alert' }, error));
+    }
+
     // ===== client/65-activity.js
     // --------------------------------------------------------------- activity ---
     // What is waiting on the researcher, what is running across topics, and agent
@@ -7717,7 +7907,7 @@ window.__ModuleLoader__.load({
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
       style.textContent = [ATLAS_FONT_CSS, themeCss(), STYLES, ATLAS_CONTROL_CSS, ATLAS_RAIL_CSS, ATLAS_TAB_CSS,
-        ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS].join('\n');
+        ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS, ATLAS_DISCUSSION_CSS, registryViewStyles].join('\n');
       document.head.appendChild(style);
     }
 
@@ -7786,6 +7976,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         pluginCtx = ctx;
         injectStyles();
+        installAtlasModelAccess(ctx);
         // For development: with localStorage `aitp-atlas:debug` set, the console can reach DSH's services.
         try {
           if (window.localStorage.getItem('aitp-atlas:debug')) window.__aitpAtlas = { svc, team: () => teamScope };
