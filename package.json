@@ -36,6 +36,7 @@
     "lib/*.js",
     "client.js",
     "vendor/pdfjs/*",
+    "vendor/fonts/*",
     "cordis.patch.yml",
     "README.md",
     "docs/",

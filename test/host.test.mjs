@@ -75,7 +75,16 @@ test('host: first use initializes the configured folder without overwriting a ro
     const unconfigured = fakeContext();
     apply(unconfigured.ctx, {});
     assert.equal((await call(unconfigured.routes, 'GET', 'overview')).json.error.code, 'unconfigured');
-    assert.deepEqual([...unconfigured.routes.keys()], ['/aitp-atlas/api/overview']);
+    assert.deepEqual([...unconfigured.routes.keys()], ['/aitp-atlas/api/overview', ...['Roman', 'Italic'].map((s) => `/aitp-atlas/api/fonts/SourceSerif4Variable-${s}.woff2`)]);
+    for (const style of ['Italic', 'Roman']) {
+      const asset = `fonts/SourceSerif4Variable-${style}.woff2`;
+      assert.equal((await call(unconfigured.routes, 'GET', asset, { cookie: false })).status, 401);
+      const response = await call(unconfigured.routes, 'GET', asset);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers['content-type'], 'font/woff2');
+      assert.equal(response.buffer.toString('ascii', 0, 4), 'wOF2');
+      assert.equal(response.buffer.readUInt32BE(8), response.buffer.length);
+    }
 
     const root = fx.file('new workspace');
     const file = path.join(root, 'research.md');
@@ -117,7 +126,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {

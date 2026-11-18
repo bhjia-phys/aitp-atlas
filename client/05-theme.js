@@ -1,6 +1,6 @@
 // Atlas 1.0: observatory at night, engraved chart by day (VISUAL §2).
 // Scope all tokens to the Atlas root, including the bridge inherited by embedded DSH content.
-const THEME_TOKENS = {
+const MOOD_TOKENS = {
   night: {
     'bg': '#070B17', 'surface': '#0C1222', 'raised': '#131A2E', 'sunken': '#090E1B',
     'overlay': 'rgba(3, 5, 12, .66)', 'hover': 'rgba(200, 214, 255, .05)', 'pressed': 'rgba(200, 214, 255, .08)', 'selected': 'rgba(157, 184, 255, .12)',
@@ -46,7 +46,30 @@ const THEME_TOKENS = {
     'media-black': '#000000', 'page-shadow': '0 0 0 1px rgba(0,0,0,.04), 0 2px 4px rgba(0,0,0,.14), 0 18px 48px rgba(0,0,0,.28)',
   },
 };
-const TOKEN_NAMES = new Set(Object.keys(THEME_TOKENS.night));
+// Both moods use the same geometry and type. Font-role tokens are CSS font
+// shorthands (weight + size/leading + family); small caps also need --cap-*.
+const ATLAS_SCALE = {
+  'font-ui': '"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
+  'font-serif': '"Source Serif 4", "Iowan Old Style", "Charter", "Cambria", Georgia, serif',
+  'font-mono': 'ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace',
+  ...Object.fromEntries(Object.entries({
+    display: ['italic 400', 40, 48, 'serif'], h1: [600, 26, 32, 'serif'], h2: [600, 22, 28, 'serif'], h3: [600, 16, 22, 'serif'],
+    read: [400, 16, 26, 'serif'], 'read-compact': [400, 15, 24, 'serif'], body: [400, 14, 20, 'ui'], ui: [400, 13, 18, 'ui'],
+    meta: [400, 12, 16, 'ui'], cap: [600, 12, 16, 'serif'], count: ['italic 400', 13, 18, 'serif'], mono: [400, 12.5, 20, 'mono'],
+  }).flatMap(([role, [weight, size, leading, family]]) => [
+    [`t-${role}`, `${weight} ${size}px/${leading}px var(--font-${family})`], [`fs-${role}`, `${size}px`],
+  ])),
+  'cap-variant': 'all-small-caps', 'cap-tracking': '.09em',
+  ...Object.fromEntries([4, 8, 12, 16, 20, 24, 32, 40, 48, 56, 72].map((n) => [`s-${n}`, `${n}px`])),
+  'r-xs': '4px', 'r-sm': '6px', 'r-tab': '8px', 'r-md': '10px', 'r-lg': '16px', 'r-full': '999px',
+  'control-24': '24px', 'control-28': '28px', 'control-32': '32px', 'row-36': '36px', 'row-40': '40px', 'row-44': '44px', 'row-58': '58px',
+  'ease': 'cubic-bezier(.2, .7, .2, 1)', 'motion-hover': '120ms', 'motion-panel': '160ms', 'motion-dialog': '220ms',
+  'motion-twinkle': '2.4s', 'motion-flow': '1.6s', 'motion-flow-slow': '2.2s',
+  'star-shape': 'polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%)',
+  'z-strip': '10', 'z-focus': '20', 'z-rail': '30', 'z-popover': '40', 'z-toast': '50', 'z-dialog': '60', 'z-palette': '70',
+};
+const THEME_TOKENS = Object.fromEntries(Object.entries(MOOD_TOKENS).map(([base, colors]) => [base, { ...ATLAS_SCALE, ...colors }]));
+const TOKEN_NAMES = new Set(Object.keys(MOOD_TOKENS.night));
 
 /** The star chart's sun, sky and starfield. */
 const UNIVERSE_COLORS = {
