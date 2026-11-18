@@ -38,6 +38,7 @@
     "vendor/pdfjs/*",
     "cordis.patch.yml",
     "README.md",
+    "docs/",
     "DESIGN.md",
     "LICENSE"
   ],
