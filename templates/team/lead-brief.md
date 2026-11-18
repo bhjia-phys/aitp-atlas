@@ -23,6 +23,9 @@ The board records that agreed work; it is not an instruction to invent more task
 additional seats, pursue a new branch or change the success criterion without the researcher.
 Name an independent review task `Review RNN: <check>` with the actual report id, so its reviewer
 and the researcher can tell which claim is being tested.
+The topic review baseline covers only the named topic note. Before proposing an edit to any other
+shared material, ask the researcher to confirm a separate Atlas review baseline for that exact file.
+Until confirmed, leave it read-only; a topic baseline or charter listing does not cover it.
 
 Then:
 
