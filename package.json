@@ -49,7 +49,7 @@
     "preview": "node scripts/preview.mjs",
     "install:dsh": "node scripts/install-dsh.mjs",
     "prepack": "node build-client.mjs --check",
-    "test": "node build-client.mjs --check && node --test test/atlas.test.mjs test/host.test.mjs test/client.test.mjs test/web.test.mjs test/latex.test.mjs test/review.test.mjs test/preview.test.mjs",
+    "test": "node build-client.mjs --check && node --test \"test/*.test.mjs\"",
     "test:dsh": "node test/dsh-e2e.mjs"
   },
   "dsh": {

@@ -5,7 +5,17 @@ const ICONS = {
   library: 'M5 4h3v16H5zM10 4h3v16h-3zM15.2 4.6l2.9-.8 3.6 15.4-2.9.8z',
   note: 'M6 3.5h8l4 4V20.5H6zM14 3.5v4h4M9 12h6M9 15.5h6',
   paper: 'M6 3.5h8l4 4V20.5H6zM14 3.5v4h4M8.8 16.5l2-6 2 6M9.5 14.5h2.6',
-  writing: 'M4 20l4-1 10.5-10.5-3-3L5 16zM14 7l3 3',
+  writing: 'M19.5 4.5c-6 1-11 6-12.5 13l-1 3.5 3.5-1c7-1.5 12-6.5 13-12.5M6 21l5-5',
+  desk: 'M3.5 18.5a8.5 8.5 0 0 1 17 0M2.5 18.5h19M12 10V6.5M7.5 12.3 5.7 10.5M16.5 12.3l1.8-1.8',
+  chat: 'M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-4.5 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
+  mark: 'M12 3.5a8.5 8.5 0 1 0 .01 0zM12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22M4.64 16.25a8.5 3.2 -30 1 1 14.72-8.5a8.5 3.2 -30 1 1-14.72 8.5zM12 10a2 2 0 1 0 .01 0z',
+  more: 'M5.5 11a1 1 0 1 0 .01 0zM12 11a1 1 0 1 0 .01 0zM18.5 11a1 1 0 1 0 .01 0z',
+  chevron: 'm7 10 5 5 5-5', check: 'm5 12.5 4.5 4.5L19 7.5', send: 'M12 19V5M6.5 10.5 12 5l5.5 5.5',
+  keyboard: 'M2.5 6h19v12h-19zM6 10h1m2 0h1m2 0h1m2 0h1M7 14h10',
+  settings: 'M4 7h4m4 0h8M10 5v4M4 17h10m4 0h2M16 15v4',
+  attach: 'M19.5 11.5 12 19a5 5 0 0 1-7-7l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7L9.7 16.7a1.7 1.7 0 0 1-2.4-2.4L14.8 7',
+  split: 'M3.5 5h17v14h-17zM12 5v14', move: 'M3.5 6h6l2 2h9v11h-17zM9.5 13h6m-2.5-2.5 2.5 2.5-2.5 2.5',
+  collapse: 'M4 10h6V4m10 10h-6v6M3 3l7 7m11 11-7-7',
   report: 'M5 4.5h14v15H5zM8 15v-3M12 15V9M16 15v-5',
   code: 'M9 7l-5 5 5 5M15 7l5 5-5 5',
   data: 'M4 19.5h16M7 16.5v-4M11 16.5v-8M15 16.5v-6M19 16.5V6',
@@ -25,9 +35,9 @@ const ICONS = {
   close: 'M6 6l12 12M18 6L6 18',
   panel: 'M4 5h16v14H4zM14.5 5v14',
   activity: 'M3 12h4l2.5-6.5 5 13 2.5-6.5H21',
-  learn: 'M3.5 7.5l8.5-4 8.5 4-8.5 4zM7 9.4v4.6c0 1.7 2.3 3.2 5 3.2s5-1.5 5-3.2V9.4M20.5 7.5v5.5',
+  learn: 'm4 16 11-6.5 2 3.4L6 19.4zM15 9.5l3.5-2 2 3.4-3.5 2M8.5 18l-1 3.5M11 16.5l2.5 5',
   search: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zM15.4 15.4L20 20',
-  team: 'M9 11a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM3.5 19.5c0-3 2.4-5 5.5-5s5.5 2 5.5 5M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.8c1.8.6 3 2.3 3 4.7',
+  team: 'M12 9.8a2.2 2.2 0 1 0 .01 0zM4.5 7.6a1.4 1.4 0 1 0 .01 0zM19 5.1a1.4 1.4 0 1 0 .01 0zM17.5 16.6a1.4 1.4 0 1 0 .01 0zM5.8 9.5l4.1 1.8M17.8 7.4l-4.2 3.3M16.4 17l-2.9-3.5',
   sun: 'M12 8.3a3.7 3.7 0 1 0 0 7.4a3.7 3.7 0 0 0 0-7.4zM12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M5.5 18.5L7 17M17 7l1.5-1.5',
   moon: 'M19.6 14.6A7.8 7.8 0 0 1 9.4 4.4a7.8 7.8 0 1 0 10.2 10.2z',
   contrast: 'M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM12 3.5v17M12 7.5h4.5M12 11.5h7M12 15.5h5.5',
@@ -35,7 +45,7 @@ const ICONS = {
 };
 
 function Icon({ name, size = 16, title }) {
-  return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': title ? undefined : true, role: title ? 'img' : undefined, className: 'atlas-icon' },
+  return h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': title ? undefined : true, role: title ? 'img' : undefined, className: 'atlas-icon' },
     title ? h('title', null, title) : null,
     h('path', { d: ICONS[name] || ICONS.note }));
 }
@@ -44,10 +54,13 @@ const GROUP_ICON = { branches: 'branch', notes: 'note', papers: 'paper', writing
 const TYPE_ICON = { markdown: 'note', pdf: 'paper', tex: 'writing', bib: 'writing', code: 'code', notebook: 'code', image: 'image', video: 'data', audio: 'data', table: 'data', text: 'note', folder: 'folder', topic: 'topics', arxiv: 'paper', doi: 'paper', url: 'web' };
 
 /** A small tag; `dot` adds a colored marker beside ink-colored text. */
-function Chip({ children, title, dot, tone }) {
-  return h('span', { className: cx('atlas-chip', tone && 'is-' + tone), title },
+function Chip({ children, dot, tone, variant, auto, selected, contextKey, onClick, className, ...props }) {
+  return h(onClick ? 'button' : 'span', { ...props, type: onClick ? 'button' : undefined, onClick,
+    'aria-pressed': onClick && selected !== undefined ? selected : undefined,
+    className: cx('atlas-chip', tone && 'is-' + tone, variant && 'atlas-chip-' + variant, auto && 'atlas-chip-auto', className) },
     dot ? h('span', { className: 'atlas-dot', style: { background: dot }, 'aria-hidden': true }) : null,
-    children);
+    contextKey ? h('span', { className: 'atlas-chip-key' }, contextKey) : null, children,
+    auto ? h('em', { className: 'atlas-chip-auto-label' }, 'auto') : null);
 }
 
 const STATUS_DOT = { concluded: 'var(--status-done)', done: 'var(--status-done)', agreed: 'var(--status-done)', waiting: 'var(--status-waiting)', blocked: 'var(--status-blocked)', active: 'var(--status-active)', running: 'var(--status-active)', proposed: 'var(--status-proposed)' };
@@ -58,22 +71,21 @@ function StatusTag({ status }) {
   return h(Chip, { dot: key ? STATUS_DOT[key] : 'var(--status-other)' }, status);
 }
 
-function Button({ onClick, children, primary, disabled, title, small, icon, quiet }) {
-  return h('button', { type: 'button', className: cx('atlas-button', primary && 'is-primary', small && 'is-small', quiet && 'is-quiet'), onClick, disabled, title },
-    icon ? h(Icon, { name: icon, size: small ? 14 : 16 }) : null,
-    children ? h('span', null, children) : null);
+function Button({ children, primary, small, icon, quiet, buttonRef, className, ...props }) {
+  return h('button', { type: 'button', ...props, ref: buttonRef, className: cx('atlas-button', primary && 'is-primary', small && 'is-small', quiet && 'is-quiet', className) },
+    icon ? h(Icon, { name: icon }) : null, children != null ? h('span', null, children) : null);
 }
 
-function TextButton({ onClick, children, title, className }) {
-  return h('button', { type: 'button', className: cx('atlas-link', className), onClick, title }, children);
+function TextButton({ children, className, ...props }) {
+  return h('button', { type: 'button', ...props, className: cx('atlas-link', className) }, children);
 }
 
 function Empty({ children }) {
-  return h('p', { className: 'atlas-empty' }, children);
+  return h(EmptyState, null, children);
 }
 
 function Loading({ label }) {
-  return h('div', { className: 'atlas-page' }, h('div', { className: 'atlas-loading', role: 'status' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), label || 'Reading the research…'));
+  return h('div', { className: 'atlas-page' }, h(Skeleton, { label: label || 'Reading the research…' }));
 }
 
 function WorkspaceSetup({ setup, onRetry }) {
@@ -390,19 +402,31 @@ function Fold({ id, title, count, children, defaultOpen, icon, reveal, domId }) 
     open ? h('div', { className: 'atlas-fold-body' }, typeof children === 'function' ? children() : children) : null);
 }
 
+// Compatibility: old callers can still flash a string and render <Flash message={message}>.
 function useFlash() {
   const [message, setMessage] = useState('');
-  const timer = useRef(null);
-  const flash = useCallback((text) => {
-    setMessage(text);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setMessage(''), 6000);
+  const pending = useRef(null);
+  useEffect(() => () => { clearTimeout(pending.current); pending.current = null; }, []);
+  const flash = useCallback((text, options = {}) => {
+    clearTimeout(pending.current);
+    pending.current = null;
+    if (!text) { setMessage(''); return; }
+    const expire = () => { if (pending.current === timer) { pending.current = null; setMessage(''); } };
+    const timer = setTimeout(expire, options.duration ?? 4000);
+    pending.current = timer;
+    const action = options.action;
+    setMessage(action ? { text, action: { label: action.label, onClick: (event) => {
+      if (pending.current !== timer) return; // A replaced or already-used action cannot run.
+      clearTimeout(timer);
+      expire();
+      action.onClick(event);
+    } } } : text);
   }, []);
   return [message, flash];
 }
 
 function Flash({ message }) {
-  return message ? h('div', { className: 'atlas-flash', role: 'status' }, h(Icon, { name: 'spark' }), h('span', null, message)) : null;
+  return h(Toast, { message });
 }
 
 async function handOff(folder, prompt, flash) {
@@ -422,34 +446,21 @@ async function handOff(folder, prompt, flash) {
 /** The research moves for what is on screen: each opens a discussion beside it, with what you are viewing as context. */
 function AskMenu({ asks, label }) {
   const actions = React.useContext(AtlasActions);
-  const [open, setOpen] = useState(false);
-  const box = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => {
-      if (event.type === 'keydown' ? event.key === 'Escape' : !(box.current && box.current.contains(event.target))) setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', close);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', close);
-    };
-  }, [open]);
+  const [initial, setInitial] = useState(null);
+  const trigger = useRef(null);
   const pane = React.useContext(PaneContext);
-  const run = (a) => {
-    setOpen(false);
-    actions.ask(focusContext(paneFocus(focusStore.get(), pane)), 'ask', a.prompt, a.label);
-  };
+  const run = (a) => actions.ask(focusContext(paneFocus(focusStore.get(), pane)), 'ask', a.prompt, a.label);
   const first = asks[0];
-  return h('div', { className: 'atlas-ask', ref: box },
-    h('button', { type: 'button', className: 'atlas-button is-primary is-split', title: first.prompt, onClick: () => run(first) }, h(Icon, { name: 'spark' }), h('span', null, label || first.label)),
-    h('button', { type: 'button', className: 'atlas-button is-primary is-caret', 'aria-haspopup': 'menu', 'aria-expanded': open, title: 'More ways to work with the AI', onClick: () => setOpen(!open) }, '▾'),
-    open ? h('div', { className: 'atlas-menu', role: 'menu' },
-      asks.map((a) => h('button', { key: a.key, type: 'button', role: 'menuitem', className: 'atlas-menu-item', title: a.prompt, onClick: () => run(a) },
-        h('span', { className: 'atlas-menu-label' }, a.label), h('span', { className: 'atlas-menu-hint' }, a.hint))),
-      h('button', { type: 'button', role: 'menuitem', className: 'atlas-menu-item is-own', onClick: () => { setOpen(false); actions.startAsk({}); } },
-        h('span', { className: 'atlas-menu-label' }, 'Ask your own question…'), h('span', { className: 'atlas-menu-hint' }, 'Ctrl+J, here or over a selected passage'))) : null);
+  const menuLabel = 'More ways to work with the AI';
+  const items = asks.map(a => ({ id: a.key, label: a.label, hint: a.hint, title: a.prompt, onSelect: () => run(a) }));
+  items.push({ id: 'own', label: 'Ask your own question…', hint: 'Ctrl+J, here or over a selected passage', onSelect: () => actions.startAsk({}) });
+  return h('div', { className: 'atlas-ask' },
+    h(Button, { primary: true, className: 'is-split', icon: 'spark', title: first.prompt, onClick: () => run(first) }, label || first.label),
+    h(IconButton, { label: menuLabel, icon: 'chevron', buttonRef: trigger, className: 'atlas-button is-primary is-caret', 'aria-haspopup': 'menu', 'aria-expanded': !!initial,
+      onClick: () => setInitial(initial ? null : 'first'), onKeyDown: event => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setInitial(event.key === 'ArrowUp' ? 'last' : 'first'); }
+      } }),
+    initial ? h(Menu, { anchor: trigger, label: menuLabel, items, initial, onClose: () => setInitial(null) }) : null);
 }
 
 /** Names of topics that link to a note, each opening that topic; long lists show their first few. */
@@ -459,7 +470,7 @@ function LinkedFrom({ refs, go, label, limit = 3 }) {
   const shown = all ? refs : refs.slice(0, limit);
   return h('p', { className: 'atlas-linked' },
     h('span', { className: 'atlas-label' }, label || 'Linked from'), ' ',
-    shown.map((r, i) => h('span', { key: r.id }, i ? ' · ' : '', h(TextButton, { onClick: () => go({ view: 'doc', path: r.file }) }, r.title))),
+    shown.map((r, i) => h('span', { key: r.id }, i ? ' · ' : '', h(TextButton, { 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: r.file }) }, r.title))),
     refs.length > shown.length ? h('span', null, ' · ', h(TextButton, { onClick: () => setAll(true) }, `${refs.length - shown.length} more`)) : null);
 }
 
