@@ -3,8 +3,8 @@
 // reader that turns into an editor, PDFs page by page, figures, notebooks, data
 // and folders. Selected text can be handed to an AI session.
 
-/** Unsaved edits, per pane: leaving one pane never asks about the other's. */
-const editorDirty = { main: false, side: false };
+/** Unsaved edits, per tab: leaving one tab never asks about another's. */
+const editorDirty = {};
 const TYPE_LABEL = { markdown: 'Note', pdf: 'PDF', tex: 'LaTeX', bib: 'Bibliography', code: 'Code', notebook: 'Notebook', image: 'Figure', video: 'Video', audio: 'Audio', table: 'Table', text: 'Text', folder: 'Folder', other: 'File' };
 
 function DocView({ path, overview: ov, go, flash, version, edit, created, anchor, anchorAt }) {
@@ -76,7 +76,7 @@ function DocFrame({ path, type, ov, go, flash, navigate, data, editing, children
         data && data.mtimeMs ? h('span', { className: 'atlas-date' }, 'changed ' + dateOf(data.mtimeMs)) : null),
       h('div', { className: 'atlas-actions' },
         type === 'folder' ? null : h(AskMenu, { asks }),
-        editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, beside its PDF' : undefined }, 'Edit') : null,
+        editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, with its PDF in a Preview tab beside it' : undefined }, 'Edit') : null,
         type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
         h(Button, { quiet: true, icon: 'external', title: 'Open with the system app', onClick: () => openFile(path).then(() => flash('Opened with the system app.')).catch((e) => flash(e.message)) }, 'System app'))),
     data ? h(LinkedFrom, { refs: data.linkedFrom, go, label: 'Cited by' }) : null,
@@ -254,8 +254,8 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
       }
       if (page && onPageRef.current) onPageRef.current(page);
       const all = focusStore.get();
-      const focus = all[pane];
-      if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, [pane]: { ...focus, page: String(page) } });
+      const focus = all.byTab[pane];
+      if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, byTab: { ...all.byTab, [pane]: { ...focus, page: String(page) } } });
     }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
     el.querySelectorAll('.atlas-pdf-page').forEach((p) => io.observe(p));
     return () => io.disconnect();
@@ -382,7 +382,7 @@ function PdfPage({ doc, number, width, aspect = 1.294 }) {
     h('span', { className: 'atlas-pdf-num' }, number));
 }
 
-/** For each library PDF open now, its paper map: what "Keep in note" adds to (the page and the side panel each hold one). */
+/** For each library PDF open now, its paper map: what "Keep in note" adds to (each tab holds one). */
 const readingStore = externalStore({ maps: {}, at: 0 });
 
 /** The reading note of an open PDF: `{ pdf, map }` (map '' when the paper has none yet), or null. */
@@ -528,7 +528,7 @@ function Editor({ data, go, flash, created, onSaved }) {
   useEffect(() => {
     editorDirty[pane] = dirty;
     const warn = (e) => {
-      if (editorDirty.main || editorDirty.side) {
+      if (Object.values(editorDirty).some(Boolean)) {
         e.preventDefault();
         e.returnValue = '';
       }

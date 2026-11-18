@@ -619,7 +619,7 @@ window.__ModuleLoader__.load({
               onNavigate({ path: rel ? joinPath(dirOf(baseFile), rel) : baseFile, anchor });
             }
             : undefined,
-          // A paper's web address opens beside the page (read in Atlas); any other site in the browser.
+          // A paper's web address opens in a tab (read in Atlas); any other site in the browser.
           openExternalLink: (url) => (onNavigate && paperLink(url) ? onNavigate({ url }) : window.open(url, '_blank', 'noopener')),
           fileImages: {
             resolve: (target) => (typeOf(fileOf(target)) === 'image' ? rawUrl(fileOf(target)) : undefined),
@@ -1202,11 +1202,11 @@ window.__ModuleLoader__.load({
     // One topic as a workspace: what the root says, the opening, Current work as a
     // timeline, the account, and everything the note cites, sorted by kind.
 
-    /** Links inside notes: what Atlas can show opens beside the page (a link), the rest with the system's app. */
+    /** Links inside notes: what Atlas can show opens in a tab of its own (a link), the rest with the system's app. */
     function useNavigate(go, flash) {
       const pane = usePaneName();
       return useCallback(({ path, anchor, url }) => {
-        // A paper's web address: read it beside the page, offered for the topic in view.
+        // A paper's web address: read it in a tab, offered for the topic in view.
         if (url) {
           const focus = paneFocus(focusStore.get(), pane);
           go({ view: 'paper', url, topic: focus.topic ? focus.topic.path : '' });
@@ -1249,8 +1249,9 @@ window.__ModuleLoader__.load({
       const parts = useMemo(() => splitNote(data.body), [data.body]);
       const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
       const [reveal, setReveal] = useState({ key: '', n: 0 });
-      // Section ids are per pane: the same topic can be open as the page and beside it.
-      const sec = usePaneName() === 'side' ? 'atlas-side-sec-' : 'atlas-sec-';
+      // Section ids are per tab: the same topic can be open as the page and in a tab beside it.
+      const tabId = usePaneName();
+      const sec = tabId === 'page' ? 'atlas-sec-' : `atlas-${tabId.replace(/[^\w-]/g, '-')}-sec-`;
       // A link to a section of this note: the opening, Current work, or an account fold opened and scrolled to.
       useEffect(() => {
         if (!anchor) return undefined;
@@ -1410,8 +1411,8 @@ window.__ModuleLoader__.load({
     // reader that turns into an editor, PDFs page by page, figures, notebooks, data
     // and folders. Selected text can be handed to an AI session.
 
-    /** Unsaved edits, per pane: leaving one pane never asks about the other's. */
-    const editorDirty = { main: false, side: false };
+    /** Unsaved edits, per tab: leaving one tab never asks about another's. */
+    const editorDirty = {};
     const TYPE_LABEL = { markdown: 'Note', pdf: 'PDF', tex: 'LaTeX', bib: 'Bibliography', code: 'Code', notebook: 'Notebook', image: 'Figure', video: 'Video', audio: 'Audio', table: 'Table', text: 'Text', folder: 'Folder', other: 'File' };
 
     function DocView({ path, overview: ov, go, flash, version, edit, created, anchor, anchorAt }) {
@@ -1483,7 +1484,7 @@ window.__ModuleLoader__.load({
             data && data.mtimeMs ? h('span', { className: 'atlas-date' }, 'changed ' + dateOf(data.mtimeMs)) : null),
           h('div', { className: 'atlas-actions' },
             type === 'folder' ? null : h(AskMenu, { asks }),
-            editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, beside its PDF' : undefined }, 'Edit') : null,
+            editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, with its PDF in a Preview tab beside it' : undefined }, 'Edit') : null,
             type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
             h(Button, { quiet: true, icon: 'external', title: 'Open with the system app', onClick: () => openFile(path).then(() => flash('Opened with the system app.')).catch((e) => flash(e.message)) }, 'System app'))),
         data ? h(LinkedFrom, { refs: data.linkedFrom, go, label: 'Cited by' }) : null,
@@ -1661,8 +1662,8 @@ window.__ModuleLoader__.load({
           }
           if (page && onPageRef.current) onPageRef.current(page);
           const all = focusStore.get();
-          const focus = all[pane];
-          if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, [pane]: { ...focus, page: String(page) } });
+          const focus = all.byTab[pane];
+          if (page && focus && focus.doc && focus.doc.path === path && focus.page !== String(page)) focusStore.set({ ...all, byTab: { ...all.byTab, [pane]: { ...focus, page: String(page) } } });
         }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
         el.querySelectorAll('.atlas-pdf-page').forEach((p) => io.observe(p));
         return () => io.disconnect();
@@ -1789,7 +1790,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'atlas-pdf-num' }, number));
     }
 
-    /** For each library PDF open now, its paper map: what "Keep in note" adds to (the page and the side panel each hold one). */
+    /** For each library PDF open now, its paper map: what "Keep in note" adds to (each tab holds one). */
     const readingStore = externalStore({ maps: {}, at: 0 });
 
     /** The reading note of an open PDF: `{ pdf, map }` (map '' when the paper has none yet), or null. */
@@ -1935,7 +1936,7 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         editorDirty[pane] = dirty;
         const warn = (e) => {
-          if (editorDirty.main || editorDirty.side) {
+          if (Object.values(editorDirty).some(Boolean)) {
             e.preventDefault();
             e.returnValue = '';
           }
@@ -2036,11 +2037,12 @@ window.__ModuleLoader__.load({
 
     // ===== client/45-write.js
     // ------------------------------------------------------------------ write ---
-    // A manuscript beside its PDF: the LaTeX source with line numbers, Build
-    // (Ctrl+B) with the TeX installations this computer has, the log's problems by
-    // line, SyncTeX both ways (Ctrl+click), and citations from the document's .bib
-    // and the papers library. Saving keeps the editor's rule: never over a file
-    // that changed on disk meanwhile.
+    // A manuscript and its PDF side by side: the LaTeX source with line numbers,
+    // Build (Ctrl+B) with the TeX installations this computer has, the compiled PDF
+    // in its own Preview tab in the other pane, the log's problems by line, SyncTeX
+    // both ways (Ctrl+click), and citations from the document's .bib and the papers
+    // library. Saving keeps the editor's rule: never over a file that changed on
+    // disk meanwhile.
 
     function lineOfOffset(text, offset) {
       return String(text).slice(0, offset).split('\n').length;
@@ -2085,21 +2087,35 @@ window.__ModuleLoader__.load({
       return out;
     }
 
+    /** Each LaTeX document's compiled PDF, for its Preview tab, by the document's key: { main, pdf, builtAt, mark, sync, topic }. */
+    const texPreviewStore = externalStore({});
+    /** What a Preview tab asks of the source open in the editor (Ctrl+click → the source line), by the document's key. */
+    const previewHandlers = new Map();
+
+    /** The helper panels beside the source; the compiled PDF has its own tab (Preview). */
+    const WRITE_PANELS = [['outline', 'Outline'], ['problems', 'Problems'], ['cite', 'Cite']];
+
     function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
       const pane = usePaneName();
-      // The source on the left, the PDF on the right; the share between them is the researcher's, remembered.
-      const [split, setSplit] = useState(() => storageGet('write-split', 50));
+      const actions = React.useContext(AtlasActions);
+      // The source, and a helper panel beside it when one is open; their share is the researcher's, remembered.
+      const [split, setSplit] = useState(() => storageGet('write-aux-split', 64));
+      const [panel, setPanel] = useState(() => storageGet('write-panel', ''));
       const splitBox = useRef(null);
       const saveSplit = (value) => {
         setSplit(value);
-        storageSet('write-split', value);
+        storageSet('write-aux-split', value);
+      };
+      const showPanel = (key) => {
+        setPanel(key);
+        storageSet('write-panel', key);
       };
       const startSplit = (event) => {
         event.preventDefault();
         const box = splitBox.current;
         if (!box) return;
         const rect = box.getBoundingClientRect();
-        const at = (x) => Math.round(Math.min(78, Math.max(22, ((x - rect.left) / rect.width) * 100)));
+        const at = (x) => Math.round(Math.min(80, Math.max(30, ((x - rect.left) / rect.width) * 100)));
         const move = (e) => setSplit(at(e.clientX));
         const up = (e) => {
           window.removeEventListener('pointermove', move);
@@ -2117,14 +2133,12 @@ window.__ModuleLoader__.load({
       const [engine, setEngine] = useState(() => storageGet('tex-engine:' + data.path, ''));
       const [built, setBuilt] = useState(null);
       const [building, setBuilding] = useState(false);
-      const [tab, setTab] = useState('pdf');
       const [mark, setMark] = useState(null);
       const [pdfExists, setPdfExists] = useState(false);
       const area = useRef(null);
       const gutter = useRef(null);
       const caret = useRef(0);
       const textRef = useRef(text);
-      const lastPage = useRef(0);
       textRef.current = text;
       const dirty = text !== base.text;
 
@@ -2149,6 +2163,7 @@ window.__ModuleLoader__.load({
       const chosen = engines.list ? engines.list.find((e) => e.id === engine) || engines.list[0] || null : null;
       const main = engines.main || '';
       const pdf = (built && built.pdf) || (main && pdfExists ? main.replace(/\.tex$/i, '.pdf') : '');
+      const docKey = main ? pathKey(main) : '';
 
       const goToLine = useCallback((n) => {
         const el = area.current;
@@ -2193,6 +2208,9 @@ window.__ModuleLoader__.load({
         setBase({ text: value, mtimeMs: fresh.mtimeMs });
         setStatus({ kind: 'clean' });
       };
+      const preview = (file, activate) => {
+        if (main && file) actions.openPreview({ main, pdf: file, from: pane, activate });
+      };
       const runBuild = async () => {
         if (building || !chosen) return;
         if (textRef.current !== base.text && !(await save(false))) return;
@@ -2200,9 +2218,11 @@ window.__ModuleLoader__.load({
         try {
           const r = await api('latex/build', { method: 'POST', body: { path: data.path, engine: chosen.id } });
           setBuilt(r);
+          setMark(null);
           if (r.pdf) setPdfExists(true);
           const errors = r.problems.filter((p) => p.severity === 'error').length;
-          setTab(errors ? 'problems' : 'pdf');
+          if (errors) showPanel('problems');
+          preview(r.pdf, !errors);
           flash(errors ? `Built with ${plural(errors, 'error')}: see Problems.` : `Built: ${plural(r.pages, 'page')} in ${(r.durationMs / 1000).toFixed(1)} s.`);
         } catch (error) {
           flash(error.message);
@@ -2219,7 +2239,7 @@ window.__ModuleLoader__.load({
         if (!pdf) return flash('Build the document first.');
         try {
           const r = await api('latex/sync/view', { query: { path: data.path, line: lineOfOffset(textRef.current, caret.current), engine: chosen.id } });
-          setTab('pdf');
+          preview(pdf, true);
           setMark({ ...r, at: Date.now() });
         } catch (error) {
           flash(error.message);
@@ -2235,6 +2255,42 @@ window.__ModuleLoader__.load({
           flash(error.message);
         }
       };
+
+      // The Preview tab reads the PDF from here and asks this editor for the source of a place in it.
+      const syncRef = useRef(syncToSource);
+      syncRef.current = syncToSource;
+      useEffect(() => {
+        if (!docKey) return undefined;
+        const handler = { syncToSource: (page, x, y) => syncRef.current(page, x, y) };
+        previewHandlers.set(docKey, handler);
+        const editing = (value) => {
+          const all = texPreviewStore.get();
+          texPreviewStore.set({ ...all, [docKey]: { ...(all[docKey] || {}), editing: value } });
+        };
+        editing(true);
+        return () => {
+          if (previewHandlers.get(docKey) !== handler) return;
+          previewHandlers.delete(docKey);
+          editing(false);
+        };
+      }, [docKey]);
+      const builtAt = built ? built.at : 0;
+      const sync = Boolean(chosen && chosen.sync);
+      const owner = data.owner || null;
+      useEffect(() => {
+        if (!docKey) return;
+        const all = texPreviewStore.get();
+        const topic = owner ? { id: owner.id, title: owner.title, path: owner.file } : null;
+        texPreviewStore.set({ ...all, [docKey]: { ...(all[docKey] || {}), main, pdf: pdf || (all[docKey] && all[docKey].pdf) || '', builtAt: builtAt || (all[docKey] && all[docKey].builtAt) || 0, mark, sync, topic, source: data.path } });
+      }, [docKey, pdf, builtAt, mark, sync, owner ? owner.file : '']);
+      // A document that has a PDF shows it beside the source as soon as it opens.
+      const shownOnce = useRef(false);
+      useEffect(() => {
+        if (!main || !pdf || shownOnce.current) return;
+        shownOnce.current = true;
+        preview(pdf, true);
+      }, [main, pdf]);
+
       const insertKey = (key) => {
         const next = insertCite(textRef.current, caret.current, key);
         setText(next.text);
@@ -2277,7 +2333,7 @@ window.__ModuleLoader__.load({
             : status.kind === 'saved' ? `Saved ${new Date(status.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
       const builtText = building ? 'Building…'
         : built ? `Built ${new Date(built.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${plural(built.pages, 'page')}${errors ? ` · ${plural(errors, 'error')}` : ''}` : '';
-      const tabs = [['pdf', 'PDF'], ['problems', problems.length ? `Problems (${problems.length})` : 'Problems'], ['cite', 'Cite'], ['outline', 'Outline']];
+      const open = WRITE_PANELS.some(([key]) => key === panel) ? panel : '';
       return h('div', { className: 'atlas-write' },
         status.kind === 'conflict' ? h('div', { className: 'atlas-banner is-warn', role: 'alert' },
           h('span', null, 'This file changed on disk since you opened it (perhaps an AI session edited it).'),
@@ -2286,15 +2342,24 @@ window.__ModuleLoader__.load({
         h('div', { className: 'atlas-write-bar' },
           h(Button, { primary: true, icon: 'save', disabled: !dirty || status.kind === 'saving', onClick: () => save(false), title: 'Save (Ctrl+S)' }, 'Save'),
           h(Button, { disabled: building || !chosen, onClick: runBuild, title: 'Save and build (Ctrl+B)' }, building ? 'Building…' : 'Build'),
+          h(Button, { icon: 'paper', disabled: !pdf, onClick: () => preview(pdf, true), title: pdf ? 'Show the compiled PDF in its Preview tab, beside the source' : 'No PDF yet: press Build (Ctrl+B)' }, 'Preview'),
           engines.list && engines.list.length
             ? h('select', { className: 'atlas-input atlas-write-engine', value: chosen ? chosen.id : '', onChange: (e) => chooseEngine(e.target.value), 'aria-label': 'TeX engine' },
               engines.list.map((e) => h('option', { key: e.id, value: e.id }, e.label + (e.sync ? '' : ' · no SyncTeX'))))
             : h('span', { className: 'atlas-muted' }, engines.list ? engines.error || 'No TeX installation found' : 'Looking for TeX…'),
+          h('div', { className: 'atlas-seg atlas-write-panels', role: 'group', 'aria-label': 'Beside the source' }, WRITE_PANELS.map(([key, label]) => h('button', {
+            key,
+            type: 'button',
+            'aria-pressed': open === key,
+            className: cx('atlas-seg-item', open === key && 'is-on', key === 'problems' && errors && 'is-alert'),
+            title: open === key ? 'Hide it' : `Show ${label.toLowerCase()} beside the source`,
+            onClick: () => showPanel(open === key ? '' : key),
+          }, key === 'problems' && problems.length ? `${label} (${problems.length})` : label))),
           h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, [statusText, builtText].filter(Boolean).join(' · ')),
           h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
           h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
         main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
-        h('div', { className: 'atlas-write-split', ref: splitBox, style: { '--write-split': split + '%' } },
+        h('div', { className: cx('atlas-write-split', !open && 'is-solo'), ref: splitBox, style: { '--write-split': split + '%' } },
           h('div', { className: 'atlas-write-source' },
             h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
             h('textarea', {
@@ -2318,32 +2383,59 @@ window.__ModuleLoader__.load({
                 if (gutter.current) gutter.current.scrollTop = e.target.scrollTop;
               },
               'aria-label': 'Source of ' + baseName(data.path),
-              title: 'Ctrl+click a line to find it in the PDF',
+              title: sync ? 'Ctrl+click a line to find it in the Preview' : 'Source',
             })),
-          h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the PDF', title: 'Drag to give the source or the PDF more room; double-click for half and half', onPointerDown: startSplit, onDoubleClick: () => saveSplit(50) }),
-          h('div', { className: 'atlas-write-side' },
-            h('div', { className: 'atlas-seg atlas-write-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on', key === 'problems' && errors && 'is-alert'), onClick: () => setTab(key) }, label))),
+          open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', title: 'Drag to resize; double-click to reset', onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
+          open ? h('div', { className: 'atlas-write-side' },
+            h('div', { className: 'atlas-write-side-head' },
+              h('span', null, (WRITE_PANELS.find(([key]) => key === open) || [])[1]),
+              h('button', { type: 'button', className: 'atlas-icon-button', title: 'Hide the panel', 'aria-label': 'Hide the panel', onClick: () => showPanel('') }, h(Icon, { name: 'close', size: 13 }))),
             h('div', { className: 'atlas-write-pane' },
-              tab === 'pdf'
-                ? (pdf
-                  ? h(PdfView, {
-                    key: pdf + ':' + (built ? built.at : 0),
-                    path: pdf,
-                    flash,
-                    anchor: mark ? 'page=' + mark.page : lastPage.current ? 'page=' + lastPage.current : '',
-                    anchorAt: mark ? mark.at : built ? built.at : 0,
-                    marker: mark,
-                    onPage: (n) => {
-                      lastPage.current = n;
-                    },
-                    onPageClick: syncToSource,
-                  })
-                  : h(Empty, null, chosen ? 'No PDF yet: press Build (Ctrl+B).' : 'Atlas found no TeX to build with.'))
-                : null,
-              tab === 'pdf' && pdf && chosen ? h('p', { className: 'atlas-write-hint' }, chosen.sync ? 'Ctrl+click in the PDF to jump to its source line; Ctrl+click a source line to find it here.' : 'This engine has no synctex program: choose TeX Live in WSL to jump between source and PDF.') : null,
-              tab === 'problems' ? h(ProblemList, { built, current: data.path, goToLine, go }) : null,
-              tab === 'cite' ? h(CitePanel, { path: data.path, text, caret, onInsert: insertKey, flash }) : null,
-              tab === 'outline' ? h(TexOutline, { text, goToLine }) : null))));
+              open === 'problems' ? h(ProblemList, { built, current: data.path, goToLine, go }) : null,
+              open === 'cite' ? h(CitePanel, { path: data.path, text, caret, onInsert: insertKey, flash }) : null,
+              open === 'outline' ? h(TexOutline, { text, goToLine }) : null)) : null),
+        pdf && chosen ? h('p', { className: 'atlas-write-hint' }, chosen.sync ? 'The PDF is in the Preview tab: Ctrl+click in it to jump to the source line, Ctrl+click a source line to find it there.' : 'This engine has no synctex program: choose TeX Live in WSL to jump between the source and the Preview.') : null);
+    }
+
+    /**
+     * A LaTeX document's compiled PDF in its own tab, beside the source: it reloads after each build,
+     * shows where a Ctrl+clicked source line landed, and Ctrl+click in it jumps to the source.
+     */
+    function TexPreview({ tab, flash, go }) {
+      const all = React.useSyncExternalStore(texPreviewStore.subscribe, texPreviewStore.get);
+      const key = pathKey(tab.main);
+      const entry = all[key] || {};
+      const pdf = entry.pdf || tab.pdf || '';
+      const lastPage = useRef(0);
+      usePublishFocus({ kind: 'doc', topic: entry.topic || null, doc: { type: 'pdf', title: 'Preview of ' + baseName(tab.main), path: pdf || tab.main } }, [pdf, tab.main, entry.topic ? entry.topic.path : '']);
+      const toSource = (page, x, y) => {
+        const handler = previewHandlers.get(key);
+        if (handler) handler.syncToSource(page, x, y);
+        else flash('Open the source in the editor to jump from the Preview to it.');
+      };
+      const mark = entry.mark || null;
+      const builtAt = entry.builtAt || 0;
+      return h('div', { className: 'atlas-preview' },
+        h('header', { className: 'atlas-preview-head' },
+          h('span', { className: 'atlas-preview-label' }, h(Icon, { name: 'paper', size: 14 }), 'Preview'),
+          h('span', { className: 'atlas-preview-of', title: tab.main }, 'of ', h(TextButton, { onClick: () => go({ view: 'doc', path: entry.source || tab.main, edit: true, full: true }), title: 'Edit the source' }, baseName(entry.source || tab.main))),
+          builtAt ? h('span', { className: 'atlas-date' }, 'built ' + new Date(builtAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : null,
+          h('span', { className: 'atlas-spacer' }),
+          entry.sync && entry.editing ? h('span', { className: 'atlas-hint' }, h('kbd', null, 'Ctrl'), '+click jumps to the source') : null),
+        pdf
+          ? h(PdfView, {
+            key: pdf + ':' + builtAt,
+            path: pdf,
+            flash,
+            anchor: mark ? 'page=' + mark.page : lastPage.current ? 'page=' + lastPage.current : '',
+            anchorAt: mark ? mark.at : builtAt,
+            marker: mark,
+            onPage: (n) => {
+              lastPage.current = n;
+            },
+            onPageClick: toSource,
+          })
+          : h(Empty, null, 'No PDF yet: build the document (Ctrl+B in the editor).'));
     }
 
     function ProblemList({ built, current, goToLine, go }) {
@@ -2440,7 +2532,7 @@ window.__ModuleLoader__.load({
 
     // ===== client/47-paper.js
     // ----------------------------------------------------------------- papers ---
-    // A paper a note cites by its web address (arXiv, a DOI, an INSPIRE record) opens beside the page
+    // A paper a note cites by its web address (arXiv, a DOI, an INSPIRE record) opens in a tab
     // instead of in a browser: its details, and for arXiv its PDF read through Atlas (fetched on the
     // researcher's click, never saved). One step adds it to the library for the topic it serves, with
     // a paper map that says so; the library's copy then opens in its place. A paper the library has
@@ -2559,7 +2651,7 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------ write ---
     // Adding and writing from anywhere. The + button (or N) opens a small panel over the page: a paper
     // (looked up, then added to the library for a topic), a note, or a LaTeX document (created in a
-    // topic's folder and opened: a note beside the page, a document as the page, where its PDF fits).
+    // topic's folder and opened: a note in a tab beside the page, a document as the page with its Preview beside it).
     // Each starts with the topic in view. The Write page lists the LaTeX documents the notes link.
 
     const QUICK_TABS = [['paper', 'Paper', 'paper'], ['note', 'Note', 'note'], ['tex', 'LaTeX', 'writing']];
@@ -2609,7 +2701,7 @@ window.__ModuleLoader__.load({
         h('p', { className: 'atlas-quick-more' }, 'A lecture or files: ', h(TextButton, { onClick: () => done({ view: 'library', tab: 'discover', add: Date.now() }) }, 'Library › Discover and add'), ' · ', h('kbd', null, 'Esc'), ' closes'));
     }
 
-    /** A paper by its identifier: looked up, then added for a topic (or read first, beside the page). */
+    /** A paper by its identifier: looked up, then added for a topic (or read first, in a tab). */
     function QuickPaper({ ov, topic, done, flash }) {
       const [q, setQ] = useState('');
       const [found, setFound] = useState(null);
@@ -2667,7 +2759,7 @@ window.__ModuleLoader__.load({
         setBusy(true);
         try {
           await api('save', { method: 'POST', body: { path: target, text: TEMPLATES[kind](title.trim()), create: true } });
-          // A note opens beside the page; a LaTeX document as the page, where its PDF has room.
+          // A note opens in a tab beside the page; a LaTeX document as the page, its PDF in a Preview tab beside it.
           done(kind === 'tex' ? { view: 'doc', path: target, edit: true, created: true, full: true } : { view: 'doc', path: target, edit: true, created: true, link: true });
         } catch (error) {
           flash(error.status === 409 ? `There is already a file called ${baseName(target)} there.` : error.message);
@@ -2707,7 +2799,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'atlas-page is-wide atlas-write-page' },
         h('p', { className: 'atlas-kicker' }, h(Icon, { name: 'writing', size: 14 }), 'Write'),
         h('h1', null, 'Your writing'),
-        h('p', { className: 'atlas-lede' }, 'The LaTeX documents your topic notes link, newest first. Open one to write beside its PDF; Build is Ctrl+B. New notes, documents and papers also start from + anywhere (or N).'),
+        h('p', { className: 'atlas-lede' }, 'The LaTeX documents your topic notes link, newest first. Open one to write it, with its PDF in a Preview tab beside it; Build is Ctrl+B. New notes, documents and papers also start from + anywhere (or N).'),
         h('div', { className: 'atlas-actions' },
           h(Button, { primary: true, icon: 'writing', onClick: () => onQuick('tex') }, 'New LaTeX document'),
           h(Button, { icon: 'note', onClick: () => onQuick('note') }, 'New note'),
@@ -2728,7 +2820,7 @@ window.__ModuleLoader__.load({
           h(Icon, { name: 'writing', size: 15 }),
           h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, d.title), h('span', { className: 'atlas-item-sub' }, `${baseName(d.file)} · changed ${dateOf(d.mtimeMs)}`)),
           h(Chip, { dot: !d.pdf ? 'var(--status-other)' : built ? 'var(--status-done)' : 'var(--status-waiting)' }, state)),
-        d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
+        d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
     }
 
     // ===== client/50-library.js
@@ -3494,22 +3586,37 @@ window.__ModuleLoader__.load({
       return store;
     }
 
-    // The discussion index, and what is in view: one focus per pane (the page, and the file beside
-    // it), and which of the two was used last.
+    // The discussion index, and what is in view: what each tab shows (its focus), which tab each pane
+    // shows, and which tab was used last. The discussion is about what the other pane shows.
     const threadStore = externalStore([], 'threads');
-    const focusStore = externalStore({ main: { kind: 'universe' }, side: null, active: 'main' });
-    /** Which pane a component sits in: the page ('main'), the file beside it ('side'), or the shell around both ('global'). */
+    const focusStore = externalStore({ byTab: { page: { kind: 'universe' } }, active: 'page', visible: { left: 'page', right: null }, paneOf: { page: 'left' } });
+    /** Which tab a component sits in (its id: 'page', a file's, 'discussion'…), or the shell around them all ('global'). */
     const PaneContext = React.createContext('global');
 
+    /** The tab this component sits in; the shell's own pieces count as the page. */
     function usePaneName() {
-      return React.useContext(PaneContext) === 'side' ? 'side' : 'main';
+      const tab = React.useContext(PaneContext);
+      return tab && tab !== 'global' ? tab : 'page';
     }
 
-    /** What a pane shows (the shell asks for the pane used last), with what the other pane holds beside it. */
-    function paneFocus(all, pane) {
-      const name = pane === 'side' || pane === 'main' ? pane : all.active === 'side' && all.side ? 'side' : 'main';
-      const own = (name === 'side' ? all.side : all.main) || { kind: 'universe' };
-      const beside = besideOf(own, name === 'side' ? all.main : all.side);
+    /**
+     * What a tab shows, with what the other pane shows beside it. The shell asks for the tab used last;
+     * the discussion stands for what the other pane shows (or, alone, what was used last).
+     */
+    function paneFocus(all, tab) {
+      const byTab = all.byTab || {};
+      const visible = all.visible || {};
+      const paneOf = all.paneOf || {};
+      const across = (id) => (paneOf[id] ? visible[paneOf[id] === 'left' ? 'right' : 'left'] : null);
+      let id = tab && tab !== 'global' ? tab : all.active;
+      if (id === 'discussion') {
+        const other = across('discussion');
+        id = other && byTab[other] ? other : all.active;
+      }
+      if (!id || id === 'discussion' || !byTab[id]) id = 'page';
+      const own = byTab[id] || { kind: 'universe' };
+      const other = across(id);
+      const beside = other && other !== id ? besideOf(own, byTab[other]) : null;
       return beside ? { ...own, beside } : own;
     }
 
@@ -3523,13 +3630,19 @@ window.__ModuleLoader__.load({
       return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
     }
 
-    function setActivePane(pane) {
+    /** The tab used last (a click, a key, a selection in it). The discussion never is: asking from it is about what you read. */
+    function setActivePane(tab) {
+      if (!tab || tab === 'discussion') return;
       const all = focusStore.get();
-      if (all.active !== pane) focusStore.set({ ...all, active: pane });
+      if (all.active !== tab) focusStore.set({ ...all, active: tab });
     }
 
-    function clearSidePane() {
-      focusStore.set({ ...focusStore.get(), side: null, active: 'main' });
+    /** A closed tab says nothing more. */
+    function forgetTab(tab) {
+      const all = focusStore.get();
+      const byTab = { ...all.byTab };
+      delete byTab[tab];
+      focusStore.set({ ...all, byTab, active: all.active === tab ? 'page' : all.active });
     }
 
     function useThreadIndex() {
@@ -3542,12 +3655,13 @@ window.__ModuleLoader__.load({
       return useMemo(() => paneFocus(all, pane), [all, pane]);
     }
 
-    /** Views say what they show; the ask bar, the chips and Ctrl+J read it. */
+    /** Views say what they show, for the tab they are in; the ask bar, the chips and Ctrl+J read it. */
     function usePublishFocus(value, deps) {
-      const pane = usePaneName();
+      const tab = usePaneName();
       useEffect(() => {
-        focusStore.set({ ...focusStore.get(), [pane]: value });
-      }, [pane, ...deps]);
+        const all = focusStore.get();
+        focusStore.set({ ...all, byTab: { ...all.byTab, [tab]: value } });
+      }, [tab, ...deps]);
     }
 
     function patchThread(id, patch) {
@@ -3883,9 +3997,70 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
     }
 
-    const COMPANION_MIN = 340;
+    /** The WSL distribution a research root lives in (`\\wsl.localhost\Ubuntu\…` or `\\wsl$\Ubuntu\…`), or ''. */
+    function wslDistro(root) {
+      const m = /^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/]([^\\/]+)/i.exec(String(root || ''));
+      return m ? m[1] : '';
+    }
 
-    function Companion({ threadId, pending, onClose, flash, width, onWidth, tabs, hidden }) {
+    /**
+     * A place the AI names in a discussion, as Atlas opens it: `note.md:42` and `#L42` become a line,
+     * a relative path is in the research, and on Windows a Linux path is inside the WSL the research
+     * lives in (`/mnt/c/…` is the C: drive).
+     */
+    function chatLocation(text, root) {
+      let s = String(text || '').trim().replace(/^file:\/\/(?:localhost)?\/?(?=[a-z]:|\/)/i, '');
+      try {
+        s = decodeURI(s);
+      } catch {
+        // Keep it as written.
+      }
+      let anchor = '';
+      const hash = s.indexOf('#');
+      if (hash >= 0) {
+        anchor = s.slice(hash + 1);
+        s = s.slice(0, hash);
+      }
+      const at = /^(.+?):(\d+)(?::\d+)?(?:-\d+)?$/.exec(s);
+      if (at && !/^[a-z]$/i.test(at[1])) {
+        s = at[1];
+        if (!anchor) anchor = 'L' + at[2];
+      }
+      if (!s) return null;
+      const windowsRoot = /^[a-z]:[\\/]/i.test(root || '') || /^[\\/]{2}/.test(root || '');
+      if (/^[a-z]:[\\/]/i.test(s) || /^[\\/]{2}/.test(s)) return { path: s, anchor };
+      if (s.startsWith('/')) {
+        if (!windowsRoot) return { path: s, anchor };
+        const drive = /^\/mnt\/([a-z])(\/.*)?$/i.exec(s);
+        if (drive) return { path: `${drive[1].toUpperCase()}:${(drive[2] || '/').replace(/\//g, '\\')}`, anchor };
+        const distro = wslDistro(root);
+        return { path: distro ? `\\\\wsl.localhost\\${distro}${s.replace(/\//g, '\\')}` : s, anchor };
+      }
+      return { path: root ? joinPath(root, s.replace(/^\.[\\/]/, '')) : s, anchor };
+    }
+
+    /**
+     * What a click in DSH's conversation points at: a web address, or a file (DSH draws the files the AI
+     * names as buttons whose title is the path). DSH would open them in its own side bar, which has no
+     * session to show them in inside Atlas.
+     */
+    function conversationLink(target, root) {
+      const el = target && target.closest ? target : target && target.parentElement;
+      if (!el || !el.closest) return null;
+      const file = el.closest('button[class*="fileLink"], button[class*="fileMention"], [data-file-path]');
+      if (file) {
+        const where = file.getAttribute('data-file-path') || file.getAttribute('title') || file.textContent;
+        return chatLocation(where, root);
+      }
+      const link = el.closest('a[href]');
+      if (!link) return null;
+      const href = link.getAttribute('href') || '';
+      if (/^https?:/i.test(href)) return { url: href };
+      if (!href || href.startsWith('#') || /^(mailto|tel|javascript|data|blob):/i.test(href) || (typeof API === 'string' && href.startsWith(API))) return null;
+      return chatLocation(href, root);
+    }
+
+    function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
       const threads = useThreadIndex();
       const rows = useSessionRows();
       const focus = useFocus();
@@ -3931,23 +4106,30 @@ window.__ModuleLoader__.load({
         if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
         else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
       };
-      const startResize = columnResizer(width, onWidth, COMPANION_MIN, 0.66);
+      // Links in the conversation open in Atlas: files and papers in a tab beside the discussion, other sites in the browser.
+      const onLinkClick = (event) => {
+        if (!onOpenLink || event.button > 0) return;
+        const ref = conversationLink(event.target, root);
+        if (!ref) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (ref.url && !paperLink(ref.url)) window.open(ref.url, '_blank', 'noopener');
+        else onOpenLink(ref);
+      };
       const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-      return h('aside', { className: cx('atlas-companion', hidden && 'is-hidden'), 'aria-label': 'Discussion', 'aria-hidden': hidden || undefined, style: { '--companion-w': width + 'px' } },
-        h('div', { className: 'atlas-companion-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the discussion pane', onPointerDown: startResize }),
-        tabs ? h('div', { className: 'atlas-companion-tabs' }, tabs) : null,
+      return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion' },
         h('header', { className: 'atlas-companion-head' },
           h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
           h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
           h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the pane (the discussion is kept)', 'aria-label': 'Close the pane', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
+          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
         thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
         pending ? null : h('div', { className: 'atlas-companion-actions' },
           h(TextButton, { onClick: addView, title: 'Put a pointer to what you are viewing now into the input box' }, h(Icon, { name: 'plus', size: 13 }), 'Add what I’m viewing'),
           h('span', { className: 'atlas-spacer' }),
           h(TextButton, { onClick: resolve, title: resolved ? 'Bring it back to DSH’s session list' : 'Mark it settled and archive the session' }, resolved ? 'Reopen' : 'Resolve')),
         pending ? null : h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
-        h('div', { className: 'atlas-companion-body' }, pending
+        h('div', { className: 'atlas-companion-body', onClickCapture: onLinkClick }, pending
           ? h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Starting a session for this…')
           : h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
     }
@@ -4645,34 +4827,74 @@ window.__ModuleLoader__.load({
 
     // ===== client/70-shell.js
     // ------------------------------------------------------------------- shell ---
-    // Four places (the Universe, Activity, the Library, Learn) and the topics fill the page; a file
-    // opens beside it in the side panel, so the page stays where it was. A discussion with the AI
-    // opens in the companion pane. With a file and a discussion both open they stand side by side,
-    // or, when the window cannot fit three columns, share the side as two tabs.
+    // Every view is a tab: the page (the Universe, Activity, the Library, Learn, Write, a topic), each
+    // file opened from it, papers, the discussion with the AI, and a LaTeX document's compiled PDF
+    // (Preview). Two panes hold the tabs side by side: drag a tab to reorder it, onto the other pane to
+    // move it there, or to the edge to split; drag the divider to resize. Tab contents stay mounted where
+    // they are and a move only changes their place, so a discussion, a PDF or an unsaved edit survives it.
 
     const NAV = [['home', 'Universe', 'universe'], ['activity', 'Activity', 'activity'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn'], ['write', 'Write', 'writing']];
-    const SIDE_MIN = 360;
-    const MAIN_MIN = 420;
+    const PANES = ['left', 'right'];
+    const TAB_DRAG = 'application/x-atlas-tab';
+    const PAGE_ICON = { home: 'universe', activity: 'activity', library: 'library', learn: 'learn', write: 'writing', search: 'search', team: 'team', paper: 'paper' };
 
     /**
-     * Which pane a navigation belongs in, opened from pane `from` ('main' or 'side') whose current
-     * entry is `here`. Places (another view, a topic, the root note, a page made full) fill the page;
-     * a section of the document already open stays where it is, as does a jump inside a LaTeX
-     * workspace (`stay`); links inside documents and every other file open beside the page.
+     * Where a navigation from a tab lands: the page (places, other views, Open as the page), the same tab
+     * (a section of the document it shows, or a jump inside a LaTeX workspace), a file tab, or a paper tab.
      */
-    function paneFor(next, from, here, isPlace) {
-      if (next && next.view === 'paper') return next.full ? 'main' : 'side';
-      if (!next || next.back || next.view !== 'doc' || !next.path || next.full) return 'main';
-      if (here && here.view === 'doc' && here.path && pathKey(here.path) === pathKey(next.path)) return from;
-      if (next.stay) return from;
-      if (!next.link && isPlace(next.path)) return 'main';
-      return 'side';
+    function routeFor(next, herePath, isPlace) {
+      if (!next) return 'none';
+      if (next.view === 'paper') return next.full ? 'page' : 'paper';
+      if (next.back || next.view !== 'doc' || !next.path || next.full) return 'page';
+      if (herePath && pathKey(herePath) === pathKey(next.path)) return 'same';
+      if (next.stay) return 'same';
+      if (!next.link && isPlace(next.path)) return 'page';
+      return 'file';
     }
 
-    /** Columns when the page keeps at least MAIN_MIN beside the file and the discussion; tabs otherwise. */
-    function sideLayout({ width, side, discussion, sideWidth, companionWidth }) {
-      if (!side || !discussion) return 'columns';
-      return width - sideWidth - companionWidth >= MAIN_MIN ? 'columns' : 'tabs';
+    function otherPane(pane) {
+      return pane === 'left' ? 'right' : 'left';
+    }
+
+    function paneOfTab(layout, id) {
+      return layout.left.includes(id) ? 'left' : layout.right.includes(id) ? 'right' : null;
+    }
+
+    /** Each pane shows a tab it holds. */
+    function fixActive(layout) {
+      const active = { ...layout.active };
+      for (const p of PANES) if (!layout[p].includes(active[p])) active[p] = layout[p][layout[p].length - 1] || null;
+      return { ...layout, active };
+    }
+
+    /** Add a tab to a pane, after `after` (or at the end), and show it. */
+    function layoutAdd(layout, id, pane, after) {
+      const list = layout[pane].filter((x) => x !== id);
+      const at = after && list.includes(after) ? list.indexOf(after) + 1 : list.length;
+      list.splice(at, 0, id);
+      const other = layout[otherPane(pane)].filter((x) => x !== id);
+      return fixActive({ ...layout, [pane]: list, [otherPane(pane)]: other, active: { ...layout.active, [pane]: id } });
+    }
+
+    /** Move a tab to a pane at `index` (the end when absent), and show it there. */
+    function layoutMove(layout, id, pane, index) {
+      const left = layout.left.filter((x) => x !== id);
+      const right = layout.right.filter((x) => x !== id);
+      const target = pane === 'left' ? left : right;
+      const at = index === undefined || index === null ? target.length : Math.max(0, Math.min(index, target.length));
+      target.splice(at, 0, id);
+      return fixActive({ ...layout, left, right, active: { ...layout.active, [pane]: id } });
+    }
+
+    /** Remove a tab; its pane shows the neighbor it had. */
+    function layoutRemove(layout, id) {
+      const pane = paneOfTab(layout, id);
+      if (!pane) return layout;
+      const at = layout[pane].indexOf(id);
+      const rest = layout[pane].filter((x) => x !== id);
+      const active = { ...layout.active };
+      if (active[pane] === id) active[pane] = rest[Math.min(at, rest.length - 1)] || null;
+      return fixActive({ ...layout, [pane]: rest, active });
     }
 
     /** The files that are places in Atlas: the root note and every topic's note. */
@@ -4684,17 +4906,7 @@ window.__ModuleLoader__.load({
       return keys;
     }
 
-    /** One entry of the side panel as a key: a paper by its address, a file by its path. */
-    function sideKey(entry) {
-      return entry.url ? 'url:' + entry.url : pathKey(entry.path);
-    }
-
-    /** The side panel's name for an entry: a paper by its identifier, a file as `sideLabel` says. */
-    function sideTitle(ov, entry) {
-      return entry.url ? (paperLink(entry.url) || { label: entry.url }).label : sideLabel(ov, entry.path);
-    }
-
-    /** What the side panel calls a file: a topic's note by its topic (every one is research.md), anything else by its name. */
+    /** What Atlas calls a file: a topic's note by its topic (every one is research.md), anything else by its name. */
     function sideLabel(ov, path) {
       const key = pathKey(path);
       if (ov && ov.rootFile && pathKey(ov.rootFile) === key) return shortTitle(ov.title || 'Root note', 40);
@@ -4702,40 +4914,74 @@ window.__ModuleLoader__.load({
       return baseName(path) || path;
     }
 
-    /** Drag the left edge of a right-hand column to resize it (up to `share` of the body). */
-    function columnResizer(width, onWidth, min, share = 0.7) {
-      return (event) => {
-        event.preventDefault();
-        const startX = event.clientX;
-        const host = event.currentTarget.closest('.atlas-body');
-        const max = host ? host.clientWidth * share : 900;
-        const clamp = (x) => Math.round(Math.min(max, Math.max(min, width + (startX - x))));
-        const move = (e) => onWidth(clamp(e.clientX), false);
-        const up = (e) => {
-          window.removeEventListener('pointermove', move);
-          window.removeEventListener('pointerup', up);
-          onWidth(clamp(e.clientX), true);
-        };
-        window.addEventListener('pointermove', move);
-        window.addEventListener('pointerup', up);
-      };
+    /** A tab's name for a file or a paper. */
+    function sideTitle(ov, entry) {
+      return entry.url ? (paperLink(entry.url) || { label: entry.url }).label : sideLabel(ov, entry.path);
     }
 
-    /** The file beside the page: its own header (back, name or tabs, open as the page, close) and scroller. */
-    function SidePane({ entry, overview, go, flash, version, width, onWidth, canBack, onBack, onClose, onFull, tabs, hidden, scrollRef }) {
-      const type = entry.url ? 'pdf' : typeOf(entry.path);
-      return h('aside', { className: cx('atlas-side', hidden && 'is-hidden'), 'aria-label': 'Beside the page', 'aria-hidden': hidden || undefined, style: { '--side-w': width + 'px' }, onPointerDownCapture: () => setActivePane('side') },
-        h('div', { className: 'atlas-pane-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the side panel', onPointerDown: columnResizer(width, onWidth, SIDE_MIN) }),
-        h('header', { className: 'atlas-side-head' },
-          canBack ? h('button', { type: 'button', className: 'atlas-icon-button', title: 'Back to the previous file', 'aria-label': 'Back to the previous file', onClick: onBack }, h(Icon, { name: 'back', size: 15 })) : null,
-          tabs || h('span', { className: 'atlas-side-title', title: entry.url || entry.path }, h(Icon, { name: TYPE_ICON[type] || 'note', size: 15 }), h('span', null, sideTitle(overview, entry))),
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open it as the page instead', 'aria-label': 'Open as the page', onClick: onFull }, h(Icon, { name: 'expand', size: 15 })),
-          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the side panel', 'aria-label': 'Close the side panel', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
-        h('div', { className: 'atlas-side-body', ref: scrollRef },
-          h(PaneContext.Provider, { value: 'side' },
-            h(Boundary, { key: entry.url || entry.path }, !overview ? h(Loading)
-              : entry.url ? h(PaperRefView, { key: entry.url, url: entry.url, topic: entry.topic, overview, go, flash, anchor: entry.anchor, anchorAt: entry.at })
-                : h(DocView, { key: entry.path + (entry.edit ? ':edit' : ''), overview, go, flash, version, path: entry.path, edit: entry.edit, created: entry.created, anchor: entry.anchor, anchorAt: entry.at })))));
+    /** The page tab's name: the place it shows. */
+    function pageLabel(route, ov) {
+      if (route.view === 'doc' && route.path) return sideLabel(ov, route.path);
+      if (route.view === 'paper' && route.url) return (paperLink(route.url) || { label: 'Paper' }).label;
+      const nav = NAV.find(([key]) => key === route.view);
+      if (nav) return nav[1];
+      return route.view === 'search' ? 'Search' : route.view === 'team' ? 'Team' : 'Universe';
+    }
+
+    function tabLabel(tab, route, ov) {
+      if (tab.kind === 'page') return pageLabel(route, ov);
+      if (tab.kind === 'discussion') return 'Discussion';
+      if (tab.kind === 'preview') return 'Preview · ' + baseName(String(tab.pdf || tab.main || '').replace(/\.tex$/i, '.pdf'));
+      return sideTitle(ov, tab) + (tab.edit ? ' ✎' : '');
+    }
+
+    function tabIcon(tab, route) {
+      if (tab.kind === 'page') return route.view === 'doc' && route.path ? TYPE_ICON[typeOf(route.path)] || 'note' : PAGE_ICON[route.view] || 'universe';
+      if (tab.kind === 'discussion') return 'spark';
+      if (tab.kind === 'preview' || tab.kind === 'paper') return 'paper';
+      return TYPE_ICON[typeOf(tab.path)] || 'note';
+    }
+
+    /** The tabs as they were left (files, papers, previews; the discussion when one is open). */
+    function restoreTabs(open) {
+      const saved = storageGet('tabs', null);
+      const tabs = { page: { id: 'page', kind: 'page' } };
+      const order = ['page'];
+      let layout = { left: ['page'], right: [], active: { left: 'page', right: null }, split: 52 };
+      if (saved && saved.layout) {
+        for (const t of saved.tabs || []) {
+          if (!t || !t.id || !['file', 'paper', 'preview'].includes(t.kind) || tabs[t.id]) continue;
+          tabs[t.id] = { ...t, at: Date.now(), edit: false, created: false };
+          order.push(t.id);
+        }
+        const keep = (ids) => (Array.isArray(ids) ? ids : []).filter((id, i, all) => (tabs[id] || id === 'discussion') && all.indexOf(id) === i);
+        layout = { left: keep(saved.layout.left), right: keep(saved.layout.right), active: saved.layout.active || {}, split: Number(saved.layout.split) || 52 };
+        if (!paneOfTab(layout, 'page')) layout.left.unshift('page');
+      } else {
+        // The single side panel of 0.6 and 0.7: its file becomes a tab on the right.
+        const side = storageGet('side', null);
+        if (side && (side.path || side.url)) {
+          const id = side.url ? 'paper:restored' : 'file:restored';
+          tabs[id] = side.url ? { id, kind: 'paper', key: 'url:' + side.url, url: side.url, topic: side.topic || '', at: Date.now() } : { id, kind: 'file', key: 'file:' + pathKey(side.path), path: side.path, anchor: side.anchor || '', at: Date.now() };
+          order.push(id);
+          layout.right.push(id);
+        }
+      }
+      if (open) {
+        tabs.discussion = { id: 'discussion', kind: 'discussion' };
+        order.push('discussion');
+        if (!paneOfTab(layout, 'discussion')) layout.right.push('discussion');
+      } else {
+        layout.left = layout.left.filter((x) => x !== 'discussion');
+        layout.right = layout.right.filter((x) => x !== 'discussion');
+      }
+      return { tabs, order, layout: fixActive(layout) };
+    }
+
+    function saveTabs(state) {
+      const tabs = state.order.map((id) => state.tabs[id]).filter((t) => t && ['file', 'paper', 'preview'].includes(t.kind))
+        .map(({ id, kind, key, path, url, topic, anchor, main, pdf }) => ({ id, kind, key, path, url, topic, anchor, main, pdf }));
+      storageSet('tabs', { tabs, layout: state.layout });
     }
 
     function AtlasApp() {
@@ -4752,23 +4998,17 @@ window.__ModuleLoader__.load({
       const [last, setLast] = useState(() => storageGet('companion-last', null));
       const [askBar, setAskBar] = useState(null);
       const [quick, setQuick] = useState(null);
-      const [paneWidth, setPaneWidth] = useState(() => storageGet('companion-width', 440));
-      const [side, setSide] = useState(() => {
-        const saved = storageGet('side', null);
-        if (saved && saved.url) return { url: saved.url, topic: saved.topic || '', anchor: '', at: Date.now(), edit: false, created: false };
-        return saved && saved.path ? { path: saved.path, anchor: saved.anchor || '', at: Date.now(), edit: false, created: false } : null;
-      });
-      const [sideBack, setSideBack] = useState(false);
-      const [sideWidth, setSideWidth] = useState(() => storageGet('side-width', 560));
-      const [sideTab, setSideTab] = useState('file');
-      const [bodyWidth, setBodyWidth] = useState(0);
+      const [state, setState] = useState(() => restoreTabs(Boolean(storageGet('companion', null))));
+      const [dragging, setDragging] = useState(null);
+      const [dropAt, setDropAt] = useState(null);
+      const [liveSplit, setLiveSplit] = useState(null);
       const routeRef = useRef(route);
       const historyRef = useRef([]);
-      const sideRef = useRef(side);
-      const sideHistory = useRef([]);
-      const scroller = useRef(null);
-      const sideScroller = useRef(null);
-      const bodyRef = useRef(null);
+      const stateRef = useRef(state);
+      const bodies = useRef({});
+      const bodyCallbacks = useRef({});
+      const goers = useRef({});
+      const panesRef = useRef(null);
       const rootRef = useRef(null);
       const ovRef = useRef(null);
       const threadRef = useRef(thread);
@@ -4789,10 +5029,43 @@ window.__ModuleLoader__.load({
       const nextMode = cycle[(cycle.indexOf(mode) + 1) % cycle.length];
       const modeLabel = (m) => (themes[m] ? themes[m].label : THEME_LABEL[m]);
 
+      /** Change the tabs and their layout, and remember them. */
+      const update = useCallback((fn) => {
+        const next = fn(stateRef.current);
+        if (!next || next === stateRef.current) return;
+        stateRef.current = next;
+        setState(next);
+        saveTabs(next);
+      }, []);
+
+      // Discussions and the ask bar are told what each pane shows.
+      useEffect(() => {
+        const paneOf = {};
+        for (const p of PANES) for (const id of state.layout[p]) paneOf[id] = p;
+        const all = focusStore.get();
+        const byTab = {};
+        for (const [id, focus] of Object.entries(all.byTab || {})) if (paneOf[id]) byTab[id] = focus;
+        focusStore.set({ ...all, byTab, active: paneOf[all.active] ? all.active : 'page', visible: { left: state.layout.active.left, right: state.layout.active.right }, paneOf });
+      }, [state.layout]);
+
+      const bodyRef = (id) => bodies.current[id] || (bodies.current[id] = { current: null });
+      const bodyCallback = (id) => bodyCallbacks.current[id] || (bodyCallbacks.current[id] = (el) => {
+        bodyRef(id).current = el;
+      });
+
+      const showTab = useCallback((id) => {
+        update((s) => {
+          const pane = paneOfTab(s.layout, id);
+          if (!pane || s.layout.active[pane] === id) return s;
+          return { ...s, layout: { ...s.layout, active: { ...s.layout.active, [pane]: id } } };
+        });
+        setActivePane(id);
+      }, [update]);
+
       // The page: places, with its own history (the top bar's Back).
       const goMain = useCallback((next) => {
-        if (editorDirty.main && !window.confirm('Leave without saving your changes?')) return;
-        editorDirty.main = false;
+        if (editorDirty.page && !window.confirm('Leave without saving your changes?')) return;
+        editorDirty.page = false;
         if (next.back) {
           const prev = historyRef.current.pop();
           setCanBack(historyRef.current.length > 0);
@@ -4800,6 +5073,7 @@ window.__ModuleLoader__.load({
           routeRef.current = prev;
           setRoute(prev);
           storageSet('route', prev);
+          showTab('page');
           return;
         }
         historyRef.current = [...historyRef.current.slice(-50), routeRef.current];
@@ -4811,80 +5085,155 @@ window.__ModuleLoader__.load({
         routeRef.current = next;
         setRoute(next);
         storageSet('route', { ...next, edit: false, created: false });
-        setActivePane('main');
-        if (scroller.current && !(samePage && next.anchor)) scroller.current.scrollTop = 0;
-      }, []);
+        showTab('page');
+        const el = bodyRef('page').current;
+        if (el && !(samePage && next.anchor)) el.scrollTop = 0;
+      }, [showTab]);
 
-      // The file beside the page, with its own history (the panel's Back).
-      const showSide = (entry) => {
-        sideRef.current = entry;
-        setSide(entry);
-        storageSet('side', !entry ? null : entry.url ? { url: entry.url, topic: entry.topic } : { path: entry.path, anchor: entry.anchor });
+      /** The pane files open in: the one showing a file already, else the right. */
+      const filesPane = (s) => {
+        for (const p of PANES) {
+          const t = s.tabs[s.layout.active[p]];
+          if (t && (t.kind === 'file' || t.kind === 'paper')) return p;
+        }
+        return 'right';
       };
-      const openSide = useCallback((next) => {
-        const cur = sideRef.current;
-        const entry = next.view === 'paper'
-          ? { url: next.url, topic: next.topic || '', anchor: next.anchor || '', at: Date.now(), edit: false, created: false }
-          : { path: next.path, anchor: next.anchor || '', at: Date.now(), edit: Boolean(next.edit), created: Boolean(next.created) };
-        if (!cur || sideKey(cur) !== sideKey(entry)) {
-          if (editorDirty.side && !window.confirm('Leave the file beside the page without saving your changes?')) return;
-          editorDirty.side = false;
-          if (cur) {
-            sideHistory.current = [...sideHistory.current.slice(-30), { ...cur, edit: false, created: false }];
-            setSideBack(true);
+
+      /** Show a file or a paper in its own tab: the tab it already has, or a new one. */
+      const openTab = useCallback((spec, pane) => {
+        let shown = null;
+        update((s) => {
+          const existing = Object.values(s.tabs).find((t) => t.key && t.key === spec.key);
+          if (existing) {
+            shown = existing.id;
+            const p = paneOfTab(s.layout, existing.id);
+            // A file being edited stays in its editor (a link to it only shows the tab).
+            const kept = { ...existing, ...spec, id: existing.id, edit: Boolean(spec.edit || existing.edit), created: Boolean(spec.created || existing.created), at: Date.now() };
+            return { ...s, tabs: { ...s.tabs, [existing.id]: kept }, layout: { ...s.layout, active: { ...s.layout.active, [p]: existing.id } } };
           }
-          if (sideScroller.current) sideScroller.current.scrollTop = 0;
+          const id = `${spec.kind}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          const target = pane || filesPane(s);
+          shown = id;
+          return { tabs: { ...s.tabs, [id]: { ...spec, id, at: Date.now() } }, order: [...s.order, id], layout: layoutAdd(s.layout, id, target, s.layout.active[target]) };
+        });
+        if (shown) setActivePane(shown);
+      }, [update]);
+
+      /** A tab showing a file goes to another place in it (a section, the editor, a LaTeX jump). */
+      const updateTab = useCallback((id, next) => {
+        const tab = stateRef.current.tabs[id];
+        if (!tab) return;
+        // Another file, or the reader instead of the editor: unsaved edits are asked about first.
+        const leaving = tab.path && (pathKey(tab.path) !== pathKey(next.path) || (tab.edit && !next.edit));
+        if (leaving && editorDirty[id] && !window.confirm('Leave without saving your changes?')) return;
+        if (leaving) editorDirty[id] = false;
+        update((s) => ({ ...s, tabs: { ...s.tabs, [id]: { ...s.tabs[id], kind: 'file', key: 'file:' + pathKey(next.path), path: next.path, url: undefined, anchor: next.anchor || '', at: Date.now(), edit: Boolean(next.edit), created: Boolean(next.created) } } }));
+      }, [update]);
+
+      const closeTab = useCallback((id) => {
+        const tab = stateRef.current.tabs[id];
+        if (!tab || tab.kind === 'page') return false;
+        if (editorDirty[id] && !window.confirm('Close it without saving your changes?')) return false;
+        editorDirty[id] = false;
+        if (tab.kind === 'discussion') {
+          showThreadRef.current(null);
+          return true;
         }
-        showSide(entry);
-        setSideTab('file');
-        setActivePane('side');
-      }, []);
-      const sideGoBack = useCallback(() => {
-        if (editorDirty.side && !window.confirm('Leave without saving your changes?')) return;
-        editorDirty.side = false;
-        const prev = sideHistory.current.pop();
-        setSideBack(sideHistory.current.length > 0);
-        if (prev) showSide({ ...prev, at: Date.now() });
-      }, []);
-      const closeSide = useCallback(() => {
-        if (editorDirty.side && !window.confirm('Close the file without saving your changes?')) return false;
-        editorDirty.side = false;
-        sideHistory.current = [];
-        setSideBack(false);
-        showSide(null);
-        clearSidePane();
+        update((s) => {
+          const tabs = { ...s.tabs };
+          delete tabs[id];
+          return { tabs, order: s.order.filter((x) => x !== id), layout: layoutRemove(s.layout, id) };
+        });
+        forgetTab(id);
         return true;
-      }, []);
+      }, [update]);
 
-      /** Each pane's `go`: the same request lands in the page or beside it, by `paneFor`. */
-      const navigator = useCallback((from) => (next) => {
-        const cur = sideRef.current;
-        const here = from === 'side' ? (cur ? (cur.url ? { view: 'paper', url: cur.url } : { view: 'doc', path: cur.path }) : null) : routeRef.current;
-        if (paneFor(next, from, here, (p) => placesRef.current.has(pathKey(p))) === 'side') openSide(next);
-        else {
-          // Made the page: the same file is not shown again beside it.
-          if (next && next.full && cur && cur.path && next.path && pathKey(cur.path) === pathKey(next.path) && !closeSide()) return;
-          goMain(next && next.full ? { ...next, full: undefined } : next);
+      const moveTab = useCallback((id, pane, index) => {
+        update((s) => {
+          const from = paneOfTab(s.layout, id);
+          let at = index;
+          if (from === pane && at !== undefined && at !== null && s.layout[pane].indexOf(id) < at) at -= 1;
+          return { ...s, layout: layoutMove(s.layout, id, pane, at) };
+        });
+        setActivePane(id);
+      }, [update]);
+
+      /** Each tab's `go`: a request from a tab lands in the page, in that tab, or in a file or paper tab. */
+      const goFrom = useCallback((from) => (next) => {
+        if (!next) return;
+        const s = stateRef.current;
+        const tab = s.tabs[from];
+        const herePath = from === 'page' ? (routeRef.current.view === 'doc' ? routeRef.current.path : '') : tab && tab.kind === 'file' ? tab.path : '';
+        const where = routeFor(next, herePath, (p) => placesRef.current.has(pathKey(p)));
+        // Links from the discussion open beside it; from a file, in that file's pane.
+        const pane = from === 'discussion' ? otherPane(paneOfTab(s.layout, 'discussion') || 'right')
+          : tab && (tab.kind === 'file' || tab.kind === 'paper') ? paneOfTab(s.layout, from) : undefined;
+        if (where === 'paper') return openTab({ kind: 'paper', key: 'url:' + next.url, url: next.url, topic: next.topic || '', anchor: next.anchor || '' }, pane);
+        if (where === 'file') return openTab({ kind: 'file', key: 'file:' + pathKey(next.path), path: next.path, anchor: next.anchor || '', edit: Boolean(next.edit), created: Boolean(next.created) }, pane);
+        if (where === 'same' && tab && (tab.kind === 'file' || tab.kind === 'paper')) return updateTab(from, next);
+        const here = routeRef.current;
+        if (next.full && next.path && here.view === 'doc' && pathKey(here.path || '') === pathKey(next.path) && Boolean(here.edit) === Boolean(next.edit)) {
+          // Already the page: show it.
+          showTab('page');
+          return;
         }
-      }, [goMain, openSide, closeSide]);
-      const go = useMemo(() => navigator('main'), [navigator]);
-      const goSide = useMemo(() => navigator('side'), [navigator]);
-      const openAsPage = useCallback(() => {
-        const cur = sideRef.current;
-        if (cur && closeSide()) goMain(cur.url ? { view: 'paper', url: cur.url, topic: cur.topic } : { view: 'doc', path: cur.path, anchor: cur.anchor });
-      }, [closeSide, goMain]);
+        if (next.full && next.path) {
+          // Made the page: a tab showing the same file closes (unless it has unsaved edits).
+          const twin = Object.values(s.tabs).find((t) => t.kind === 'file' && pathKey(t.path) === pathKey(next.path));
+          if (twin && !closeTab(twin.id)) return;
+        }
+        goMain(next.full ? { ...next, full: undefined } : next);
+      }, [goMain, openTab, updateTab, closeTab, showTab]);
+      if (goers.current.from !== goFrom) goers.current = { from: goFrom };
+      const goOf = (id) => goers.current['tab:' + id] || (goers.current['tab:' + id] = goFrom(id));
+      const go = goOf('page');
 
-      /** The companion shows one discussion, a discussion being started, or nothing. */
+      const openAsPage = useCallback((id) => {
+        const tab = stateRef.current.tabs[id];
+        if (!tab || !closeTab(id)) return;
+        goMain(tab.url ? { view: 'paper', url: tab.url, topic: tab.topic } : { view: 'doc', path: tab.path, anchor: tab.anchor });
+      }, [closeTab, goMain]);
+
+      /** The companion shows one discussion, a discussion being started, or nothing; its tab follows it. */
       const showThread = useCallback((next) => {
         threadRef.current = next;
         setThread(next);
-        if (next) setSideTab('discussion');
         if (!next || next.id) storageSet('companion', next || null);
         if (next && next.id) {
           setLast(next.id);
           storageSet('companion-last', next.id);
         }
-      }, []);
+        update((s) => {
+          if (next) {
+            if (s.tabs.discussion) {
+              const p = paneOfTab(s.layout, 'discussion');
+              return { ...s, layout: { ...s.layout, active: { ...s.layout.active, [p]: 'discussion' } } };
+            }
+            return { tabs: { ...s.tabs, discussion: { id: 'discussion', kind: 'discussion' } }, order: s.order.includes('discussion') ? s.order : [...s.order, 'discussion'], layout: layoutAdd(s.layout, 'discussion', 'right', s.layout.active.right) };
+          }
+          if (!s.tabs.discussion) return s;
+          const tabs = { ...s.tabs };
+          delete tabs.discussion;
+          return { tabs, order: s.order.filter((x) => x !== 'discussion'), layout: layoutRemove(s.layout, 'discussion') };
+        });
+      }, [update]);
+      const showThreadRef = useRef(showThread);
+      showThreadRef.current = showThread;
+
+      /** A LaTeX document's compiled PDF, in a Preview tab in the pane beside its source. */
+      const openPreview = useCallback(({ main, pdf, from, activate }) => {
+        if (!main) return;
+        const id = 'preview:' + pathKey(main);
+        update((s) => {
+          if (s.tabs[id]) {
+            const tabs = { ...s.tabs, [id]: { ...s.tabs[id], pdf: pdf || s.tabs[id].pdf } };
+            const p = paneOfTab(s.layout, id);
+            return { ...s, tabs, layout: activate && p ? { ...s.layout, active: { ...s.layout.active, [p]: id } } : s.layout };
+          }
+          const pane = otherPane(paneOfTab(s.layout, from) || 'left');
+          return { tabs: { ...s.tabs, [id]: { id, kind: 'preview', key: id, main, pdf: pdf || '' } }, order: [...s.order, id], layout: layoutAdd(s.layout, id, pane, s.layout.active[pane]) };
+        });
+      }, [update]);
 
       const actions = useMemo(() => ({
         ask(context, intent, question, label) {
@@ -4907,22 +5256,27 @@ window.__ModuleLoader__.load({
           if (draftIntoThread(current, text + '\n\n')) flash('The passage is in the discussion’s input box: add your question and send it.');
           else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied the passage; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
         },
-      }), [flash, showThread]);
+        openPreview,
+      }), [flash, showThread, openPreview]);
       const current = thread && thread.id ? thread.id : null;
       const actionValue = useMemo(() => ({ ...actions, current }), [actions, current]);
       const closeAsk = useCallback(() => setAskBar(null), []);
       const closeQuick = useCallback(() => setQuick(null), []);
-      // The ask bar takes the selection from whichever pane holds it (and that pane's focus).
+      // The ask bar takes the selection from whichever pane holds it (and that tab's focus).
       const openAsk = useCallback(() => {
-        const beside = sideScroller.current ? captureSelection(sideScroller.current) : {};
-        if (beside.selection) {
-          setActivePane('side');
-          setAskBar(beside);
-          return;
+        const s = stateRef.current;
+        for (const p of PANES) {
+          const id = s.layout.active[p];
+          const el = id && id !== 'discussion' ? bodyRef(id).current : null;
+          if (!el) continue;
+          const got = captureSelection(el);
+          if (got.selection) {
+            setActivePane(id);
+            setAskBar(got);
+            return;
+          }
         }
-        const here = captureSelection(scroller.current);
-        if (here.selection) setActivePane('main');
-        setAskBar(here);
+        setAskBar({});
       }, []);
 
       // Ctrl+J asks about what is on screen (and what is selected); DSH keeps Ctrl+K for its session search.
@@ -4940,37 +5294,23 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKey, true);
       }, [openAsk]);
 
-      // "/" searches, as in many reading tools, unless a field or the discussion has the keyboard.
+      // "/" searches and "N" adds or writes something, unless a field or the discussion has the keyboard.
       useEffect(() => {
         const onKey = (event) => {
-          if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+          const key = String(event.key).toLowerCase();
+          if ((key !== '/' && key !== 'n') || event.ctrlKey || event.metaKey || event.altKey) return;
           const target = event.target;
           if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
           if (target && target.closest && target.closest('.atlas-companion')) return;
           const root = rootRef.current;
           if (!root || !root.isConnected || root.getClientRects().length === 0) return;
           event.preventDefault();
-          go({ view: 'search', at: Date.now() });
+          if (key === '/') go({ view: 'search', at: Date.now() });
+          else setQuick({ tab: 'paper', at: Date.now() });
         };
         document.addEventListener('keydown', onKey, true);
         return () => document.removeEventListener('keydown', onKey, true);
       }, [go]);
-
-      // "N" adds or writes something (a paper, a note, a LaTeX document), unless a field has the keyboard.
-      useEffect(() => {
-        const onKey = (event) => {
-          if (String(event.key).toLowerCase() !== 'n' || event.ctrlKey || event.metaKey || event.altKey) return;
-          const target = event.target;
-          if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
-          if (target && target.closest && target.closest('.atlas-companion')) return;
-          const root = rootRef.current;
-          if (!root || !root.isConnected || root.getClientRects().length === 0) return;
-          event.preventDefault();
-          setQuick({ tab: 'paper', at: Date.now() });
-        };
-        document.addEventListener('keydown', onKey, true);
-        return () => document.removeEventListener('keydown', onKey, true);
-      }, []);
 
       // A direction anchor on the Universe scrolls to its section once drawn.
       useEffect(() => {
@@ -4982,16 +5322,75 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer);
       }, [route, overview.data]);
 
-      // The body's width decides between columns and tabs.
+      // ---- the strips: tabs keep their size and scroll; the shown tab stays in view ----
+      const strips = useRef({});
+      const stripRefs = useRef({});
+      const stripRef = (p) => stripRefs.current[p] || (stripRefs.current[p] = (el) => {
+        strips.current[p] = el;
+      });
+      const scrollStrip = (event) => {
+        const el = event.currentTarget;
+        if (el.scrollWidth > el.clientWidth && Math.abs(event.deltaY) > Math.abs(event.deltaX)) el.scrollLeft += event.deltaY;
+      };
       useLayoutEffect(() => {
-        const el = bodyRef.current;
-        if (!el || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => setBodyWidth(el.clientWidth));
-        ro.observe(el);
-        setBodyWidth(el.clientWidth);
-        return () => ro.disconnect();
-      }, []);
+        for (const p of PANES) {
+          const el = strips.current[p];
+          const on = el && el.querySelector('.atlas-ptab.is-on');
+          if (!on) continue;
+          const left = on.offsetLeft;
+          const right = left + on.offsetWidth;
+          if (left < el.scrollLeft) el.scrollLeft = Math.max(0, left - 12);
+          else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth + 12;
+        }
+      }, [state.layout]);
 
+      // ---- dragging tabs ----
+      const endDrag = () => {
+        setDragging(null);
+        setDropAt(null);
+      };
+      const indexAt = (strip, x) => {
+        const tabs = [...strip.querySelectorAll('.atlas-ptab')];
+        const i = tabs.findIndex((el) => {
+          const r = el.getBoundingClientRect();
+          return x < r.left + r.width / 2;
+        });
+        return i < 0 ? tabs.length : i;
+      };
+      const dropHandlers = (pane, where) => ({
+        onDragOver: (event) => {
+          if (!dragging) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          const index = where === 'strip' ? indexAt(event.currentTarget, event.clientX) : null;
+          if (!dropAt || dropAt.pane !== pane || dropAt.index !== index || dropAt.where !== where) setDropAt({ pane, index, where });
+        },
+        onDrop: (event) => {
+          if (!dragging) return;
+          event.preventDefault();
+          moveTab(dragging, pane, where === 'strip' ? indexAt(event.currentTarget, event.clientX) : undefined);
+          endDrag();
+        },
+      });
+      const startDivider = (event) => {
+        event.preventDefault();
+        const box = panesRef.current;
+        if (!box) return;
+        const rect = box.getBoundingClientRect();
+        const at = (x) => Math.round(Math.min(80, Math.max(20, ((x - rect.left) / rect.width) * 100)));
+        const move = (e) => setLiveSplit(at(e.clientX));
+        const up = (e) => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          const value = at(e.clientX);
+          setLiveSplit(null);
+          update((s) => ({ ...s, layout: { ...s.layout, split: value } }));
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      };
+
+      // ---- what each tab shows ----
       let body;
       if (overview.loading && !overview.data) body = h(Loading);
       else if (overview.error) body = h(ErrorNote, { error: overview.error, onRetry: () => setVersion(Date.now()) });
@@ -5007,23 +5406,82 @@ window.__ModuleLoader__.load({
         else if (route.view === 'team') body = h(TeamView, { ...props, key: (route.path || '') + ':' + (route.thread || ''), path: route.path, thread: route.thread });
         else body = h(UniverseView, props);
       }
+      const open = Boolean(thread && (thread.id || thread.pending));
+      const contentOf = (tab) => {
+        if (tab.kind === 'page') return body;
+        if (!overview.data) return h(Loading);
+        if (tab.kind === 'file') return h(DocView, { key: tab.path + (tab.edit ? ':edit' : ''), overview: overview.data, go: goOf(tab.id), flash, version, path: tab.path, edit: tab.edit, created: tab.created, anchor: tab.anchor, anchorAt: tab.at });
+        if (tab.kind === 'paper') return h(PaperRefView, { key: tab.url, url: tab.url, topic: tab.topic, overview: overview.data, go: goOf(tab.id), flash, anchor: tab.anchor, anchorAt: tab.at });
+        if (tab.kind === 'preview') return h(TexPreview, { tab, flash, go: goOf(tab.id) });
+        if (tab.kind === 'discussion' && open) {
+          return h(Companion, {
+            threadId: thread.id,
+            pending: Boolean(thread.pending),
+            onClose: () => showThread(null),
+            flash,
+            root: overview.data.root,
+            onOpenLink: (ref) => goOf('discussion')(ref.url ? { view: 'paper', url: ref.url } : { view: 'doc', path: ref.path, anchor: ref.anchor, link: true }),
+          });
+        }
+        return null;
+      };
+
       const area = route.view === 'library' ? 'library' : route.view === 'home' ? 'home' : route.view === 'activity' || route.view === 'team' ? 'activity' : route.view === 'learn' ? 'learn' : route.view === 'write' ? 'write' : '';
       const waiting = overview.data ? waitingItems(overview.data).length : 0;
       const filtering = route.view === 'home' || route.view === 'library';
-      const open = Boolean(thread && (thread.id || thread.pending));
-      const tabbed = sideLayout({ width: bodyWidth || Infinity, side: Boolean(side), discussion: open, sideWidth, companionWidth: paneWidth }) === 'tabs';
-      const rightWidth = tabbed ? sideWidth : (side ? sideWidth : 0) + (open ? paneWidth : 0);
-      const setSideWidthSaved = (w, save) => {
-        setSideWidth(w);
-        if (save) storageSet('side-width', w);
-      };
-      const tabs = tabbed ? h('div', { className: 'atlas-tabs', role: 'tablist', 'aria-label': 'Beside the page' },
-        h('button', { type: 'button', role: 'tab', 'aria-selected': sideTab === 'file', className: cx('atlas-tab', sideTab === 'file' && 'is-on'), title: side.url || side.path, onClick: () => setSideTab('file') },
-          h(Icon, { name: TYPE_ICON[side.url ? 'pdf' : typeOf(side.path)] || 'note', size: 14 }), h('span', null, sideTitle(overview.data, side))),
-        h('button', { type: 'button', role: 'tab', 'aria-selected': sideTab === 'discussion', className: cx('atlas-tab', sideTab === 'discussion' && 'is-on'), onClick: () => setSideTab('discussion') },
-          h(Icon, { name: 'spark', size: 14 }), h('span', null, 'Discussion'))) : null;
+      const { layout } = state;
+      const shown = PANES.filter((p) => layout[p].length);
+      const split = shown.length === 2 ? (liveSplit === null ? layout.split : liveSplit) : 100;
+      const geom = shown.length === 2
+        ? { left: { left: '0%', width: split + '%' }, right: { left: split + '%', width: 100 - split + '%' } }
+        : { [shown[0] || 'left']: { left: '0%', width: '100%' } };
+      const strip = (p) => h('div', { key: p, className: cx('atlas-strip', dropAt && dropAt.pane === p && dropAt.where === 'strip' && 'is-drop'), style: { width: geom[p].width }, ...dropHandlers(p, 'strip') },
+        h('div', { className: 'atlas-strip-tabs', role: 'tablist', 'aria-label': p === 'left' ? 'Left pane' : 'Right pane', ref: stripRef(p), onWheel: scrollStrip }, layout[p].map((id, i) => {
+          const tab = state.tabs[id];
+          if (!tab) return null;
+          const on = layout.active[p] === id;
+          const label = tabLabel(tab, route, overview.data);
+          const insert = dropAt && dropAt.pane === p && dropAt.where === 'strip' && dropAt.index === i && dragging !== id;
+          return h('div', {
+            key: id,
+            className: cx('atlas-ptab', on && 'is-on', dragging === id && 'is-dragging', insert && 'is-insert'),
+            role: 'tab',
+            tabIndex: 0,
+            'aria-selected': on,
+            title: tab.kind === 'file' ? tab.path : tab.kind === 'paper' ? tab.url : label,
+            draggable: true,
+            onDragStart: (event) => {
+              event.dataTransfer.setData(TAB_DRAG, id);
+              event.dataTransfer.effectAllowed = 'move';
+              setDragging(id);
+            },
+            onDragEnd: endDrag,
+            onClick: () => showTab(id),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                showTab(id);
+              }
+            },
+            onAuxClick: (event) => {
+              if (event.button === 1) closeTab(id);
+            },
+          },
+          h(Icon, { name: tabIcon(tab, route), size: 14 }),
+          h('span', { className: 'atlas-ptab-label' }, label),
+          tab.kind === 'discussion' && thread && thread.pending ? h('span', { className: 'atlas-light is-running', 'aria-hidden': true }) : null,
+          tab.kind !== 'page' ? h('button', { type: 'button', className: 'atlas-ptab-close', title: 'Close (middle-click also closes)', 'aria-label': 'Close ' + label, onClick: (event) => { event.stopPropagation(); closeTab(id); } }, h(Icon, { name: 'close', size: 12 })) : null);
+        }),
+        dropAt && dropAt.pane === p && dropAt.where === 'strip' && dropAt.index === layout[p].length ? h('span', { className: 'atlas-ptab-end', 'aria-hidden': true }) : null),
+        (() => {
+          const tab = state.tabs[layout.active[p]];
+          return tab && (tab.kind === 'file' || tab.kind === 'paper')
+            ? h('button', { type: 'button', className: 'atlas-icon-button atlas-strip-tool', title: 'Open it as the page', 'aria-label': 'Open as the page', onClick: () => openAsPage(tab.id) }, h(Icon, { name: 'expand', size: 14 }))
+            : null;
+        })());
+
       return h(AtlasActions.Provider, { value: actionValue },
-        h('div', { className: cx('atlas-root', open && 'has-companion'), 'data-theme-base': theme.base, 'data-theme': theme.name, style: themeStyle(theme), ref: rootRef },
+        h('div', { className: cx('atlas-root', open && 'has-companion', dragging && 'is-dragging-tab'), 'data-theme-base': theme.base, 'data-theme': theme.name, style: themeStyle(theme), ref: rootRef },
           h('header', { className: 'atlas-top' },
             h('button', { type: 'button', className: 'atlas-brand', onClick: () => go({ view: 'home' }), title: 'The research universe' }, h(AtlasIcon), h('span', null, 'Atlas')),
             h('nav', { className: 'atlas-nav', 'aria-label': 'Atlas' },
@@ -5040,26 +5498,34 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', className: 'atlas-icon-button', title: `Theme: ${modeLabel(mode)}. Click for ${modeLabel(nextMode)}.`, 'aria-label': `Theme: ${modeLabel(mode)}`, onClick: () => themeModeStore.set(nextMode) }, h(Icon, { name: THEME_ICON[mode] || (theme.base === 'day' ? 'sun' : 'moon') })),
               h('button', { type: 'button', className: cx('atlas-icon-button', overview.loading && 'is-busy'), title: 'Read the files again', 'aria-label': 'Read the files again', onClick: () => setVersion(Date.now()) }, h(Icon, { name: 'refresh' })))),
           h(Flash, { message }),
-          h('div', { className: cx('atlas-body', (side || open) && 'has-right', open && 'has-companion', tabbed && 'is-tabbed'), ref: bodyRef, style: { '--right-w': rightWidth + 'px', '--tab-w': sideWidth + 'px' } },
-            h('main', { className: 'atlas-main', ref: scroller, onPointerDownCapture: () => setActivePane('main') }, h(PaneContext.Provider, { value: 'main' }, h(Boundary, null, body))),
-            side ? h(SidePane, { entry: side, overview: overview.data, go: goSide, flash, version, width: sideWidth, onWidth: setSideWidthSaved, canBack: sideBack, onBack: sideGoBack, onClose: closeSide, onFull: openAsPage, tabs, hidden: tabbed && sideTab !== 'file', scrollRef: sideScroller }) : null,
-            open ? h(Boundary, null, h(Companion, {
-              threadId: thread.id,
-              pending: Boolean(thread.pending),
-              onClose: () => showThread(null),
-              flash,
-              tabs,
-              hidden: tabbed && sideTab !== 'discussion',
-              width: tabbed ? sideWidth : paneWidth,
-              onWidth: tabbed ? setSideWidthSaved : (w, save) => {
-                setPaneWidth(w);
-                if (save) storageSet('companion-width', w);
-              },
-            })) : null,
-            h(PaneContext.Provider, { value: 'main' }, h(SelectionTools, { container: scroller, host: bodyRef })),
-            side ? h(PaneContext.Provider, { value: 'side' }, h(SelectionTools, { container: sideScroller, host: bodyRef })) : null,
-            askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null,
-            quick && overview.data ? h(QuickAdd, { key: `${quick.tab}:${quick.at || ''}`, tab: quick.tab, overview: overview.data, go, flash, onClose: closeQuick }) : null)));
+          h('div', { className: 'atlas-body' },
+            h('div', { className: 'atlas-strips' }, shown.map(strip)),
+            h('div', { className: 'atlas-panes', ref: panesRef },
+              state.order.map((id) => {
+                const tab = state.tabs[id];
+                const pane = tab ? paneOfTab(layout, id) : null;
+                if (!pane) return null;
+                const visible = layout.active[pane] === id;
+                return h('div', {
+                  key: id,
+                  ref: bodyCallback(id),
+                  className: cx('atlas-tab-body', 'is-' + tab.kind, !visible && 'is-hidden'),
+                  style: { left: geom[pane].left, width: geom[pane].width },
+                  'aria-hidden': visible ? undefined : true,
+                  onPointerDownCapture: () => setActivePane(id),
+                }, h(PaneContext.Provider, { value: id }, h(Boundary, null, contentOf(tab))));
+              }),
+              shown.length === 2 ? h('div', { className: 'atlas-pane-divider', style: { left: split + '%' }, role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the panes', title: 'Drag to resize; double-click for half and half', onPointerDown: startDivider, onDoubleClick: () => update((s) => ({ ...s, layout: { ...s.layout, split: 50 } })) }) : null,
+              dragging ? shown.map((p) => h('div', { key: 'drop-' + p, className: cx('atlas-drop-pane', dropAt && dropAt.pane === p && dropAt.where === 'pane' && 'is-over'), style: geom[p], ...dropHandlers(p, 'pane') })) : null,
+              dragging && shown.length === 1 ? h('div', { className: cx('atlas-drop-split', 'is-' + otherPane(shown[0]), dropAt && dropAt.where === 'split' && 'is-over'), ...dropHandlers(otherPane(shown[0]), 'split') }, h(Icon, { name: 'panel', size: 18 }), h('span', null, 'Drop here to split')) : null,
+              shown.map((p) => {
+                const id = layout.active[p];
+                const tab = id && state.tabs[id];
+                if (!tab || tab.kind === 'discussion') return null;
+                return h(PaneContext.Provider, { key: 'sel-' + p, value: id }, h(SelectionTools, { container: bodyRef(id), host: panesRef }));
+              }),
+              askBar ? h(AskBar, { preset: askBar, onClose: closeAsk }) : null,
+              quick && overview.data ? h(QuickAdd, { key: `${quick.tab}:${quick.at || ''}`, tab: quick.tab, overview: overview.data, go, flash, onClose: closeQuick }) : null))));
     }
 
     // ===== client/80-styles.js
@@ -5106,7 +5572,6 @@ window.__ModuleLoader__.load({
     .atlas-icon-button { flex: none; display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); cursor: pointer; }
     .atlas-icon-button:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .1); }
     .atlas-icon-button.is-busy svg { animation: atlas-spin 1.1s linear infinite; }
-    .atlas-main { flex: 1; min-height: 0; overflow-y: auto; scrollbar-color: rgba(var(--accent-rgb), .25) transparent; }
 
     /* ---- page frame ---- */
     .atlas-page { max-width: 980px; margin: 0 auto; padding: 22px 28px 80px; }
@@ -5173,16 +5638,46 @@ window.__ModuleLoader__.load({
     .atlas-root kbd { font: 500 10.5px var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: rgba(var(--sky-rgb), .6); }
     .atlas-menu-item.is-own { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; }
 
-    /* ---- the page and the companion ---- */
-    .atlas-body { position: relative; flex: 1; min-height: 0; display: flex; }
-    .atlas-body > .atlas-main { min-width: 0; container-type: inline-size; }
+    /* ---- two panes of tabs: every view is a tab; drag one to reorder it, to the other pane, or to the edge to split ---- */
+    .atlas-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .atlas-strips { display: flex; flex: none; min-width: 0; border-bottom: 1px solid var(--line); background: rgba(var(--sky-rgb), .55); }
+    .atlas-strip { flex: none; display: flex; align-items: flex-end; gap: 4px; min-width: 0; padding: 5px 6px 0; }
+    .atlas-strip-tabs { position: relative; flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 2px; padding: 0 3px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+    .atlas-strip-tabs::-webkit-scrollbar { display: none; }
+    .atlas-strip + .atlas-strip { border-left: 1px solid var(--line-2); }
+    .atlas-strip.is-drop { background: rgba(var(--accent-rgb), .07); }
+    .atlas-ptab { position: relative; flex: none; max-width: 230px; display: inline-flex; align-items: center; gap: 6px; height: 31px; padding: 0 5px 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 9px 9px 0 0; color: var(--ink-2); font: 500 12.5px var(--sans); cursor: pointer; user-select: none; white-space: nowrap; }
+    .atlas-ptab:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .07); }
+    .atlas-ptab.is-on { color: var(--ink-1); background: rgba(var(--panel-rgb), .92); border-color: var(--line-2); box-shadow: inset 0 2px 0 var(--link); }
+    .atlas-ptab.is-on > .atlas-icon { color: var(--link); }
+    .atlas-ptab:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+    .atlas-ptab.is-dragging { opacity: .4; }
+    .atlas-ptab.is-insert::before, .atlas-ptab-end { content: ""; position: absolute; left: -3px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--link); }
+    .atlas-ptab-end { position: relative; left: 0; top: 0; align-self: center; flex: none; height: 19px; margin-bottom: 6px; }
+    .atlas-ptab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .atlas-ptab-close { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-3); cursor: pointer; opacity: 0; }
+    .atlas-ptab:hover .atlas-ptab-close, .atlas-ptab.is-on .atlas-ptab-close, .atlas-ptab-close:focus-visible { opacity: 1; }
+    .atlas-ptab-close:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .15); }
+    .atlas-strip-tool { width: 28px; height: 28px; align-self: center; margin-bottom: 2px; }
+    .atlas-panes { position: relative; flex: 1; min-height: 0; }
+    .atlas-tab-body { position: absolute; top: 0; bottom: 0; min-width: 0; overflow-y: auto; container-type: inline-size; scrollbar-color: rgba(var(--accent-rgb), .25) transparent; }
+    .atlas-tab-body.is-hidden { content-visibility: hidden; visibility: hidden; pointer-events: none; }
+    .atlas-tab-body.is-discussion { overflow: hidden; display: flex; flex-direction: column; }
+    .atlas-pane-divider { position: absolute; z-index: 6; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: col-resize; touch-action: none; }
+    .atlas-pane-divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--line-2); transition: background .15s, box-shadow .15s; }
+    .atlas-pane-divider:hover::after, .atlas-pane-divider:active::after { background: rgba(var(--accent-rgb), .7); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .35); }
+    .atlas-root.is-dragging-tab .atlas-tab-body { pointer-events: none; }
+    .atlas-drop-pane { position: absolute; z-index: 20; top: 0; bottom: 0; }
+    .atlas-drop-pane.is-over { background: rgba(var(--accent-rgb), .06); box-shadow: inset 0 0 0 2px rgba(var(--accent-rgb), .45); }
+    .atlas-drop-split { position: absolute; z-index: 21; top: 10px; bottom: 10px; width: min(36%, 420px); display: grid; place-content: center; justify-items: center; gap: 8px; border: 2px dashed rgba(var(--accent-rgb), .42); border-radius: 14px; background: rgba(var(--sky-rgb), .72); color: var(--ink-2); font: 500 13px var(--sans); }
+    .atlas-drop-split.is-right { right: 10px; }
+    .atlas-drop-split.is-left { left: 10px; }
+    .atlas-drop-split.is-over { border-color: var(--link); background: rgba(var(--accent-rgb), .13); color: var(--ink-1); }
     .atlas-ask-top { display: inline-flex; align-items: center; gap: 7px; flex: none; border: 1px solid rgba(var(--accent-rgb), .32); background: rgba(var(--accent-rgb), .09); color: var(--ink-1); border-radius: 9px; padding: 5px 9px 5px 10px; font: 500 13px var(--sans); cursor: pointer; }
     .atlas-ask-top:hover { background: rgba(var(--accent-rgb), .17); border-color: rgba(var(--accent-rgb), .5); }
     .atlas-ask-top:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
     .atlas-ask-top svg { color: var(--gold); }
-    .atlas-companion { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; width: var(--companion-w, 440px); min-width: 340px; max-width: 66%; border-left: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(var(--panel-rgb), .97), rgba(var(--panel-0-rgb), .99)); box-shadow: -22px 0 44px -30px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))); }
-    .atlas-companion-resize { position: absolute; z-index: 3; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
-    .atlas-companion-resize:hover, .atlas-companion-resize:active { background: linear-gradient(90deg, transparent 4px, rgba(var(--accent-rgb), .5) 4px, rgba(var(--accent-rgb), .5) 6px, transparent 6px); }
+    .atlas-companion { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: linear-gradient(180deg, rgba(var(--panel-rgb), .97), rgba(var(--panel-0-rgb), .99)); }
     .atlas-companion-head { display: flex; align-items: center; gap: 6px; padding: 9px 8px 7px 14px; flex: none; }
     .atlas-companion-head .atlas-icon-button { width: 28px; height: 28px; }
     .atlas-companion-title { flex: 1; min-width: 0; font: 600 13.5px/1.3 var(--sans); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -5202,27 +5697,7 @@ window.__ModuleLoader__.load({
     .atlas-companion-wait { display: flex; align-items: center; gap: 12px; padding: 26px 16px; color: var(--ink-3); }
     .atlas-companion-fallback { display: grid; justify-items: start; gap: 10px; padding: 18px 16px; color: var(--ink-2); }
 
-    /* ---- the side panel: a file beside the page; with a discussion, side by side or as tabs ---- */
-    .atlas-side { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; width: var(--side-w, 560px); min-width: 360px; max-width: 70%; border-left: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(var(--panel-0-rgb), .96), rgba(var(--sky-rgb), .98)); box-shadow: -22px 0 44px -30px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))); }
-    .atlas-side-head { display: flex; align-items: center; gap: 4px; min-height: 42px; padding: 6px 6px 6px 8px; border-bottom: 1px solid var(--line); flex: none; }
-    .atlas-side-head .atlas-icon-button, .atlas-companion-tabs .atlas-icon-button { width: 28px; height: 28px; }
-    .atlas-side-title { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 7px; padding: 0 4px; font: 600 13px/1.3 var(--sans); color: var(--ink-1); white-space: nowrap; overflow: hidden; }
-    .atlas-side-title > span, .atlas-tab > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .atlas-side-body { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; scrollbar-color: rgba(var(--accent-rgb), .25) transparent; }
-    .atlas-side-body .atlas-page { max-width: none; padding: 14px 18px 60px; }
-    .atlas-side-body .atlas-page h1 { font-size: 22px; }
-    .atlas-pane-resize { position: absolute; z-index: 3; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
-    .atlas-pane-resize:hover, .atlas-pane-resize:active { background: linear-gradient(90deg, transparent 4px, rgba(var(--accent-rgb), .5) 4px, rgba(var(--accent-rgb), .5) 6px, transparent 6px); }
-    .atlas-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; }
-    .atlas-tab { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font: 500 12.5px var(--sans); cursor: pointer; white-space: nowrap; }
-    .atlas-tab:hover { color: var(--ink-1); background: rgba(var(--accent-rgb), .08); }
-    .atlas-tab.is-on { color: var(--ink-1); background: rgba(var(--accent-rgb), .13); box-shadow: inset 0 0 0 1px var(--line-2); }
-    .atlas-companion-tabs { display: flex; align-items: center; gap: 4px; padding: 6px 8px 0; flex: none; }
-    .atlas-body.is-tabbed > .atlas-side, .atlas-body.is-tabbed > .atlas-companion { position: absolute; z-index: 25; top: 0; right: 0; bottom: 0; width: var(--tab-w, 560px); max-width: calc(100% - 28px); }
-    .atlas-body.is-tabbed > .atlas-main { margin-right: var(--tab-w, 560px); }
-    .atlas-side.is-hidden, .atlas-companion.is-hidden { visibility: hidden; pointer-events: none; }
-
-    /* ---- a paper beside the page: details, add to the library for a topic ---- */
+    /* ---- a paper in a tab: details, add to the library for a topic ---- */
     .atlas-ref-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 10px 0 12px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: rgba(var(--accent-rgb), .06); }
     .atlas-ref-add > .atlas-input { flex: 1 1 200px; width: auto; min-width: 0; }
     .atlas-ref-for { display: inline-flex; align-items: center; gap: 7px; flex: 1 1 260px; min-width: 0; }
@@ -5232,7 +5707,6 @@ window.__ModuleLoader__.load({
 
     /* ---- adding and writing from anywhere: the + panel and the Write page ---- */
     .atlas-quick { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(620px, calc(100% - 32px)); display: grid; gap: 10px; padding: 12px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))), 0 0 0 4px rgba(var(--accent-rgb), .05); }
-    .atlas-body.has-right > .atlas-quick { left: calc((100% - var(--right-w, 0px)) / 2); width: min(600px, calc(100% - var(--right-w, 0px) - 32px)); }
     .atlas-quick .atlas-seg { justify-self: start; }
     .atlas-quick-body { display: grid; gap: 8px; }
     .atlas-quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -5247,7 +5721,6 @@ window.__ModuleLoader__.load({
 
     /* ---- asking: the ask bar and the selection tools ---- */
     .atlas-askbar { position: absolute; z-index: 40; top: 16px; left: 50%; transform: translateX(-50%); width: min(660px, calc(100% - 32px)); padding: 12px 12px 10px; background: rgba(var(--panel-rgb), .985); border: 1px solid rgba(var(--accent-rgb), .4); border-radius: 14px; box-shadow: 0 26px 70px -18px rgba(var(--shadow-rgb), calc(.9 * var(--shadow-k))), 0 0 0 4px rgba(var(--accent-rgb), .05); }
-    .atlas-body.has-right > .atlas-askbar { left: calc((100% - var(--right-w, 0px)) / 2); width: min(640px, calc(100% - var(--right-w, 0px) - 32px)); }
     .atlas-askbar .atlas-chips { padding: 0 2px 10px; }
     .atlas-askbar-row { display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 11px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(var(--sky-rgb), .7); }
     .atlas-askbar-row:focus-within { border-color: rgba(var(--accent-rgb), .6); }
@@ -5616,12 +6089,13 @@ window.__ModuleLoader__.load({
     .atlas-drop.is-over, .atlas-drop:hover { border-color: var(--link); background: rgba(var(--accent-rgb), .07); color: var(--ink-1); }
     .atlas-drop-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .atlas-dropped { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
-    /* ---- write: LaTeX beside its PDF ---- */
+    /* ---- write: the LaTeX source, a helper panel beside it ---- */
     .atlas-write { display: grid; gap: 10px; }
     .atlas-write-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .atlas-write-engine { width: auto; max-width: 320px; padding: 5px 9px; font-size: 13px; }
     .atlas-write-main { margin: 0; font-size: 12.5px; }
-    .atlas-write-split { display: grid; grid-template-columns: minmax(240px, var(--write-split, 50%)) 10px minmax(260px, 1fr); gap: 0; height: calc(100vh - 250px); min-height: 440px; }
+    .atlas-write-split { display: grid; grid-template-columns: minmax(240px, var(--write-split, 64%)) 10px minmax(220px, 1fr); gap: 0; height: calc(100vh - 290px); min-height: 420px; }
+    .atlas-write-split.is-solo { grid-template-columns: minmax(0, 1fr); }
     .atlas-write-source { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--deep-rgb), .65); }
     .atlas-write-gutter { margin: 0; padding: 12px 8px 12px 12px; overflow: hidden; text-align: right; color: var(--ink-3); font: 12.5px/1.6 var(--mono); user-select: none; border-right: 1px solid var(--line); background: rgba(var(--panel-rgb), .55); min-width: 44px; }
     .atlas-write-text.atlas-editor-text { height: 100%; min-height: 0; margin: 0; border: 0; border-radius: 0; outline: none; resize: none; padding: 12px; background: transparent; color: var(--ink-1); font: 12.5px/1.6 var(--mono); white-space: pre; overflow: auto; tab-size: 2; box-shadow: none; }
@@ -5629,13 +6103,24 @@ window.__ModuleLoader__.load({
     .atlas-write-divider::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 4px; width: 2px; border-radius: 2px; background: var(--line); transition: background .15s; }
     .atlas-write-divider:hover::after, .atlas-write-divider:active::after { background: rgba(var(--accent-rgb), .55); }
     .atlas-write-side { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(var(--panel-rgb), .5); }
-    .atlas-write-tabs { padding: 6px; border-bottom: 1px solid var(--line); border-radius: 0; }
+    .atlas-write-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 5px 5px 12px; border-bottom: 1px solid var(--line); font: 600 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+    .atlas-write-side-head .atlas-icon-button { width: 26px; height: 26px; }
+    .atlas-write-panels { flex: none; }
+    .atlas-write-panels .atlas-seg-item { padding: 4px 10px; font-size: 12.5px; }
     .atlas-seg-item.is-alert { color: var(--danger-ink-2); }
     .atlas-write-pane { overflow: auto; min-height: 0; padding: 0; }
     .atlas-write-pane > .atlas-empty, .atlas-write-pane > .atlas-muted { padding: 14px; margin: 0; }
-    .atlas-write-pane .atlas-pdf { border: 0; border-radius: 0; min-height: 100%; }
-    .atlas-write-pane .atlas-pdf-bar { border-radius: 0; }
-    .atlas-write-hint { margin: 0; padding: 8px 14px; font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--line); }
+    .atlas-write-hint { margin: 0; font-size: 12px; color: var(--ink-3); }
+
+    /* ---- a LaTeX document's compiled PDF in its own tab ---- */
+    .atlas-preview { display: flex; flex-direction: column; min-height: 100%; }
+    .atlas-preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: rgba(var(--sky-rgb), .6); font-size: 12.5px; color: var(--ink-2); }
+    .atlas-preview-label { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border-radius: 999px; background: rgba(var(--gold-rgb), .14); border: 1px solid rgba(var(--gold-rgb), .3); color: var(--ink-1); font: 600 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; }
+    .atlas-preview-label > svg { color: var(--gold); }
+    .atlas-preview-of { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
+    .atlas-preview .atlas-pdf { flex: 1; border: 0; border-radius: 0; }
+    .atlas-preview .atlas-pdf-bar { border-radius: 0; }
+    .atlas-preview > .atlas-empty { padding: 18px; }
     .atlas-pdf.is-synced .atlas-pdf-page { cursor: text; }
     .atlas-sync-mark { position: absolute; z-index: 3; pointer-events: none; border-radius: 2px; background: rgba(var(--gold-rgb), .30); box-shadow: 0 0 0 2px rgba(var(--gold-3-rgb), .85); animation: atlas-sync 3.2s ease-out forwards; }
     @keyframes atlas-sync { 0%, 65% { opacity: 1; } 100% { opacity: 0; } }
@@ -5741,11 +6226,6 @@ window.__ModuleLoader__.load({
       .atlas-add { position: static; order: -1; }
       .atlas-pdf-layout.has-aside { grid-template-columns: minmax(0, 1fr); }
       .atlas-paper-aside { position: static; max-height: none; }
-      .atlas-companion { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; max-width: calc(100% - 28px); }
-      .atlas-side { position: absolute; z-index: 30; top: 0; right: 0; bottom: 0; max-width: calc(100% - 28px); }
-      .atlas-body.is-tabbed > .atlas-main { margin-right: 0; }
-      .atlas-body.has-right > .atlas-askbar { left: 50%; width: min(640px, calc(100% - 32px)); }
-      .atlas-body.has-right > .atlas-quick { left: 50%; width: min(620px, calc(100% - 32px)); }
     }
     @container (max-width: 640px) {
       .atlas-write-split { grid-template-columns: minmax(0, 1fr); height: auto; gap: 12px; }

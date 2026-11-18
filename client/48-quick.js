@@ -1,7 +1,7 @@
 // ------------------------------------------------------------------ write ---
 // Adding and writing from anywhere. The + button (or N) opens a small panel over the page: a paper
 // (looked up, then added to the library for a topic), a note, or a LaTeX document (created in a
-// topic's folder and opened: a note beside the page, a document as the page, where its PDF fits).
+// topic's folder and opened: a note in a tab beside the page, a document as the page with its Preview beside it).
 // Each starts with the topic in view. The Write page lists the LaTeX documents the notes link.
 
 const QUICK_TABS = [['paper', 'Paper', 'paper'], ['note', 'Note', 'note'], ['tex', 'LaTeX', 'writing']];
@@ -51,7 +51,7 @@ function QuickAdd({ tab: initial, overview: ov, go, flash, onClose }) {
     h('p', { className: 'atlas-quick-more' }, 'A lecture or files: ', h(TextButton, { onClick: () => done({ view: 'library', tab: 'discover', add: Date.now() }) }, 'Library › Discover and add'), ' · ', h('kbd', null, 'Esc'), ' closes'));
 }
 
-/** A paper by its identifier: looked up, then added for a topic (or read first, beside the page). */
+/** A paper by its identifier: looked up, then added for a topic (or read first, in a tab). */
 function QuickPaper({ ov, topic, done, flash }) {
   const [q, setQ] = useState('');
   const [found, setFound] = useState(null);
@@ -109,7 +109,7 @@ function QuickNote({ kind, ov, topic, done, flash }) {
     setBusy(true);
     try {
       await api('save', { method: 'POST', body: { path: target, text: TEMPLATES[kind](title.trim()), create: true } });
-      // A note opens beside the page; a LaTeX document as the page, where its PDF has room.
+      // A note opens in a tab beside the page; a LaTeX document as the page, its PDF in a Preview tab beside it.
       done(kind === 'tex' ? { view: 'doc', path: target, edit: true, created: true, full: true } : { view: 'doc', path: target, edit: true, created: true, link: true });
     } catch (error) {
       flash(error.status === 409 ? `There is already a file called ${baseName(target)} there.` : error.message);
@@ -149,7 +149,7 @@ function WriteView({ overview: ov, go, version, onQuick }) {
   return h('div', { className: 'atlas-page is-wide atlas-write-page' },
     h('p', { className: 'atlas-kicker' }, h(Icon, { name: 'writing', size: 14 }), 'Write'),
     h('h1', null, 'Your writing'),
-    h('p', { className: 'atlas-lede' }, 'The LaTeX documents your topic notes link, newest first. Open one to write beside its PDF; Build is Ctrl+B. New notes, documents and papers also start from + anywhere (or N).'),
+    h('p', { className: 'atlas-lede' }, 'The LaTeX documents your topic notes link, newest first. Open one to write it, with its PDF in a Preview tab beside it; Build is Ctrl+B. New notes, documents and papers also start from + anywhere (or N).'),
     h('div', { className: 'atlas-actions' },
       h(Button, { primary: true, icon: 'writing', onClick: () => onQuick('tex') }, 'New LaTeX document'),
       h(Button, { icon: 'note', onClick: () => onQuick('note') }, 'New note'),
@@ -170,5 +170,5 @@ function WriteRow({ d, go }) {
       h(Icon, { name: 'writing', size: 15 }),
       h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, d.title), h('span', { className: 'atlas-item-sub' }, `${baseName(d.file)} · changed ${dateOf(d.mtimeMs)}`)),
       h(Chip, { dot: !d.pdf ? 'var(--status-other)' : built ? 'var(--status-done)' : 'var(--status-waiting)' }, state)),
-    d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
+    d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
 }

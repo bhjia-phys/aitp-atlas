@@ -1,9 +1,10 @@
 // ------------------------------------------------------------------ write ---
-// A manuscript beside its PDF: the LaTeX source with line numbers, Build
-// (Ctrl+B) with the TeX installations this computer has, the log's problems by
-// line, SyncTeX both ways (Ctrl+click), and citations from the document's .bib
-// and the papers library. Saving keeps the editor's rule: never over a file
-// that changed on disk meanwhile.
+// A manuscript and its PDF side by side: the LaTeX source with line numbers,
+// Build (Ctrl+B) with the TeX installations this computer has, the compiled PDF
+// in its own Preview tab in the other pane, the log's problems by line, SyncTeX
+// both ways (Ctrl+click), and citations from the document's .bib and the papers
+// library. Saving keeps the editor's rule: never over a file that changed on
+// disk meanwhile.
 
 function lineOfOffset(text, offset) {
   return String(text).slice(0, offset).split('\n').length;
@@ -48,21 +49,35 @@ function texOutline(text) {
   return out;
 }
 
+/** Each LaTeX document's compiled PDF, for its Preview tab, by the document's key: { main, pdf, builtAt, mark, sync, topic }. */
+const texPreviewStore = externalStore({});
+/** What a Preview tab asks of the source open in the editor (Ctrl+click → the source line), by the document's key. */
+const previewHandlers = new Map();
+
+/** The helper panels beside the source; the compiled PDF has its own tab (Preview). */
+const WRITE_PANELS = [['outline', 'Outline'], ['problems', 'Problems'], ['cite', 'Cite']];
+
 function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
   const pane = usePaneName();
-  // The source on the left, the PDF on the right; the share between them is the researcher's, remembered.
-  const [split, setSplit] = useState(() => storageGet('write-split', 50));
+  const actions = React.useContext(AtlasActions);
+  // The source, and a helper panel beside it when one is open; their share is the researcher's, remembered.
+  const [split, setSplit] = useState(() => storageGet('write-aux-split', 64));
+  const [panel, setPanel] = useState(() => storageGet('write-panel', ''));
   const splitBox = useRef(null);
   const saveSplit = (value) => {
     setSplit(value);
-    storageSet('write-split', value);
+    storageSet('write-aux-split', value);
+  };
+  const showPanel = (key) => {
+    setPanel(key);
+    storageSet('write-panel', key);
   };
   const startSplit = (event) => {
     event.preventDefault();
     const box = splitBox.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    const at = (x) => Math.round(Math.min(78, Math.max(22, ((x - rect.left) / rect.width) * 100)));
+    const at = (x) => Math.round(Math.min(80, Math.max(30, ((x - rect.left) / rect.width) * 100)));
     const move = (e) => setSplit(at(e.clientX));
     const up = (e) => {
       window.removeEventListener('pointermove', move);
@@ -80,14 +95,12 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
   const [engine, setEngine] = useState(() => storageGet('tex-engine:' + data.path, ''));
   const [built, setBuilt] = useState(null);
   const [building, setBuilding] = useState(false);
-  const [tab, setTab] = useState('pdf');
   const [mark, setMark] = useState(null);
   const [pdfExists, setPdfExists] = useState(false);
   const area = useRef(null);
   const gutter = useRef(null);
   const caret = useRef(0);
   const textRef = useRef(text);
-  const lastPage = useRef(0);
   textRef.current = text;
   const dirty = text !== base.text;
 
@@ -112,6 +125,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
   const chosen = engines.list ? engines.list.find((e) => e.id === engine) || engines.list[0] || null : null;
   const main = engines.main || '';
   const pdf = (built && built.pdf) || (main && pdfExists ? main.replace(/\.tex$/i, '.pdf') : '');
+  const docKey = main ? pathKey(main) : '';
 
   const goToLine = useCallback((n) => {
     const el = area.current;
@@ -156,6 +170,9 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     setBase({ text: value, mtimeMs: fresh.mtimeMs });
     setStatus({ kind: 'clean' });
   };
+  const preview = (file, activate) => {
+    if (main && file) actions.openPreview({ main, pdf: file, from: pane, activate });
+  };
   const runBuild = async () => {
     if (building || !chosen) return;
     if (textRef.current !== base.text && !(await save(false))) return;
@@ -163,9 +180,11 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     try {
       const r = await api('latex/build', { method: 'POST', body: { path: data.path, engine: chosen.id } });
       setBuilt(r);
+      setMark(null);
       if (r.pdf) setPdfExists(true);
       const errors = r.problems.filter((p) => p.severity === 'error').length;
-      setTab(errors ? 'problems' : 'pdf');
+      if (errors) showPanel('problems');
+      preview(r.pdf, !errors);
       flash(errors ? `Built with ${plural(errors, 'error')}: see Problems.` : `Built: ${plural(r.pages, 'page')} in ${(r.durationMs / 1000).toFixed(1)} s.`);
     } catch (error) {
       flash(error.message);
@@ -182,7 +201,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     if (!pdf) return flash('Build the document first.');
     try {
       const r = await api('latex/sync/view', { query: { path: data.path, line: lineOfOffset(textRef.current, caret.current), engine: chosen.id } });
-      setTab('pdf');
+      preview(pdf, true);
       setMark({ ...r, at: Date.now() });
     } catch (error) {
       flash(error.message);
@@ -198,6 +217,42 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
       flash(error.message);
     }
   };
+
+  // The Preview tab reads the PDF from here and asks this editor for the source of a place in it.
+  const syncRef = useRef(syncToSource);
+  syncRef.current = syncToSource;
+  useEffect(() => {
+    if (!docKey) return undefined;
+    const handler = { syncToSource: (page, x, y) => syncRef.current(page, x, y) };
+    previewHandlers.set(docKey, handler);
+    const editing = (value) => {
+      const all = texPreviewStore.get();
+      texPreviewStore.set({ ...all, [docKey]: { ...(all[docKey] || {}), editing: value } });
+    };
+    editing(true);
+    return () => {
+      if (previewHandlers.get(docKey) !== handler) return;
+      previewHandlers.delete(docKey);
+      editing(false);
+    };
+  }, [docKey]);
+  const builtAt = built ? built.at : 0;
+  const sync = Boolean(chosen && chosen.sync);
+  const owner = data.owner || null;
+  useEffect(() => {
+    if (!docKey) return;
+    const all = texPreviewStore.get();
+    const topic = owner ? { id: owner.id, title: owner.title, path: owner.file } : null;
+    texPreviewStore.set({ ...all, [docKey]: { ...(all[docKey] || {}), main, pdf: pdf || (all[docKey] && all[docKey].pdf) || '', builtAt: builtAt || (all[docKey] && all[docKey].builtAt) || 0, mark, sync, topic, source: data.path } });
+  }, [docKey, pdf, builtAt, mark, sync, owner ? owner.file : '']);
+  // A document that has a PDF shows it beside the source as soon as it opens.
+  const shownOnce = useRef(false);
+  useEffect(() => {
+    if (!main || !pdf || shownOnce.current) return;
+    shownOnce.current = true;
+    preview(pdf, true);
+  }, [main, pdf]);
+
   const insertKey = (key) => {
     const next = insertCite(textRef.current, caret.current, key);
     setText(next.text);
@@ -240,7 +295,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
         : status.kind === 'saved' ? `Saved ${new Date(status.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
   const builtText = building ? 'Building…'
     : built ? `Built ${new Date(built.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${plural(built.pages, 'page')}${errors ? ` · ${plural(errors, 'error')}` : ''}` : '';
-  const tabs = [['pdf', 'PDF'], ['problems', problems.length ? `Problems (${problems.length})` : 'Problems'], ['cite', 'Cite'], ['outline', 'Outline']];
+  const open = WRITE_PANELS.some(([key]) => key === panel) ? panel : '';
   return h('div', { className: 'atlas-write' },
     status.kind === 'conflict' ? h('div', { className: 'atlas-banner is-warn', role: 'alert' },
       h('span', null, 'This file changed on disk since you opened it (perhaps an AI session edited it).'),
@@ -249,15 +304,24 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     h('div', { className: 'atlas-write-bar' },
       h(Button, { primary: true, icon: 'save', disabled: !dirty || status.kind === 'saving', onClick: () => save(false), title: 'Save (Ctrl+S)' }, 'Save'),
       h(Button, { disabled: building || !chosen, onClick: runBuild, title: 'Save and build (Ctrl+B)' }, building ? 'Building…' : 'Build'),
+      h(Button, { icon: 'paper', disabled: !pdf, onClick: () => preview(pdf, true), title: pdf ? 'Show the compiled PDF in its Preview tab, beside the source' : 'No PDF yet: press Build (Ctrl+B)' }, 'Preview'),
       engines.list && engines.list.length
         ? h('select', { className: 'atlas-input atlas-write-engine', value: chosen ? chosen.id : '', onChange: (e) => chooseEngine(e.target.value), 'aria-label': 'TeX engine' },
           engines.list.map((e) => h('option', { key: e.id, value: e.id }, e.label + (e.sync ? '' : ' · no SyncTeX'))))
         : h('span', { className: 'atlas-muted' }, engines.list ? engines.error || 'No TeX installation found' : 'Looking for TeX…'),
+      h('div', { className: 'atlas-seg atlas-write-panels', role: 'group', 'aria-label': 'Beside the source' }, WRITE_PANELS.map(([key, label]) => h('button', {
+        key,
+        type: 'button',
+        'aria-pressed': open === key,
+        className: cx('atlas-seg-item', open === key && 'is-on', key === 'problems' && errors && 'is-alert'),
+        title: open === key ? 'Hide it' : `Show ${label.toLowerCase()} beside the source`,
+        onClick: () => showPanel(open === key ? '' : key),
+      }, key === 'problems' && problems.length ? `${label} (${problems.length})` : label))),
       h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, [statusText, builtText].filter(Boolean).join(' · ')),
       h(Button, { quiet: true, disabled: !dirty, onClick: () => setText(base.text) }, 'Revert'),
       h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; go({ view: 'doc', path: data.path }); } } }, 'Done')),
     main && !samePath(main, data.path) ? h('p', { className: 'atlas-muted atlas-write-main' }, 'Part of ', h(TextButton, { onClick: () => go({ view: 'doc', path: main, edit: true, stay: true }) }, baseName(main)), ': Build builds that document.') : null,
-    h('div', { className: 'atlas-write-split', ref: splitBox, style: { '--write-split': split + '%' } },
+    h('div', { className: cx('atlas-write-split', !open && 'is-solo'), ref: splitBox, style: { '--write-split': split + '%' } },
       h('div', { className: 'atlas-write-source' },
         h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
         h('textarea', {
@@ -281,32 +345,59 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
             if (gutter.current) gutter.current.scrollTop = e.target.scrollTop;
           },
           'aria-label': 'Source of ' + baseName(data.path),
-          title: 'Ctrl+click a line to find it in the PDF',
+          title: sync ? 'Ctrl+click a line to find it in the Preview' : 'Source',
         })),
-      h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the PDF', title: 'Drag to give the source or the PDF more room; double-click for half and half', onPointerDown: startSplit, onDoubleClick: () => saveSplit(50) }),
-      h('div', { className: 'atlas-write-side' },
-        h('div', { className: 'atlas-seg atlas-write-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on', key === 'problems' && errors && 'is-alert'), onClick: () => setTab(key) }, label))),
+      open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', title: 'Drag to resize; double-click to reset', onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
+      open ? h('div', { className: 'atlas-write-side' },
+        h('div', { className: 'atlas-write-side-head' },
+          h('span', null, (WRITE_PANELS.find(([key]) => key === open) || [])[1]),
+          h('button', { type: 'button', className: 'atlas-icon-button', title: 'Hide the panel', 'aria-label': 'Hide the panel', onClick: () => showPanel('') }, h(Icon, { name: 'close', size: 13 }))),
         h('div', { className: 'atlas-write-pane' },
-          tab === 'pdf'
-            ? (pdf
-              ? h(PdfView, {
-                key: pdf + ':' + (built ? built.at : 0),
-                path: pdf,
-                flash,
-                anchor: mark ? 'page=' + mark.page : lastPage.current ? 'page=' + lastPage.current : '',
-                anchorAt: mark ? mark.at : built ? built.at : 0,
-                marker: mark,
-                onPage: (n) => {
-                  lastPage.current = n;
-                },
-                onPageClick: syncToSource,
-              })
-              : h(Empty, null, chosen ? 'No PDF yet: press Build (Ctrl+B).' : 'Atlas found no TeX to build with.'))
-            : null,
-          tab === 'pdf' && pdf && chosen ? h('p', { className: 'atlas-write-hint' }, chosen.sync ? 'Ctrl+click in the PDF to jump to its source line; Ctrl+click a source line to find it here.' : 'This engine has no synctex program: choose TeX Live in WSL to jump between source and PDF.') : null,
-          tab === 'problems' ? h(ProblemList, { built, current: data.path, goToLine, go }) : null,
-          tab === 'cite' ? h(CitePanel, { path: data.path, text, caret, onInsert: insertKey, flash }) : null,
-          tab === 'outline' ? h(TexOutline, { text, goToLine }) : null))));
+          open === 'problems' ? h(ProblemList, { built, current: data.path, goToLine, go }) : null,
+          open === 'cite' ? h(CitePanel, { path: data.path, text, caret, onInsert: insertKey, flash }) : null,
+          open === 'outline' ? h(TexOutline, { text, goToLine }) : null)) : null),
+    pdf && chosen ? h('p', { className: 'atlas-write-hint' }, chosen.sync ? 'The PDF is in the Preview tab: Ctrl+click in it to jump to the source line, Ctrl+click a source line to find it there.' : 'This engine has no synctex program: choose TeX Live in WSL to jump between the source and the Preview.') : null);
+}
+
+/**
+ * A LaTeX document's compiled PDF in its own tab, beside the source: it reloads after each build,
+ * shows where a Ctrl+clicked source line landed, and Ctrl+click in it jumps to the source.
+ */
+function TexPreview({ tab, flash, go }) {
+  const all = React.useSyncExternalStore(texPreviewStore.subscribe, texPreviewStore.get);
+  const key = pathKey(tab.main);
+  const entry = all[key] || {};
+  const pdf = entry.pdf || tab.pdf || '';
+  const lastPage = useRef(0);
+  usePublishFocus({ kind: 'doc', topic: entry.topic || null, doc: { type: 'pdf', title: 'Preview of ' + baseName(tab.main), path: pdf || tab.main } }, [pdf, tab.main, entry.topic ? entry.topic.path : '']);
+  const toSource = (page, x, y) => {
+    const handler = previewHandlers.get(key);
+    if (handler) handler.syncToSource(page, x, y);
+    else flash('Open the source in the editor to jump from the Preview to it.');
+  };
+  const mark = entry.mark || null;
+  const builtAt = entry.builtAt || 0;
+  return h('div', { className: 'atlas-preview' },
+    h('header', { className: 'atlas-preview-head' },
+      h('span', { className: 'atlas-preview-label' }, h(Icon, { name: 'paper', size: 14 }), 'Preview'),
+      h('span', { className: 'atlas-preview-of', title: tab.main }, 'of ', h(TextButton, { onClick: () => go({ view: 'doc', path: entry.source || tab.main, edit: true, full: true }), title: 'Edit the source' }, baseName(entry.source || tab.main))),
+      builtAt ? h('span', { className: 'atlas-date' }, 'built ' + new Date(builtAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : null,
+      h('span', { className: 'atlas-spacer' }),
+      entry.sync && entry.editing ? h('span', { className: 'atlas-hint' }, h('kbd', null, 'Ctrl'), '+click jumps to the source') : null),
+    pdf
+      ? h(PdfView, {
+        key: pdf + ':' + builtAt,
+        path: pdf,
+        flash,
+        anchor: mark ? 'page=' + mark.page : lastPage.current ? 'page=' + lastPage.current : '',
+        anchorAt: mark ? mark.at : builtAt,
+        marker: mark,
+        onPage: (n) => {
+          lastPage.current = n;
+        },
+        onPageClick: toSource,
+      })
+      : h(Empty, null, 'No PDF yet: build the document (Ctrl+B in the editor).'));
 }
 
 function ProblemList({ built, current, goToLine, go }) {

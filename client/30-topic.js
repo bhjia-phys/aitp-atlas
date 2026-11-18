@@ -2,11 +2,11 @@
 // One topic as a workspace: what the root says, the opening, Current work as a
 // timeline, the account, and everything the note cites, sorted by kind.
 
-/** Links inside notes: what Atlas can show opens beside the page (a link), the rest with the system's app. */
+/** Links inside notes: what Atlas can show opens in a tab of its own (a link), the rest with the system's app. */
 function useNavigate(go, flash) {
   const pane = usePaneName();
   return useCallback(({ path, anchor, url }) => {
-    // A paper's web address: read it beside the page, offered for the topic in view.
+    // A paper's web address: read it in a tab, offered for the topic in view.
     if (url) {
       const focus = paneFocus(focusStore.get(), pane);
       go({ view: 'paper', url, topic: focus.topic ? focus.topic.path : '' });
@@ -49,8 +49,9 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
   const parts = useMemo(() => splitNote(data.body), [data.body]);
   const account = parts.sections.filter((s) => !/^current work/i.test(s.heading));
   const [reveal, setReveal] = useState({ key: '', n: 0 });
-  // Section ids are per pane: the same topic can be open as the page and beside it.
-  const sec = usePaneName() === 'side' ? 'atlas-side-sec-' : 'atlas-sec-';
+  // Section ids are per tab: the same topic can be open as the page and in a tab beside it.
+  const tabId = usePaneName();
+  const sec = tabId === 'page' ? 'atlas-sec-' : `atlas-${tabId.replace(/[^\w-]/g, '-')}-sec-`;
   // A link to a section of this note: the opening, Current work, or an account fold opened and scrolled to.
   useEffect(() => {
     if (!anchor) return undefined;

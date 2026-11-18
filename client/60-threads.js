@@ -34,22 +34,37 @@ function externalStore(initial, key) {
   return store;
 }
 
-// The discussion index, and what is in view: one focus per pane (the page, and the file beside
-// it), and which of the two was used last.
+// The discussion index, and what is in view: what each tab shows (its focus), which tab each pane
+// shows, and which tab was used last. The discussion is about what the other pane shows.
 const threadStore = externalStore([], 'threads');
-const focusStore = externalStore({ main: { kind: 'universe' }, side: null, active: 'main' });
-/** Which pane a component sits in: the page ('main'), the file beside it ('side'), or the shell around both ('global'). */
+const focusStore = externalStore({ byTab: { page: { kind: 'universe' } }, active: 'page', visible: { left: 'page', right: null }, paneOf: { page: 'left' } });
+/** Which tab a component sits in (its id: 'page', a file's, 'discussion'…), or the shell around them all ('global'). */
 const PaneContext = React.createContext('global');
 
+/** The tab this component sits in; the shell's own pieces count as the page. */
 function usePaneName() {
-  return React.useContext(PaneContext) === 'side' ? 'side' : 'main';
+  const tab = React.useContext(PaneContext);
+  return tab && tab !== 'global' ? tab : 'page';
 }
 
-/** What a pane shows (the shell asks for the pane used last), with what the other pane holds beside it. */
-function paneFocus(all, pane) {
-  const name = pane === 'side' || pane === 'main' ? pane : all.active === 'side' && all.side ? 'side' : 'main';
-  const own = (name === 'side' ? all.side : all.main) || { kind: 'universe' };
-  const beside = besideOf(own, name === 'side' ? all.main : all.side);
+/**
+ * What a tab shows, with what the other pane shows beside it. The shell asks for the tab used last;
+ * the discussion stands for what the other pane shows (or, alone, what was used last).
+ */
+function paneFocus(all, tab) {
+  const byTab = all.byTab || {};
+  const visible = all.visible || {};
+  const paneOf = all.paneOf || {};
+  const across = (id) => (paneOf[id] ? visible[paneOf[id] === 'left' ? 'right' : 'left'] : null);
+  let id = tab && tab !== 'global' ? tab : all.active;
+  if (id === 'discussion') {
+    const other = across('discussion');
+    id = other && byTab[other] ? other : all.active;
+  }
+  if (!id || id === 'discussion' || !byTab[id]) id = 'page';
+  const own = byTab[id] || { kind: 'universe' };
+  const other = across(id);
+  const beside = other && other !== id ? besideOf(own, byTab[other]) : null;
   return beside ? { ...own, beside } : own;
 }
 
@@ -63,13 +78,19 @@ function besideOf(own, other) {
   return [own.doc && own.doc.path, own.topic && own.topic.path].some((p) => p && pathKey(p) === pathKey(item.path)) ? null : item;
 }
 
-function setActivePane(pane) {
+/** The tab used last (a click, a key, a selection in it). The discussion never is: asking from it is about what you read. */
+function setActivePane(tab) {
+  if (!tab || tab === 'discussion') return;
   const all = focusStore.get();
-  if (all.active !== pane) focusStore.set({ ...all, active: pane });
+  if (all.active !== tab) focusStore.set({ ...all, active: tab });
 }
 
-function clearSidePane() {
-  focusStore.set({ ...focusStore.get(), side: null, active: 'main' });
+/** A closed tab says nothing more. */
+function forgetTab(tab) {
+  const all = focusStore.get();
+  const byTab = { ...all.byTab };
+  delete byTab[tab];
+  focusStore.set({ ...all, byTab, active: all.active === tab ? 'page' : all.active });
 }
 
 function useThreadIndex() {
@@ -82,12 +103,13 @@ function useFocus() {
   return useMemo(() => paneFocus(all, pane), [all, pane]);
 }
 
-/** Views say what they show; the ask bar, the chips and Ctrl+J read it. */
+/** Views say what they show, for the tab they are in; the ask bar, the chips and Ctrl+J read it. */
 function usePublishFocus(value, deps) {
-  const pane = usePaneName();
+  const tab = usePaneName();
   useEffect(() => {
-    focusStore.set({ ...focusStore.get(), [pane]: value });
-  }, [pane, ...deps]);
+    const all = focusStore.get();
+    focusStore.set({ ...all, byTab: { ...all.byTab, [tab]: value } });
+  }, [tab, ...deps]);
 }
 
 function patchThread(id, patch) {
@@ -423,9 +445,70 @@ function EmbeddedConversation({ sessionId, onOpenChat }) {
   return h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
 }
 
-const COMPANION_MIN = 340;
+/** The WSL distribution a research root lives in (`\\wsl.localhost\Ubuntu\…` or `\\wsl$\Ubuntu\…`), or ''. */
+function wslDistro(root) {
+  const m = /^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/]([^\\/]+)/i.exec(String(root || ''));
+  return m ? m[1] : '';
+}
 
-function Companion({ threadId, pending, onClose, flash, width, onWidth, tabs, hidden }) {
+/**
+ * A place the AI names in a discussion, as Atlas opens it: `note.md:42` and `#L42` become a line,
+ * a relative path is in the research, and on Windows a Linux path is inside the WSL the research
+ * lives in (`/mnt/c/…` is the C: drive).
+ */
+function chatLocation(text, root) {
+  let s = String(text || '').trim().replace(/^file:\/\/(?:localhost)?\/?(?=[a-z]:|\/)/i, '');
+  try {
+    s = decodeURI(s);
+  } catch {
+    // Keep it as written.
+  }
+  let anchor = '';
+  const hash = s.indexOf('#');
+  if (hash >= 0) {
+    anchor = s.slice(hash + 1);
+    s = s.slice(0, hash);
+  }
+  const at = /^(.+?):(\d+)(?::\d+)?(?:-\d+)?$/.exec(s);
+  if (at && !/^[a-z]$/i.test(at[1])) {
+    s = at[1];
+    if (!anchor) anchor = 'L' + at[2];
+  }
+  if (!s) return null;
+  const windowsRoot = /^[a-z]:[\\/]/i.test(root || '') || /^[\\/]{2}/.test(root || '');
+  if (/^[a-z]:[\\/]/i.test(s) || /^[\\/]{2}/.test(s)) return { path: s, anchor };
+  if (s.startsWith('/')) {
+    if (!windowsRoot) return { path: s, anchor };
+    const drive = /^\/mnt\/([a-z])(\/.*)?$/i.exec(s);
+    if (drive) return { path: `${drive[1].toUpperCase()}:${(drive[2] || '/').replace(/\//g, '\\')}`, anchor };
+    const distro = wslDistro(root);
+    return { path: distro ? `\\\\wsl.localhost\\${distro}${s.replace(/\//g, '\\')}` : s, anchor };
+  }
+  return { path: root ? joinPath(root, s.replace(/^\.[\\/]/, '')) : s, anchor };
+}
+
+/**
+ * What a click in DSH's conversation points at: a web address, or a file (DSH draws the files the AI
+ * names as buttons whose title is the path). DSH would open them in its own side bar, which has no
+ * session to show them in inside Atlas.
+ */
+function conversationLink(target, root) {
+  const el = target && target.closest ? target : target && target.parentElement;
+  if (!el || !el.closest) return null;
+  const file = el.closest('button[class*="fileLink"], button[class*="fileMention"], [data-file-path]');
+  if (file) {
+    const where = file.getAttribute('data-file-path') || file.getAttribute('title') || file.textContent;
+    return chatLocation(where, root);
+  }
+  const link = el.closest('a[href]');
+  if (!link) return null;
+  const href = link.getAttribute('href') || '';
+  if (/^https?:/i.test(href)) return { url: href };
+  if (!href || href.startsWith('#') || /^(mailto|tel|javascript|data|blob):/i.test(href) || (typeof API === 'string' && href.startsWith(API))) return null;
+  return chatLocation(href, root);
+}
+
+function Companion({ threadId, pending, onClose, flash, root, onOpenLink }) {
   const threads = useThreadIndex();
   const rows = useSessionRows();
   const focus = useFocus();
@@ -471,23 +554,30 @@ function Companion({ threadId, pending, onClose, flash, width, onWidth, tabs, hi
     if (draftIntoThread(threadId, text + '\n\n')) flash('What you are viewing is in the input box: add your question and send it.');
     else if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => flash('Copied what you are viewing; paste it into the discussion.'), () => flash('Atlas could not add it here.'));
   };
-  const startResize = columnResizer(width, onWidth, COMPANION_MIN, 0.66);
+  // Links in the conversation open in Atlas: files and papers in a tab beside the discussion, other sites in the browser.
+  const onLinkClick = (event) => {
+    if (!onOpenLink || event.button > 0) return;
+    const ref = conversationLink(event.target, root);
+    if (!ref) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (ref.url && !paperLink(ref.url)) window.open(ref.url, '_blank', 'noopener');
+    else onOpenLink(ref);
+  };
   const title = pending ? 'Starting the discussion…' : thread ? thread.title.replace(/^Atlas · /, '') : (row && row.title) || 'Discussion';
-  return h('aside', { className: cx('atlas-companion', hidden && 'is-hidden'), 'aria-label': 'Discussion', 'aria-hidden': hidden || undefined, style: { '--companion-w': width + 'px' } },
-    h('div', { className: 'atlas-companion-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the discussion pane', onPointerDown: startResize }),
-    tabs ? h('div', { className: 'atlas-companion-tabs' }, tabs) : null,
+  return h('aside', { className: 'atlas-companion', 'aria-label': 'Discussion' },
     h('header', { className: 'atlas-companion-head' },
       h('span', { className: cx('atlas-light', running && 'is-running', resolved && 'is-done'), 'aria-hidden': true }),
       h('span', { className: 'atlas-companion-title', title: thread ? thread.title : title }, title),
       h('button', { type: 'button', className: 'atlas-icon-button', title: 'Open in DSH’s chat view', 'aria-label': 'Open in chat', onClick: openChat, disabled: pending }, h(Icon, { name: 'external', size: 15 })),
-      h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the pane (the discussion is kept)', 'aria-label': 'Close the pane', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
+      h('button', { type: 'button', className: 'atlas-icon-button', title: 'Close the tab (the discussion is kept)', 'aria-label': 'Close the discussion tab', onClick: onClose }, h(Icon, { name: 'close', size: 15 }))),
     thread ? h(ContextChips, { context: thread.context, label: 'What this discussion was given' }) : null,
     pending ? null : h('div', { className: 'atlas-companion-actions' },
       h(TextButton, { onClick: addView, title: 'Put a pointer to what you are viewing now into the input box' }, h(Icon, { name: 'plus', size: 13 }), 'Add what I’m viewing'),
       h('span', { className: 'atlas-spacer' }),
       h(TextButton, { onClick: resolve, title: resolved ? 'Bring it back to DSH’s session list' : 'Mark it settled and archive the session' }, resolved ? 'Reopen' : 'Resolve')),
     pending ? null : h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
-    h('div', { className: 'atlas-companion-body' }, pending
+    h('div', { className: 'atlas-companion-body', onClickCapture: onLinkClick }, pending
       ? h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Starting a session for this…')
       : h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
 }

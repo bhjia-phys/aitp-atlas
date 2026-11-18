@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, paneFor, sideLayout, placeKeys, paneFocus, besideOf, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, DIRECTION_SLOTS, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideKey, sideTitle, noteSlug, writeTarget };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, routeFor, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, restoreTabs, saveTabs, tabLabel, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, DIRECTION_SLOTS, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -285,52 +285,121 @@ test('learn: learning topics come first, then the rest by recency', () => {
   assert.deepEqual(rest.map((t) => t.id), ['qc', 'gw']);
 });
 
-test('side panel: files open beside the page, places fill it, a section stays where it is', () => {
+test('tabs: files and papers open in a tab of their own, places in the page, a section stays where it is', () => {
   const places = new Set(['/r/research.md', '/r/topics/t/research.md', '/r/topics/u/research.md']);
   const isPlace = (p) => places.has(client.pathKey(p));
-  const topic = { view: 'doc', path: '/r/topics/t/research.md' };
-  const pane = (next, from = 'main', here = topic) => client.paneFor(next, from, here, isPlace);
-  assert.equal(pane({ view: 'doc', path: '/r/topics/t/notes/a.md', link: true }), 'side', 'a note linked from the page');
-  assert.equal(pane({ view: 'doc', path: '/r/library/arxiv/1/paper.pdf' }), 'side', 'a paper from a list');
-  assert.equal(pane({ view: 'doc', path: '/r/topics/t/research.md', anchor: 'current-work' }), 'main', 'a section of the page open');
-  assert.equal(pane({ view: 'doc', path: '/r/topics/u/research.md' }, 'main', { view: 'home' }), 'main', 'a topic is a place');
-  assert.equal(pane({ view: 'doc', path: '/R/Topics/T/Research.md' }, 'side', { view: 'doc', path: '/x/y.pdf' }), 'main', 'paths compare case-folded');
-  assert.equal(pane({ view: 'doc', path: '/r/topics/u/research.md', link: true }, 'side', { view: 'doc', path: '/x/y.md' }), 'side', 'a topic linked inside a document opens beside');
-  assert.equal(pane({ view: 'doc', path: '/x/y.md', anchor: 'h' }, 'side', { view: 'doc', path: '/x/y.md' }), 'side', 'a section of the file beside stays beside');
-  assert.equal(pane({ view: 'doc', path: '/r/a/sec.tex', edit: true, anchor: 'L4', stay: true }, 'main', { view: 'doc', path: '/r/a/main.tex' }), 'main', 'a LaTeX jump stays in its workspace');
-  assert.equal(pane({ view: 'doc', path: '/r/topics/t/notes/new.md', edit: true, created: true }), 'side', 'a new note is written beside its topic');
-  assert.equal(pane({ view: 'doc', path: '/x/y.pdf', full: true }, 'side'), 'main', 'open as the page');
-  assert.equal(pane({ view: 'library' }, 'side'), 'main');
-  assert.equal(pane({ back: true }, 'side'), 'main');
+  const route = (next, here = '/r/topics/t/research.md') => client.routeFor(next, here, isPlace);
+  assert.equal(route({ view: 'doc', path: '/r/topics/t/notes/a.md', link: true }), 'file', 'a note linked from the page');
+  assert.equal(route({ view: 'doc', path: '/r/library/arxiv/1/paper.pdf' }), 'file', 'a paper from a list');
+  assert.equal(route({ view: 'doc', path: '/r/topics/t/research.md', anchor: 'current-work' }), 'same', 'a section of the note open');
+  assert.equal(route({ view: 'doc', path: '/r/topics/u/research.md' }, ''), 'page', 'a topic is a place');
+  assert.equal(route({ view: 'doc', path: '/R/Topics/U/Research.md' }, '/x/y.pdf'), 'page', 'paths compare case-folded');
+  assert.equal(route({ view: 'doc', path: '/r/topics/u/research.md', link: true }, '/x/y.md'), 'file', 'a topic linked inside a document opens in a tab');
+  assert.equal(route({ view: 'doc', path: '/x/y.md', anchor: 'h' }, '/x/y.md'), 'same', 'a section of the file in a tab stays in it');
+  assert.equal(route({ view: 'doc', path: '/r/a/sec.tex', edit: true, anchor: 'L4', stay: true }, '/r/a/main.tex'), 'same', 'a LaTeX jump stays in its workspace');
+  assert.equal(route({ view: 'doc', path: '/r/topics/t/notes/new.md', edit: true, created: true }), 'file', 'a new note is written in a tab beside its topic');
+  assert.equal(route({ view: 'doc', path: '/x/y.pdf', full: true }, '/x/y.pdf'), 'page', 'open as the page');
+  assert.equal(route({ view: 'library' }, '/x/y.md'), 'page');
+  assert.equal(route({ back: true }, '/x/y.md'), 'page');
   assert.deepEqual([...client.placeKeys({ rootFile: 'C:\\R\\research.md', topics: { a: { file: 'C:/R/a/research.md' } } })], ['c:/r/research.md', 'c:/r/a/research.md']);
   const ov = { rootFile: '/r/research.md', title: 'Research programme', topics: { a: { file: '/r/a/research.md', title: 'Kicked top: spectral statistics' } } };
-  assert.deepEqual(['/r/a/research.md', '/R/research.md', '/r/a/notes/x.md'].map((p) => client.sideLabel(ov, p)), ['Kicked top', 'Research programme', 'x.md'], 'a topic note is named by its topic');
+  assert.deepEqual(['/r/a/research.md', '/R/research.md', '/r/a/notes/x.md'].map((p) => client.tabLabel({ kind: 'file', path: p }, { view: 'home' }, ov)), ['Kicked top', 'Research programme', 'x.md'], 'a topic note is named by its topic');
+  assert.equal(client.tabLabel({ kind: 'page' }, { view: 'doc', path: '/r/a/research.md' }, ov), 'Kicked top', 'the page tab names the place it shows');
+  assert.equal(client.tabLabel({ kind: 'page' }, { view: 'write' }, ov), 'Write');
+  assert.equal(client.tabLabel({ kind: 'discussion' }, { view: 'home' }, ov), 'Discussion');
+  assert.equal(client.tabLabel({ kind: 'preview', main: '/r/a/paper/main.tex' }, { view: 'home' }, ov), 'Preview · main.pdf');
 });
 
-test('side panel: page, file and discussion side by side while the page keeps 420px, tabs below', () => {
-  const lay = (width, side = true, discussion = true) => client.sideLayout({ width, side, discussion, sideWidth: 560, companionWidth: 440 });
-  assert.equal(lay(1420), 'columns');
-  assert.equal(lay(1419), 'tabs');
-  assert.equal(lay(900, true, false), 'columns', 'one column needs no tabs');
-  assert.equal(lay(900, false, true), 'columns');
+test('tabs: two panes hold them; a tab reorders, moves across and closes, and each pane shows one it holds', () => {
+  let l = { left: ['page'], right: [], active: { left: 'page', right: null }, split: 52 };
+  l = client.layoutAdd(l, 'f1', 'right');
+  assert.deepEqual([l.left, l.right, l.active], [['page'], ['f1'], { left: 'page', right: 'f1' }], 'the first file opens the right pane');
+  l = client.layoutAdd(l, 'f2', 'right', 'f1');
+  l = client.layoutAdd(l, 'f3', 'right', 'f1');
+  assert.deepEqual([l.right, l.active.right], [['f1', 'f3', 'f2'], 'f3'], 'a new tab goes next to the one shown');
+  l = client.layoutMove(l, 'f2', 'left', 0);
+  assert.deepEqual([l.left, l.right, l.active], [['f2', 'page'], ['f1', 'f3'], { left: 'f2', right: 'f3' }], 'dragged across: shown where it lands; the pane it left keeps what it showed');
+  l = client.layoutMove(l, 'f3', 'right', 0);
+  assert.deepEqual(l.right, ['f3', 'f1'], 'reordered within its pane');
+  l = client.layoutRemove(l, 'f3');
+  assert.deepEqual([l.right, l.active.right], [['f1'], 'f1'], 'closing the shown tab shows its neighbour');
+  l = client.layoutRemove(l, 'f1');
+  assert.deepEqual([l.right, l.active.right], [[], null], 'an empty pane folds away');
+  l = client.layoutMove(l, 'page', 'right');
+  assert.deepEqual([l.left, l.right, l.active], [['f2'], ['page'], { left: 'f2', right: 'page' }], 'any tab can go to either side');
+  assert.deepEqual([client.otherPane('left'), client.otherPane('right'), client.paneOfTab(l, 'page'), client.paneOfTab(l, 'nope')], ['right', 'left', 'right', null]);
 });
 
-test('side panel: a discussion is told what is open beside what it is about', () => {
+test('tabs: they come back as they were left, and the 0.7 side panel becomes a tab on the right', () => {
+  storage.clear();
+  window.localStorage.setItem('aitp-atlas:side', JSON.stringify({ path: '/r/a/notes/x.md', anchor: 'h' }));
+  const old = client.restoreTabs(false);
+  assert.deepEqual(old.layout.left, ['page']);
+  assert.equal(old.layout.right.length, 1);
+  assert.deepEqual([old.tabs[old.layout.right[0]].path, old.tabs[old.layout.right[0]].anchor], ['/r/a/notes/x.md', 'h']);
+  const talking = client.restoreTabs(true);
+  assert.deepEqual(talking.layout.right.slice(-1), ['discussion'], 'an open discussion has its tab');
+  client.saveTabs({ ...talking, layout: client.layoutMove(talking.layout, 'discussion', 'left') });
+  const back = client.restoreTabs(true);
+  assert.deepEqual(back.layout.left, ['page', 'discussion'], 'where you put it');
+  assert.equal(back.tabs[back.layout.right[0]].path, '/r/a/notes/x.md');
+  assert.ok(!client.restoreTabs(false).layout.left.includes('discussion'), 'no discussion, no tab');
+  storage.clear();
+});
+
+test('tabs: a discussion is told what is open beside what it is about', () => {
   const all = {
-    main: { kind: 'topic', topic: { id: 'qc', title: 'Kicked top', path: '/r/qc/research.md' } },
-    side: { kind: 'doc', topic: null, doc: { type: 'pdf', title: 'Lectures', path: '/lib/1/paper.pdf' }, page: '3' },
-    active: 'side',
+    byTab: {
+      page: { kind: 'topic', topic: { id: 'qc', title: 'Kicked top', path: '/r/qc/research.md' } },
+      'file:1': { kind: 'doc', topic: null, doc: { type: 'pdf', title: 'Lectures', path: '/lib/1/paper.pdf' }, page: '3' },
+    },
+    active: 'file:1',
+    visible: { left: 'page', right: 'file:1' },
+    paneOf: { page: 'left', 'file:1': 'right', discussion: 'right' },
   };
   const focus = client.paneFocus(all, 'global');
-  assert.equal(focus.doc.path, '/lib/1/paper.pdf', 'the pane used last');
+  assert.equal(focus.doc.path, '/lib/1/paper.pdf', 'the tab used last');
   const block = client.contextBlock(client.focusContext(focus, { selection: 'A passage' }));
   assert.match(block, /- PDF: Lectures — \/lib\/1\/paper\.pdf\n- Page: 3\n- Open beside it: Topic: Kicked top — \/r\/qc\/research\.md\n- Selected passage:/);
   assert.deepEqual(client.chipsOf(client.focusContext(focus)).map((c) => c.label), ['PDF', 'Page', 'Beside']);
-  assert.equal(client.paneFocus(all, 'main').beside.path, '/lib/1/paper.pdf');
-  const same = { ...all, side: { kind: 'doc', topic: null, doc: { type: 'markdown', title: 'Kicked top', path: '/R/QC/research.md' } } };
-  assert.equal(client.paneFocus(same, 'main').beside, undefined, 'nothing beside when both name the same note');
-  assert.equal(client.paneFocus({ main: { kind: 'universe' }, side: null, active: 'main' }, 'global').beside, undefined);
+  assert.equal(client.paneFocus(all, 'page').beside.path, '/lib/1/paper.pdf');
+  const talking = { ...all, visible: { left: 'page', right: 'discussion' } };
+  assert.equal(client.paneFocus(talking, 'discussion').topic.path, '/r/qc/research.md', 'the discussion is about what the other pane shows');
+  assert.equal(client.paneFocus(talking, 'discussion').beside, undefined, 'and the discussion itself is not beside it');
+  const same = { ...all, byTab: { ...all.byTab, 'file:1': { kind: 'doc', topic: null, doc: { type: 'markdown', title: 'Kicked top', path: '/R/QC/research.md' } } } };
+  assert.equal(client.paneFocus(same, 'page').beside, undefined, 'nothing beside when both name the same note');
+  assert.equal(client.paneFocus({ byTab: { page: { kind: 'universe' } }, active: 'page', visible: { left: 'page', right: null }, paneOf: { page: 'left' } }, 'global').beside, undefined);
+  assert.equal(client.paneFocus({ byTab: {}, active: 'closed', visible: {}, paneOf: {} }, 'global').kind, 'universe', 'a closed tab falls back to the page');
   assert.deepEqual(client.focusContext({ topic: null }), { topic: null, doc: null, page: '', section: '', lines: '', selection: '' }, 'no beside key when nothing is beside');
+});
+
+test('discussion: what the AI links opens in Atlas: lines, paths in the research, WSL paths', () => {
+  const win = 'F:\\R';
+  assert.deepEqual(client.chatLocation('F:\\R\\qc\\research.md:42', win), { path: 'F:\\R\\qc\\research.md', anchor: 'L42' });
+  assert.deepEqual(client.chatLocation('qc/notes/a.md#current-work', win), { path: 'F:\\R\\qc\\notes\\a.md', anchor: 'current-work' });
+  assert.deepEqual(client.chatLocation('./qc/main.tex:7:3', win), { path: 'F:\\R\\qc\\main.tex', anchor: 'L7' });
+  assert.deepEqual(client.chatLocation('/mnt/f/R/x.md', win), { path: 'F:\\R\\x.md', anchor: '' }, 'a Windows drive seen from WSL');
+  const wsl = '\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\research';
+  assert.deepEqual(client.chatLocation('/home/me/research/qc/research.md', wsl), { path: '\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\research\\qc\\research.md', anchor: '' }, 'a Linux path inside the WSL the research lives in');
+  assert.deepEqual(client.chatLocation('/home/me/research/qc/research.md:3', '/home/me/research'), { path: '/home/me/research/qc/research.md', anchor: 'L3' }, 'on Linux a Linux path is itself');
+  assert.deepEqual(client.chatLocation('file:///C:/R/a.md', win), { path: 'C:/R/a.md', anchor: '' });
+  assert.equal(client.chatLocation('  ', win), null);
+  const el = (tag, attrs = {}, cls = '') => ({
+    getAttribute: (k) => (k in attrs ? attrs[k] : null),
+    textContent: attrs.text || '',
+    closest(sel) {
+      if (sel.includes('fileLink') && ((tag === 'button' && /fileLink|fileMention/.test(cls)) || 'data-file-path' in attrs)) return this;
+      if (sel === 'a[href]' && tag === 'a' && 'href' in attrs) return this;
+      return null;
+    },
+  });
+  assert.deepEqual(client.conversationLink(el('button', { title: 'F:\\R\\qc\\a.md:5' }, '_fileLink_x1 a'), win), { path: 'F:\\R\\qc\\a.md', anchor: 'L5' }, "DSH's file button");
+  assert.deepEqual(client.conversationLink(el('button', { text: 'qc/b.md' }, '_fileMention_y'), win), { path: 'F:\\R\\qc\\b.md', anchor: '' }, 'no title: its text');
+  assert.deepEqual(client.conversationLink(el('a', { href: 'https://arxiv.org/abs/2401.01234' }), win), { url: 'https://arxiv.org/abs/2401.01234' });
+  assert.deepEqual(client.conversationLink(el('a', { href: 'qc/c.md#L9' }), win), { path: 'F:\\R\\qc\\c.md', anchor: 'L9' });
+  for (const href of ['#top', 'mailto:a@b.c', '/aitp-atlas/api/raw?path=x']) assert.equal(client.conversationLink(el('a', { href }), win), null, href);
+  assert.equal(client.conversationLink(el('span'), win), null);
+  assert.equal(client.conversationLink(null, win), null);
 });
 
 test('themes: auto follows DSH, day and night are fixed, the config adds safe themes', () => {
@@ -356,7 +425,7 @@ test('themes: auto follows DSH, day and night are fixed, the config adds safe th
 test('themes: every token the styles use is defined by both themes, and night keeps the observatory', () => {
   const used = new Set([...client.STYLES.matchAll(/var\(--([a-z0-9-]+)/g)].map((m) => m[1]));
   // Set by PDF.js on its text layer, or by Atlas inline: not theme tokens.
-  const own = new Set(['dir', 'serif', 'sans', 'mono', 'companion-w', 'side-w', 'tab-w', 'right-w', 'write-split', 'total-scale-factor', 'min-font-size', 'min-font-size-inv', 'text-scale-factor', 'font-height', 'rotate', 'scale-x']);
+  const own = new Set(['dir', 'serif', 'sans', 'mono', 'write-split', 'total-scale-factor', 'min-font-size', 'min-font-size-inv', 'text-scale-factor', 'font-height', 'rotate', 'scale-x']);
   const missing = (base) => [...used].filter((t) => !own.has(t) && !t.startsWith('dsw-') && !(t in client.THEME_TOKENS[base]));
   assert.deepEqual(missing('night'), []);
   assert.deepEqual(missing('day'), []);
@@ -385,12 +454,11 @@ test('papers: a paper link opens beside the page, read in Atlas; other sites sta
   assert.equal(client.paperLink('https://doi.org/10.1103/PhysRevB.99.012345').doi, '10.1103/PhysRevB.99.012345');
   assert.equal(client.paperLink('https://inspirehep.net/literature/1234567').recid, '1234567');
   for (const other of ['https://github.com/x/y', 'https://arxiv.org/list/hep-th/new', 'mailto:a@b.c', 'not a url', 'https://doi.org/nope']) assert.equal(client.paperLink(other), null, other);
-  const places = new Set();
-  assert.equal(client.paneFor({ view: 'paper', url: 'https://arxiv.org/abs/1' }, 'main', { view: 'home' }, (p) => places.has(p)), 'side');
-  assert.equal(client.paneFor({ view: 'paper', url: 'https://arxiv.org/abs/1', full: true }, 'side', null, (p) => places.has(p)), 'main', 'open as the page');
-  assert.equal(client.sideKey({ url: 'https://arxiv.org/abs/1' }), 'url:https://arxiv.org/abs/1');
-  assert.equal(client.sideKey({ path: 'C:\\R\\A.md' }), 'c:/r/a.md');
+  const none = () => false;
+  assert.equal(client.routeFor({ view: 'paper', url: 'https://arxiv.org/abs/1' }, '', none), 'paper', 'in a tab of its own');
+  assert.equal(client.routeFor({ view: 'paper', url: 'https://arxiv.org/abs/1', full: true }, '', none), 'page', 'open as the page');
   assert.equal(client.sideTitle({}, { url: 'https://arxiv.org/abs/2401.01234v5' }), 'arXiv 2401.01234v5');
+  assert.equal(client.tabLabel({ kind: 'paper', url: 'https://arxiv.org/abs/2401.01234v5' }, { view: 'home' }, {}), 'arXiv 2401.01234v5');
   const ov = { topics: { '': { id: '', title: 'Root', file: '/r/research.md' }, qc: { id: 'qc', title: 'Kicked top: spectral statistics', file: '/r/qc/research.md', parent: '' }, b: { id: 'qc/b', title: 'Level spacing', file: '/r/qc/b/research.md', parent: 'qc' } } };
   assert.deepEqual(client.topicChoices(ov).map((c) => c.label), ['Kicked top', 'Kicked top › Level spacing'], 'branches under their topic, the root left out');
 });
@@ -412,7 +480,7 @@ test('write: a new note or LaTeX document goes in its topic folder, named from i
   assert.equal(client.writeTarget('/r/qc/research.md', 'notes', '  ', 'md'), '', 'a title is needed');
 });
 
-test('write: the PDF stays to the right of the source until the page is phone-narrow', () => {
+test('write: the source fills its pane, a helper panel sits beside it until the pane is phone-narrow, the PDF is its own tab', () => {
   const block = (width) => {
     const start = client.STYLES.indexOf(`@container (max-width: ${width}px) {`);
     assert.ok(start >= 0, `a ${width}px block`);
@@ -425,5 +493,8 @@ test('write: the PDF stays to the right of the source until the page is phone-na
   };
   assert.ok(!block(1000).includes('.atlas-write-split'), 'not stacked at 1000px');
   assert.ok(block(640).includes('.atlas-write-split { grid-template-columns: minmax(0, 1fr)'), 'stacked only below 640px');
-  assert.match(client.STYLES, /\.atlas-write-split \{ display: grid; grid-template-columns: minmax\(240px, var\(--write-split, 50%\)\) 10px minmax\(260px, 1fr\)/);
+  assert.match(client.STYLES, /\.atlas-write-split \{ display: grid; grid-template-columns: minmax\(240px, var\(--write-split, 64%\)\) 10px minmax\(220px, 1fr\)/);
+  assert.match(client.STYLES, /\.atlas-write-split\.is-solo \{ grid-template-columns: minmax\(0, 1fr\); \}/, 'no panel open: the source alone');
+  assert.ok(!/\.atlas-write-pane \.atlas-pdf/.test(client.STYLES), 'no PDF inside the workspace');
+  assert.match(client.STYLES, /\.atlas-tab-body\.is-hidden \{ content-visibility: hidden;/, 'a hidden tab keeps its place and scroll');
 });

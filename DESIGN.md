@@ -49,13 +49,13 @@ files when it is shown.
 | Activity | What waits on the researcher; discussions, teams and sessions by topic | Discuss a waiting decision, decide among its options, start a team |
 | Library | Shelf, by topic, knowledge index; Discover and add | Ask about a new paper; papers for the open questions |
 | Learn | A topic's question, reading route, concept map | Explain at my level, check my understanding |
-| Write | LaTeX beside its PDF, problems, SyncTeX, citations | (through the documents it builds) |
+| Write | LaTeX with its PDF in a Preview tab, problems, SyncTeX, citations | (through the documents it builds) |
 | Search | Notes, knowledge entries and papers holding every word | (through what it opens) |
 
 ## Discussing in place
 
 Asking should not move the researcher away from what prompted the question. A discussion is
-therefore a real DSH session shown beside the page, not a chat Atlas imitates:
+therefore a real DSH session shown in a tab beside what it is about, not a chat Atlas imitates:
 
 - **Real sessions.** Atlas creates the session in the research root's workspace, names it
   `Atlas · topic · question`, and sends the context block with the question. Tools, approvals,
@@ -191,3 +191,34 @@ sources, standalone figures and old versions (a census of one tree found about 5
 document class), and the notes say which documents matter. A linked section stands for its document
 (`mainFileOf`); a standalone figure is not a document.
 
+## 0.8 (2026-11-17): tabs in two panes
+
+The 0.6 side panel had fixed places: the page on the left, a file and the discussion on the right,
+side by side or as two tabs. Now every view is a tab, and two panes hold the tabs: drag a tab to
+reorder it, onto the other pane to move it, or to the edge to split; drag the divider to resize. One
+rule still decides where an opened thing lands (`routeFor`): another view, a place or *Open as the
+page* fills the page tab; a section of the document a tab shows stays in that tab, as does a jump
+inside a LaTeX workspace; every other file or paper gets a tab of its own (the one it already has, if
+open) in the pane that shows files, and from the discussion, in the pane opposite it. All tab bodies
+are drawn in one layer and only positioned per pane, so a move never remounts one: a discussion, a
+PDF's place and an unsaved edit survive it, and a hidden tab keeps its scroll
+(`content-visibility: hidden`). The layout is kept per window; the 0.7 side panel's file comes back as
+a tab on the right.
+
+What belonged to the two panes now belongs to a tab: the focus a view publishes, unsaved edits, a
+topic's section ids. The ask bar reads the tab used last; the discussion is about what the other pane
+shows, and the tab there is what it is told is open beside.
+
+**The compiled PDF is a Preview tab.** The PDF used to share the LaTeX workspace with the source,
+squeezed into half of one pane. It is now a tab labelled *Preview*, opened in the pane opposite the
+source when the document opens with a PDF, after each build, and on a jump to it; a build reloads it
+at the page it showed. The workspace publishes each document's PDF, build time and SyncTeX mark, and
+registers what a Ctrl+click in the Preview asks of it (the source line). Outline, Problems and Cite
+are a panel beside the source, closed until asked for, so the source has the pane.
+
+**Links in the discussion open in Atlas.** DSH draws a file the AI names as a button and opens it in
+its own right sidebar, which belongs to a chat session; inside Atlas there is none, and DSH reported
+"no session surface is mounted". Atlas now takes those clicks first: a file opens in a tab beside the
+discussion (`path:line` at its line, a relative path inside the research, a Linux path inside the WSL
+the research lives in), a paper in a paper tab, any other site in the browser. *Add to discussion*
+falls back to the clipboard again: a callback named `navigator` had hidden the browser's.

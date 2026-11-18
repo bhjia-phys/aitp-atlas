@@ -195,7 +195,7 @@ function useMarkdownDelegate(baseFile, onNavigate) {
           onNavigate({ path: rel ? joinPath(dirOf(baseFile), rel) : baseFile, anchor });
         }
         : undefined,
-      // A paper's web address opens beside the page (read in Atlas); any other site in the browser.
+      // A paper's web address opens in a tab (read in Atlas); any other site in the browser.
       openExternalLink: (url) => (onNavigate && paperLink(url) ? onNavigate({ url }) : window.open(url, '_blank', 'noopener')),
       fileImages: {
         resolve: (target) => (typeOf(fileOf(target)) === 'image' ? rawUrl(fileOf(target)) : undefined),

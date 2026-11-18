@@ -28,12 +28,14 @@ Learn, Write), Search (`/`), Add or write (`+`, or N), Ask (Ctrl+J) and the them
   a passage can be asked about or kept; LaTeX, BibTeX, code, tables, notebooks, images, video and
   folders. A link opens its target at the place it names: a heading, an `<a id>` anchor, a line
   (`#L849`), or a PDF page (`paper.pdf#page=13`).
-- **Beside the page**: a file you open (a link in a note, a topic's contents, the Library, Search,
-  Learn) opens in a panel beside the page, which stays where it was. Links inside the panel open
-  there too, with Back; *Open as the page* moves the file into the page. Topics and the other
-  places fill the page as before. With a discussion open as well, page, file and discussion stand
-  side by side; when the window cannot fit three columns, the file and the discussion share the
-  side as two tabs. A discussion started from either is told what is open beside it.
+- **Tabs in two panes**: every view is a tab: the page (the Universe, a topic, the Library and the
+  other places), each file or paper you open (a link in a note, a topic's contents, the Library,
+  Search, Learn), the discussion, and a LaTeX document's compiled PDF (*Preview*). A file opens in
+  a tab of its own in the right pane, and the page stays where it was; *Open as the page* moves it
+  into the page. Drag a tab to reorder it, onto the other pane to move it, or to the edge to split;
+  drag the line between the panes to resize them (double-click for half and half). Moving a tab
+  never reloads it, and the tabs come back as you left them. A discussion is told what the other
+  pane shows, and the files and papers it names open in a tab beside it.
 - **Library**: the **Shelf**, **By topic**, the **Knowledge index**, and **Discover and add**.
 - **Learn**: a topic's question, its reading route (from the note's own route section or the route
   note it links; stages whose paper is in the library open its PDF here), and a concept map drawn
@@ -43,11 +45,13 @@ Learn, Write), Search (`/`), Add or write (`+`, or N), Ask (Ctrl+J) and the them
   maps and the abstracts of their TeX sources), with the words marked.
 - **Write**: the LaTeX documents your topic notes link, by topic and newest first, each with whether
   its PDF is built (a linked section stands for its document; standalone figures are left out).
-  One opens as the page, its source beside its PDF.
+  One opens as the page, with its compiled PDF in a *Preview* tab in the other pane: Build (Ctrl+B)
+  refreshes it, and Ctrl+click jumps between a source line and its place in the PDF. Outline,
+  Problems and Cite open in a panel beside the source.
 - **Add or write** (`+` or N, anywhere): a paper by its arXiv ID, link, DOI or INSPIRE link, looked
-  up and added to the library for a topic, or read first beside the page; a note or a LaTeX document,
-  made from the template in a topic's folder (`notes/`, `manuscript/`, or one you name): a note opens
-  beside the page in the editor, a document as the page. Each starts with the topic in view.
+  up and added to the library for a topic, or read first in a tab; a note or a LaTeX document, made
+  from the template in a topic's folder (`notes/`, `manuscript/`, or one you name): a note opens in a
+  tab in the editor, a document as the page. Each starts with the topic in view.
 
 ## Bringing material in
 

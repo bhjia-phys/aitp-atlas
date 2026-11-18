@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------- papers ---
-// A paper a note cites by its web address (arXiv, a DOI, an INSPIRE record) opens beside the page
+// A paper a note cites by its web address (arXiv, a DOI, an INSPIRE record) opens in a tab
 // instead of in a browser: its details, and for arXiv its PDF read through Atlas (fetched on the
 // researcher's click, never saved). One step adds it to the library for the topic it serves, with
 // a paper map that says so; the library's copy then opens in its place. A paper the library has
