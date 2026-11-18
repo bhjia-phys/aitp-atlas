@@ -1,0 +1,1 @@
+- subagent(name={{name}}, description={{description}}, prompt={{prompt}}{{routeFields}}){{oneShot}}
