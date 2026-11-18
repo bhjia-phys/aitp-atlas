@@ -1321,338 +1321,229 @@ window.__ModuleLoader__.load({
     `;
 
     // ===== client/20-universe.js
-    // --------------------------------------------------------------- universe ---
-    // The whole research as a star chart: directions are sectors in the root note's
-    // order, topics stars on the inner ring, branches on the outer rings, brightness
-    // how recently their Current work moved. Below it, the same research as a list.
-
-    const CHART = { size: 1000, c: 500, r: 318, rings: [0.42, 0.66, 0.84, 0.97] };
-
-    function mulberry32(seed) {
-      return () => {
-        seed |= 0;
-        seed = (seed + 0x6d2b79f5) | 0;
-        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-    }
-
-    function glowOf(t) {
-      const days = daysSince(t.latest && t.latest.date ? t.latest.date : t.date);
-      return days <= 7 ? 0.62 : days <= 30 ? 0.34 : days <= 90 ? 0.14 : 0;
-    }
-
-    /** Sectors, stars, tree edges and labels for the chart, from the overview alone. */
-    function layoutUniverse(ov) {
-      const { c, r, rings } = CHART;
-      const leafMemo = new Map();
-      const leaves = (id) => {
-        if (leafMemo.has(id)) return leafMemo.get(id);
-        const t = ov.topics[id];
-        const n = t && t.children.length ? t.children.reduce((sum, k) => sum + leaves(k), 0) : 1;
-        leafMemo.set(id, n);
-        return n;
-      };
-      const sectors = ov.directions.map((d) => ({ key: d.slug, label: d.heading, color: directionColor(ov, d.slug), ids: d.topics }));
-      const beyond = [...ov.other, ...ov.unreached];
-      if (beyond.length) sectors.push({ key: '__beyond', label: 'Beyond the directions', color: otherColor(), ids: beyond });
-      const weightOf = (s) => Math.max(0.9, s.ids.reduce((sum, id) => sum + leaves(id), 0));
-      const total = sectors.reduce((sum, s) => sum + weightOf(s), 0) || 1;
-      const gap = sectors.length > 1 ? 0.045 : 0;
-      const span = Math.PI * 2 - gap * sectors.length;
-      const stars = [];
-      const edges = [];
-      const place = (id, a0, a1, depth, sector, parent) => {
-        const t = ov.topics[id];
-        if (!t) return;
-        const theta = (a0 + a1) / 2;
-        const radius = r * rings[Math.min(depth, rings.length - 1)];
-        const star = {
-          id, t, depth, theta, sector: sector.key, color: sector.color, parent: parent ? parent.id : '',
-          x: c + radius * Math.cos(theta), y: c + radius * Math.sin(theta),
-          size: depth === 0 ? 6.5 + Math.min(4, t.threads / 2.5) : depth === 1 ? 4.4 + Math.min(1.6, t.threads / 4) : 3.3,
-          glow: glowOf(t),
-        };
-        stars.push(star);
-        if (parent) edges.push({ from: parent, to: star, color: sector.color });
-        const sum = t.children.reduce((n, k) => n + leaves(k), 0);
-        let a = a0;
-        for (const k of t.children) {
-          const share = ((a1 - a0) * leaves(k)) / sum;
-          place(k, a, a + share, depth + 1, sector, star);
-          a += share;
+    // Map: the programme, without a dashboard around it. Map and Desk project the same
+    // ordered catalogue. Empty directions stay in the legend but take no angular area.
+    function atlasStarCatalogue(ov) {
+      const topics = ov.topics || {};
+      const seen = new Set();
+      const collect = (roots) => {
+        const members = [], stack = [...roots].reverse().map((id) => [id, 0]);
+        while (stack.length) {
+          const [id, depth] = stack.pop(), t = topics[id];
+          if (!id || !t || seen.has(id)) continue;
+          seen.add(id);
+          members.push({ id, t, depth });
+          for (const child of [...(t.children || [])].reverse()) stack.push([child, depth + 1]);
         }
+        return members;
       };
-      let angle = -Math.PI / 2 + gap / 2;
+      const sectors = (ov.directions || []).map((d) => ({ key: d.slug, title: d.heading.replace(/^\d+\.\s*/, ''), color: directionColor(ov, d.slug), members: collect(d.topics || []) }));
+      const beyond = collect([...(ov.other || []), ...(ov.unreached || []), ...Object.keys(topics).sort()]);
+      if (beyond.length) sectors.push({ key: null, title: 'Outside the directions', color: otherColor(), members: beyond });
+      return sectors;
+    }
+
+    // A unit angle runs left-to-right around the dome (or clockwise around the globe).
+    // Use overview.scannedAt, never the wall clock: refreshing the snapshot can change
+    // the active-this-week classification, simply redrawing it cannot.
+    function atlasChartLayout(ov, geometry) {
+      const { cx, cy, rx, ry, start, span, keepOut, width, height } = geometry;
+      const sectors = atlasStarCatalogue(ov);
+      const count = sectors.reduce((n, s) => n + s.members.length, 0);
+      const point = (angle, radial) => ({ x: cx + rx * Math.cos(angle) * radial, y: cy + ry * Math.sin(angle) * radial });
+      const overlaps = (a, b) => a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
+      const box = (p, w, h) => ({ left: p.x - w / 2, right: p.x + w / 2, top: p.y - h / 2, bottom: p.y + h / 2 });
+      const stars = [], labels = [], edges = [], byId = new Map();
+      let cursor = 0;
       for (const s of sectors) {
-        const w = (weightOf(s) / total) * span;
-        s.a0 = angle;
-        s.a1 = angle + w;
-        const sum = s.ids.reduce((n, id) => n + leaves(id), 0) || 1;
-        let a = s.a0;
-        for (const id of s.ids) {
-          const share = (w * leaves(id)) / sum;
-          place(id, a, a + share, 0, s, null);
-          a += share;
-        }
-        angle += w + gap;
-      }
-      // Labels for the inner-ring topics, at the rim, most recently active first; one that would collide is left to the tooltip.
-      const boxes = [];
-      const labels = [];
-      const firsts = stars.filter((s) => s.depth === 0).sort((a, b) => b.glow - a.glow || b.t.threads - a.t.threads);
-      for (const s of firsts) {
-        const text = shortTitle(s.t.title, 24);
-        const cos = Math.cos(s.theta);
-        const sin = Math.sin(s.theta);
-        const lr = r + 20;
-        const x = c + lr * cos;
-        const y = c + lr * sin + 4;
-        const anchor = cos > 0.2 ? 'start' : cos < -0.2 ? 'end' : 'middle';
-        const width = text.length * 6.3;
-        const left = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
-        const top = y + (anchor === 'middle' ? (sin < 0 ? -8 : 8) : 0) - 11;
-        const box = { left: left - 3, right: left + width + 3, top: top - 2, bottom: top + 15 };
-        if (box.left < 4 || box.right > CHART.size - 4 || boxes.some((b) => !(box.right < b.left || box.left > b.right || box.bottom < b.top || box.top > b.bottom))) continue;
-        boxes.push(box);
-        labels.push({ id: s.id, text, x, y: y + (anchor === 'middle' ? (sin < 0 ? -8 : 8) : 0), anchor, star: s });
-      }
-      return { sectors, stars, edges, labels };
-    }
-
-    function StarChart({ ov, go, dim, focusSector, onFocusSector }) {
-      const layout = useMemo(() => layoutUniverse(ov), [ov]);
-      const byId = useMemo(() => new Map(layout.stars.map((s) => [s.id, s])), [layout]);
-      const field = useMemo(() => {
-        const rand = mulberry32(20261115);
-        return Array.from({ length: 280 }, () => ({ x: rand() * CHART.size, y: rand() * CHART.size, r: 0.3 + rand() * 1.1, o: 0.1 + rand() * 0.5 }));
-      }, []);
-      const [hover, setHover] = useState(null);
-      const box = useRef(null);
-      const [width, setWidth] = useState(640);
-      useLayoutEffect(() => {
-        const el = box.current;
-        if (!el || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => setWidth(el.clientWidth || 640));
-        ro.observe(el);
-        setWidth(el.clientWidth || 640);
-        return () => ro.disconnect();
-      }, []);
-      const related = useMemo(() => {
-        if (!hover) return null;
-        const set = new Set([hover]);
-        for (let s = byId.get(hover); s && s.parent; s = byId.get(s.parent)) set.add(s.parent);
-        const down = (id) => {
-          const t = ov.topics[id];
-          if (t) for (const k of t.children) {
-            set.add(k);
-            down(k);
+        s.a0 = start + span * cursor / (count || 1);
+        for (const member of s.members) {
+          const index = cursor++;
+          const angle = start + span * (index + 0.5) / count;
+          // Spread neighbours in radius with a low-discrepancy sequence. Select from
+          // positions on their own ray, never push a star into a neighbouring sector.
+          const phase = ((index + 1) * 0.61803398875) % 1;
+          let p;
+          for (let j = 0; j <= 32; j++) {
+            const r = 0.38 + 0.56 * ((phase + j / 33) % 1);
+            p = point(angle, r);
+            if (!keepOut || !overlaps(box(p, 20, 20), keepOut)) break;
           }
-        };
-        down(hover);
-        for (const [a, b] of ov.web) {
-          if (a === hover) set.add(b);
-          if (b === hover) set.add(a);
+          const last = Date.parse(member.t.latest?.date || '');
+          const days = Math.max(0, (ov.scannedAt - last) / 86400000);
+          const size = days <= 7 ? 2.6 : days <= 30 ? 2.2 : 1.7;
+          const star = { ...member, ...p, angle, size, direction: s.title, sector: s.key, color: s.color };
+          byId.set(member.id, star);
+          stars.push(star);
         }
-        return set;
-      }, [hover, byId, ov]);
-      const faded = (s) => (related && !related.has(s.id)) || (focusSector && s.sector !== focusSector) || (dim && !dim.has(s.id));
-      const { c, r, rings } = CHART;
-      const scale = width / CHART.size;
-      const hovered = hover ? byId.get(hover) : null;
-      const arcPath = (a0, a1, radius) => {
-        const large = a1 - a0 > Math.PI ? 1 : 0;
-        return `M ${c + radius * Math.cos(a0)} ${c + radius * Math.sin(a0)} A ${radius} ${radius} 0 ${large} 1 ${c + radius * Math.cos(a1)} ${c + radius * Math.sin(a1)}`;
+        s.a1 = start + span * cursor / (count || 1);
+      }
+      for (const star of stars) {
+        const parent = byId.get(star.t.parent);
+        if (parent) edges.push({ from: parent, to: star });
+      }
+      const obstacles = [...(keepOut ? [keepOut] : []), ...stars.map((s) => box(s, 12, 12))];
+      for (const s of sectors) {
+        if (!s.members.length) continue;
+        const angle = (s.a0 + s.a1) / 2;
+        // Clamp long labels to the viewport; omit a colliding label, not its marks
+        // or its accessible name. The rendered textLength enforces this footprint.
+        const text = shortTitle(s.title, geometry.labelLimit || 38), length = Math.min(width - 16, [...text].reduce((w, ch) => w + (/[^\u0000-\u00ff]/.test(ch) ? 12 : 7), 0));
+        const p = point(angle, 0.98);
+        p.x = Math.max(8 + length / 2, Math.min(width - 8 - length / 2, p.x));
+        const bounds = box(p, length + 8, 20);
+        if (bounds.top < 0 || bounds.bottom > height || obstacles.some((b) => overlaps(bounds, b))) continue;
+        obstacles.push(bounds);
+        labels.push({ ...p, text, length, bounds, sector: s.key, title: s.title });
+      }
+      return { ...geometry, sectors, stars, edges, labels };
+    }
+
+    function layoutUniverse(ov, { width = 1000, height = 740 } = {}) {
+      // Lay out in pane pixels. Scaling a fixed 1000-unit SVG into a split pane
+      // also shrank its 11.5px labels and pointer targets down to a third of size.
+      const scale = Math.min(width / 1000, height / 740);
+      return atlasChartLayout(ov, { width, height, cx: width / 2, cy: height / 2, rx: 466 * scale, ry: 327 * scale, start: -Math.PI / 2, span: Math.PI * 2, labelLimit: Math.max(12, Math.min(38, Math.floor(width / 28))) });
+    }
+
+    function atlasSkyArc(g, a, b, scale) {
+      const r = g.rx * scale, s = g.ry * scale;
+      const pt = (t) => `${g.cx + r * Math.cos(t)} ${g.cy + s * Math.sin(t)}`;
+      // Two arcs also describe a complete ellipse (a single SVG arc cannot).
+      return `M${pt(a)} A${r} ${s} 0 0 1 ${pt((a + b) / 2)} A${r} ${s} 0 0 1 ${pt(b)}`;
+    }
+
+    function ChartMarks({ g, ov, onOpen, onPoint, onLeave, onInspect, hoverSector }) {
+      return h(React.Fragment, null,
+        h('g', { 'aria-hidden': true }, g.sectors.filter((s) => s.a1 > s.a0).map((s) => h('path', { key: String(s.key), d: atlasSkyArc(g, s.a0, s.a1, 1) + ` L${g.cx} ${g.cy} Z`, fill: s.color, opacity: 'var(--wash)' }, h('title', null, s.title))),
+          [0.5, 0.75, 1].map((r) => h('path', { key: r, d: atlasSkyArc(g, g.start, g.start + g.span, r), className: 'atlas-cart-grid' })),
+          g.sectors.filter((s) => s.a1 > s.a0).map((s) => h('line', { key: 'm' + s.key, x1: g.cx, y1: g.cy, x2: g.cx + g.rx * Math.cos(s.a0), y2: g.cy + g.ry * Math.sin(s.a0), className: 'atlas-cart-grid', strokeDasharray: '1 6' })),
+          g.edges.map(({ from, to }) => h('line', { key: to.id, x1: from.x, y1: from.y, x2: to.x, y2: to.y, className: 'atlas-cart-edge' })),
+          g.labels.map((l) => h('text', { key: String(l.sector), x: l.x, y: l.y, textAnchor: 'middle', dominantBaseline: 'central', textLength: l.length, lengthAdjust: 'spacingAndGlyphs', className: cx('atlas-cart-label', hoverSector === l.sector && 'is-revealed') }, l.text))),
+        g.stars.map((s) => h('g', { key: s.id, className: 'atlas-cart-star', role: 'button', tabIndex: 0, 'data-atlas-open': true, 'aria-label': `${s.t.title} · ${s.direction}. Open topic; Arrow down for details.`,
+          onMouseEnter: (e) => onPoint(s, e.currentTarget, false), onMouseLeave: onLeave,
+          onFocus: (e) => onPoint(s, e.currentTarget, true), onBlur: onLeave,
+          onClick: (e) => onOpen(s, e),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(s, e); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); onInspect(s, e.currentTarget); }
+          } }, h('title', null, `${s.t.title} · ${s.direction}`),
+          h('circle', { cx: s.x, cy: s.y, r: s.size, fill: 'var(--star)' }), h('circle', { cx: s.x, cy: s.y, r: 10, className: 'atlas-cart-star-target' }))));
+    }
+
+    // Both skies share the mouse-to-card grace period and the keyboard path:
+    // focus the star, Down to its actions, Esc back to the same star.
+    function useAtlasStarCard(host) {
+      const [tip, setTip] = useState(null);
+      const timer = useRef(null), first = useRef(null), origin = useRef(null), suppress = useRef(false);
+      const cancel = () => clearTimeout(timer.current);
+      const close = () => { cancel(); setTip(null); };
+      useEffect(() => () => clearTimeout(timer.current), []);
+      const point = (star, el, immediate, focus = false) => {
+        cancel();
+        if (suppress.current) return;
+        const show = () => {
+          if (!host.current || !el.isConnected) return;
+          const parent = host.current.getBoundingClientRect(), a = el.getBoundingClientRect();
+          origin.current = el;
+          const left = Math.min(Math.max(4, parent.width - 284), Math.max(4, a.right - parent.left));
+          setTip({ star, left, top: Math.max(0, a.top - parent.top), flip: a.top - parent.top > parent.height * 0.6, focus });
+        };
+        if (immediate) show(); else timer.current = setTimeout(show, 300);
       };
-      const gradients = [...new Set(layout.stars.map((s) => s.color))];
-      const open = (s) => go({ view: 'doc', path: s.t.file });
-      const sky = UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night;
-      return h('div', { className: 'atlas-chart', ref: box },
-        h('svg', { viewBox: `0 0 ${CHART.size} ${CHART.size}`, role: 'group', 'aria-label': `Star chart of ${plural(ov.counts.topics, 'topic')} in ${plural(ov.directions.length, 'direction')}`, onMouseLeave: () => setHover(null) },
-          h('defs', null,
-            h('radialGradient', { id: 'atlas-core' }, h('stop', { offset: '0', stopColor: sky.coreA, stopOpacity: 0.95 }), h('stop', { offset: '0.35', stopColor: sky.coreB, stopOpacity: 0.55 }), h('stop', { offset: '1', stopColor: sky.coreC, stopOpacity: 0 })),
-            h('radialGradient', { id: 'atlas-nebula', cx: '50%', cy: '50%', r: '50%' }, h('stop', { offset: '0', stopColor: sky.nebula, stopOpacity: 0.35 }), h('stop', { offset: '1', stopColor: sky.nebulaEdge, stopOpacity: 0 })),
-            gradients.map((color, i) => h('radialGradient', { key: color, id: `atlas-glow-${i}` }, h('stop', { offset: '0', stopColor: color, stopOpacity: 0.9 }), h('stop', { offset: '1', stopColor: color, stopOpacity: 0 })))),
-          h('circle', { cx: c, cy: c, r: r * 1.12, fill: 'url(#atlas-nebula)' }),
-          h('g', { className: 'atlas-starfield', 'aria-hidden': true }, field.map((f, i) => h('circle', { key: i, cx: f.x, cy: f.y, r: f.r, fill: sky.field, opacity: f.o }))),
-          h('g', { className: 'atlas-grid', 'aria-hidden': true },
-            rings.slice(0, 3).map((k) => h('circle', { key: k, cx: c, cy: c, r: r * k, fill: 'none' })),
-            Array.from({ length: 12 }, (_, i) => {
-              const a = (i * Math.PI) / 6;
-              return h('line', { key: i, x1: c + 34 * Math.cos(a), y1: c + 34 * Math.sin(a), x2: c + r * Math.cos(a), y2: c + r * Math.sin(a) });
-            })),
-          h('g', { className: 'atlas-sectors' }, layout.sectors.filter((s) => s.a1 > s.a0).map((s) => h('path', {
-            key: s.key, d: arcPath(s.a0, s.a1, r + 7), stroke: s.color, className: cx('atlas-sector', focusSector && focusSector !== s.key && 'is-faded'),
-            onMouseEnter: () => onFocusSector && onFocusSector(s.key), onMouseLeave: () => onFocusSector && onFocusSector(null),
-          }, h('title', null, s.label)))),
-          h('g', { className: 'atlas-web', 'aria-hidden': true }, ov.web.map(([a, b]) => {
-            const p = byId.get(a);
-            const q = byId.get(b);
-            if (!p || !q) return null;
-            const lit = hover && (a === hover || b === hover);
-            // Connections across directions are always drawn; those within one direction appear for the star in focus.
-            if (!lit && p.sector === q.sector) return null;
-            const mx = c + ((p.x + q.x) / 2 - c) * 0.35;
-            const my = c + ((p.y + q.y) / 2 - c) * 0.35;
-            return h('path', { key: a + '|' + b, d: `M ${p.x} ${p.y} Q ${mx} ${my} ${q.x} ${q.y}`, className: cx('atlas-link-arc', lit && 'is-lit', (focusSector || (related && !lit)) && 'is-faded') });
-          })),
-          h('g', { className: 'atlas-edges', 'aria-hidden': true }, layout.edges.map((e) => h('line', { key: e.to.id, x1: e.from.x, y1: e.from.y, x2: e.to.x, y2: e.to.y, stroke: e.color, className: cx('atlas-edge', (faded(e.to) || faded(e.from)) && 'is-faded') }))),
-          h('g', { className: 'atlas-spokes', 'aria-hidden': true }, layout.stars.filter((s) => s.depth === 0).map((s) => h('line', { key: s.id, x1: c, y1: c, x2: s.x, y2: s.y, className: cx('atlas-spoke', faded(s) && 'is-faded') }))),
-          h('g', { className: 'atlas-core', role: 'button', tabIndex: 0, 'aria-label': `Root note: ${ov.title}`, onClick: () => go({ view: 'doc', path: ov.rootFile }), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go({ view: 'doc', path: ov.rootFile }); } } },
-            h('circle', { cx: c, cy: c, r: 44, fill: 'url(#atlas-core)' }),
-            h('circle', { cx: c, cy: c, r: 9, fill: sky.coreDot }),
-            h('title', null, ov.title)),
-          h('g', { className: 'atlas-stars' }, layout.stars.map((s) => {
-            const gi = gradients.indexOf(s.color);
-            const lit = hover === s.id;
-            return h('g', {
-              key: s.id, className: cx('atlas-star', faded(s) && 'is-faded', lit && 'is-lit'), role: 'button', tabIndex: 0,
-              'aria-label': `${s.t.title}${s.t.latest ? `; latest: ${s.t.latest.name}, ${s.t.latest.date}` : ''}`,
-              onMouseEnter: () => setHover(s.id), onFocus: () => setHover(s.id), onBlur: () => setHover(null),
-              onClick: () => open(s), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(s); } },
-            },
-              s.glow ? h('circle', { cx: s.x, cy: s.y, r: s.size * 4.2, fill: `url(#atlas-glow-${gi})`, opacity: s.glow }) : null,
-              h('circle', { cx: s.x, cy: s.y, r: s.size + 2, className: 'atlas-star-ring', strokeDasharray: s.t.reached ? undefined : '2 2' }),
-              h('circle', { cx: s.x, cy: s.y, r: s.size, fill: s.color }),
-              h('circle', { cx: s.x, cy: s.y, r: Math.max(12, s.size + 6), fill: 'transparent' }));
-          })),
-          h('g', { className: 'atlas-labels' }, layout.labels.map((l) => h('g', { key: l.id, className: cx('atlas-chart-label', faded(l.star) && 'is-faded'), 'aria-hidden': true },
-            h('line', { x1: l.star.x, y1: l.star.y, x2: c + (r + 12) * Math.cos(l.star.theta), y2: c + (r + 12) * Math.sin(l.star.theta), className: 'atlas-leader' }),
-            h('text', { x: l.x, y: l.y, textAnchor: l.anchor }, l.text))))),
-        hovered ? h(StarTip, { s: hovered, ov, left: hovered.x * scale, top: hovered.y * scale, width }) : null);
-    }
-
-    function StarTip({ s, ov, left, top, width }) {
-      const t = s.t;
-      const dir = ov.directions.find((d) => d.slug === topicDirection(ov, t.id));
-      const flip = left > width * 0.55;
-      const counts = t.counts || {};
-      const facts = [['notes', 'note'], ['papers', 'paper'], ['branches', 'branch']].filter(([k]) => counts[k]).map(([k, one]) => plural(counts[k], one, one === 'branch' ? 'branches' : undefined));
-      return h('div', { className: 'atlas-tip', style: { left: flip ? undefined : left + 16, right: flip ? width - left + 16 : undefined, top: Math.max(8, top - 24) }, role: 'tooltip' },
-        dir ? h('div', { className: 'atlas-tip-dir' }, h('span', { className: 'atlas-dot', style: { background: s.color } }), dir.heading) : null,
-        h('div', { className: 'atlas-tip-title' }, t.title),
-        t.context || t.lead ? h('div', { className: 'atlas-tip-text' }, t.context || t.lead) : null,
-        t.latest ? h('div', { className: 'atlas-tip-latest' }, h(StatusTag, { status: t.latest.status }), h('span', null, t.latest.name), h('span', { className: 'atlas-date' }, t.latest.date)) : null,
-        facts.length ? h('div', { className: 'atlas-tip-facts' }, facts.join(' · ')) : null,
-        t.reached ? null : h('div', { className: 'atlas-tip-facts' }, 'Not linked from the root or its parent note'));
-    }
-
-    function UniverseView({ overview: ov, go, filter, flash }) {
-      const words = useWords(filter);
-      const [focusSector, setFocusSector] = useState(null);
-      const dim = useMemo(() => {
-        if (words.length === 0) return null;
-        const hit = new Set();
-        for (const t of Object.values(ov.topics)) if (matches(words, t.title, t.lead, t.context, t.latest && t.latest.name)) hit.add(t.id);
-        return hit;
-      }, [ov, words]);
-      const navigate = useNavigate(go, flash);
-      usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title || 'Root note', path: ov.rootFile } }, [ov.rootFile, ov.title]);
-      const total = ov.counts;
-      const stats = [[total.topics, 'topics'], [ov.directions.length, 'directions'], [total.papers, 'papers'], [total.entries, 'knowledge entries']];
-      const activity = ov.timeline.slice(0, 14);
-      return h('div', { className: 'atlas-page is-wide' },
-        h('header', { className: 'atlas-hero' },
-          h('div', { className: 'atlas-hero-text' },
-            h('p', { className: 'atlas-kicker' }, 'Research universe'),
-            h('h1', null, ov.title),
-            ov.lead ? h('p', { className: 'atlas-lede' }, ov.lead) : null,
-            h('dl', { className: 'atlas-stats' }, stats.map(([n, label]) => h('div', { key: label }, h('dt', null, label), h('dd', null, n))))),
-          h('div', { className: 'atlas-hero-actions' },
-            h(AskMenu, { asks: total.topics === 0 ? [
-              { key: 'first-topic', label: 'Start a research topic', hint: 'Use AITP Skills if installed', prompt: 'Help me start my first research topic in this workspace. Use aitp-memory if available. Ask me what question the topic should answer, then create its research.md and link it from the root note once we agree.' },
-            ] : [
-              { key: 'next', label: 'What should I work on next?', hint: 'Across all directions', prompt: 'Look across my research programme and tell me which topic most deserves the next session, and why.' },
-              { key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' },
-              { key: 'idea', label: 'Develop a new idea', hint: 'From a seed to a concrete project', prompt: "I have a research idea I'd like to develop into a concrete project. Let's brainstorm it: I'll describe it next." },
-              { key: 'learn', label: 'Learn a topic', hint: 'Guided study with derivations', prompt: "I want to learn a topic in depth, with derivations and figures. I'll name it next; start from what I already know." },
-              { key: 'review', label: 'Review this week', hint: 'The independent review across sessions', prompt: "Review this week's research sessions against the notes: what was decided, what was left unrecorded, what a later session contradicted." },
-            ] }),
-            h(Button, { quiet: true, icon: 'note', onClick: () => go({ view: 'doc', path: ov.rootFile }) }, 'Root note'))),
-        h('section', { className: 'atlas-universe' },
-          h(StarChart, { ov, go, dim, focusSector, onFocusSector: setFocusSector }),
-          h('aside', { className: 'atlas-pulse', 'aria-label': 'Activity' },
-            h(WaitingList, { ov, go, compact: true, limit: 4 }),
-            h('h2', null, 'Recent activity'),
-            activity.length === 0 ? h(Empty, null, 'No dated Current work entries yet.') : null,
-            h('ol', null, activity.map((e, i) => {
-              const t = ov.topics[e.id];
-              const color = e.id === '' ? (UNIVERSE_COLORS[activeBase] || UNIVERSE_COLORS.night).root : directionColor(ov, topicDirection(ov, e.id));
-              return h('li', { key: i }, h('button', { type: 'button', className: 'atlas-pulse-row', onClick: () => t && go({ view: 'doc', path: t.file }) },
-                h('span', { className: 'atlas-pulse-mark', style: { background: color } }),
-                h('span', { className: 'atlas-date' }, e.date),
-                h('span', { className: 'atlas-pulse-topic' }, t ? shortTitle(t.title, 30) : 'Root note'),
-                h('span', { className: 'atlas-pulse-name' }, e.name),
-                e.status ? h(StatusTag, { status: e.status }) : null));
-            })),
-            h(Discussions, { match: () => true, title: 'Discussions', compact: true, limit: 5 }))),
-        h('div', { className: 'atlas-legend', role: 'list', 'aria-label': 'Directions' },
-          ov.directions.map((d) => h('button', {
-            key: d.slug, type: 'button', role: 'listitem', className: cx('atlas-legend-item', focusSector === d.slug && 'is-on'),
-            onMouseEnter: () => setFocusSector(d.slug), onMouseLeave: () => setFocusSector(null), onFocus: () => setFocusSector(d.slug), onBlur: () => setFocusSector(null),
-            onClick: () => { const el = document.getElementById('atlas-dir-' + d.slug); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
-          }, h('span', { className: 'atlas-dot', style: { background: directionColor(ov, d.slug) } }), h('span', null, d.heading.replace(/^\d+\.\s*/, '')), h('span', { className: 'atlas-count' }, d.topics.length))),
-          ov.other.length + ov.unreached.length ? h('span', { className: 'atlas-legend-item is-static' }, h('span', { className: 'atlas-dot', style: { background: otherColor() } }), 'Beyond the directions') : null,
-          h('span', { className: 'atlas-legend-note' }, 'Brightness: Current work in the last week, month, quarter · dashed ring: not linked')),
-        ov.directions.map((d) => h(DirectionSection, { key: d.slug, d, ov, go, words, navigate })),
-        h(TopicGroup, { title: 'Other topics', note: 'Linked from the root, outside its directions.', ids: ov.other, ov, go, words }),
-        h(TopicGroup, { title: 'Not linked from the root', note: 'A folder scan found these notes; no link from the root reaches them.', ids: ov.unreached, ov, go, words }),
-        words.length ? null : h('section', { className: 'atlas-root-sections' },
-          h('h2', null, 'From the root note'),
-          ov.beside.map((s) => h(Fold, { key: s.slug, id: 'root#' + s.slug, title: s.heading, count: s.isCurrentWork ? ov.rootThreads.length : undefined, icon: s.isCurrentWork ? 'spark' : 'note' }, () => (s.isCurrentWork
-            ? h(ThreadList, { threads: ov.rootThreads, baseFile: ov.rootFile, navigate, bare: true })
-            : h(Markdown, { text: s.markdown, baseFile: ov.rootFile, onNavigate: navigate }))))));
-    }
-
-    function DirectionSection({ d, ov, go, words, navigate }) {
-      const color = directionColor(ov, d.slug);
-      const ids = d.topics.filter((id) => matches(words, ...subtreeText(ov, id)));
-      if (words.length && ids.length === 0) return null;
-      return h('section', { className: 'atlas-direction', id: 'atlas-dir-' + d.slug, style: { '--dir': color } },
-        h('header', { className: 'atlas-direction-head' },
-          h('span', { className: 'atlas-direction-bar', 'aria-hidden': true }),
-          h('div', null, h('h2', null, d.heading), d.lead && !words.length ? h('p', { className: 'atlas-direction-lead' }, d.lead) : null)),
-        ids.length ? h('div', { className: 'atlas-cards' }, ids.map((id) => h(TopicCard, { key: id, t: ov.topics[id], ov, go }))) : null,
-        d.markdown ? h(Fold, { id: 'root#' + d.slug, title: 'No topic serves this direction yet — read it' }, () => h(Markdown, { text: d.markdown, baseFile: ov.rootFile, onNavigate: navigate })) : null);
-    }
-
-    function subtreeText(ov, id) {
-      const out = [];
-      const walk = (k) => {
-        const t = ov.topics[k];
-        if (!t) return;
-        out.push(t.title, t.lead, t.context, t.latest && t.latest.name);
-        t.children.forEach(walk);
+      useLayoutEffect(() => { if (tip?.focus) first.current?.focus(); }, [tip]);
+      const dismiss = (e) => {
+        if (e.key !== 'Escape' || !tip) return;
+        e.preventDefault(); e.stopPropagation(); close();
+        suppress.current = true; origin.current?.focus(); suppress.current = false;
       };
-      walk(id);
-      return out;
+      return { tip, first, close, cancel, dismiss, point, leave: () => { cancel(); timer.current = setTimeout(() => setTip(null), 300); }, inspect: (s, el) => point(s, el, true, true) };
     }
 
-    function TopicGroup({ title, note, ids, ov, go, words }) {
-      const list = ids.filter((id) => matches(words, ...subtreeText(ov, id)));
-      if (list.length === 0) return null;
-      return h('section', { className: 'atlas-direction is-quiet', style: { '--dir': otherColor() } },
-        h('header', { className: 'atlas-direction-head' }, h('span', { className: 'atlas-direction-bar', 'aria-hidden': true }), h('div', null, h('h2', null, title), h('p', { className: 'atlas-direction-lead' }, note))),
-        h('div', { className: 'atlas-cards' }, list.map((id) => h(TopicCard, { key: id, t: ov.topics[id], ov, go }))));
+    function ChartCard({ state, onOpen, onDiscuss }) {
+      if (!state.tip) return null;
+      const { star: s, top, left, flip } = state.tip, t = s.t;
+      return h('section', { className: cx('atlas-cart-card', flip && 'is-above'), role: 'group', 'aria-label': `${t.title} details`, style: { left, top }, onMouseEnter: state.cancel, onMouseLeave: state.leave, onFocus: state.cancel, onBlur: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) state.leave(); } },
+        h('span', { className: 'atlas-cart-caption' }, h('i', { className: 'atlas-dot', style: { background: s.color } }), s.direction),
+        h('h3', null, t.title), h('p', null, t.latest ? [t.latest.date, t.latest.name, t.latest.status].filter(Boolean).join(' · ') : 'No Current work recorded.'),
+        h('p', null, `${plural(t.threads || 0, 'entry', 'entries')} · ${(t.waiting || []).length} waiting`),
+        h('div', { className: 'atlas-cart-actions' },
+          h('button', { type: 'button', className: 'atlas-button is-small', 'data-atlas-open': true, ref: state.first, onClick: (e) => { state.close(); onOpen(s, e); } }, 'Open'),
+          h(Button, { small: true, quiet: true, onClick: () => { state.close(); onDiscuss(s); } }, 'Discuss')));
     }
 
-    const COUNT_ORDER = [['branches', 'branch'], ['notes', 'note'], ['papers', 'paper'], ['writing', 'writing'], ['reports', 'report'], ['code', 'code'], ['data', 'data']];
-
-    function TopicCard({ t, ov, go }) {
-      const color = directionColor(ov, topicDirection(ov, t.id));
-      const counts = t.counts || {};
-      return h('button', { type: 'button', className: 'atlas-card', style: { '--dir': color }, onClick: () => go({ view: 'doc', path: t.file }) },
-        h('span', { className: 'atlas-card-head' },
-          h('span', { className: 'atlas-dot is-star', style: { background: color, boxShadow: glowOf(t) ? `0 0 ${6 + glowOf(t) * 14}px ${color}` : 'none' } }),
-          h('span', { className: 'atlas-card-title' }, t.title)),
-        t.context || t.lead ? h('span', { className: 'atlas-card-text' }, t.context || t.lead) : null,
-        t.latest ? h('span', { className: 'atlas-card-latest' }, t.latest.status ? h(StatusTag, { status: t.latest.status }) : null, h('span', { className: 'atlas-card-thread' }, t.latest.name)) : null,
-        h('span', { className: 'atlas-card-foot' },
-          h('span', { className: 'atlas-card-counts' }, COUNT_ORDER.filter(([k]) => counts[k]).map(([k, icon]) => h('span', { key: k, title: `${counts[k]} ${k}` }, h(Icon, { name: GROUP_ICON[k] || icon, size: 13 }), counts[k]))),
-          t.reached ? null : h(Chip, { dot: 'var(--status-waiting)' }, 'unlinked'),
-          h('span', { className: 'atlas-date', title: t.dated === 'entry' ? 'Newest Current work entry' : 'When the note last changed' }, t.date)));
+    function UniverseView({ overview: ov, go, anchor }) {
+      const host = useRef(null), scroller = useRef(null);
+      const [size, setSize] = useState({ width: 1000, height: 740 });
+      useLayoutEffect(() => {
+        const el = host.current;
+        const measure = () => {
+          const width = el.clientWidth, height = el.clientHeight;
+          if (width && height) setSize((s) => s.width === width && s.height === height ? s : { width, height });
+        };
+        measure();
+        if (typeof ResizeObserver !== 'undefined') { const observer = new ResizeObserver(measure); observer.observe(el); return () => observer.disconnect(); }
+      }, []);
+      const g = useMemo(() => layoutUniverse(ov, size), [ov, size]);
+      const card = useAtlasStarCard(host), actions = React.useContext(AtlasActions);
+      const [zoom, setZoom] = useState(1), [list, setList] = useState(!!anchor), [legend, setLegend] = useState(false);
+      const open = (s, e) => go({ view: 'doc', path: s.t.file }, e);
+      const discuss = (s) => actions.ask(focusContext({ topic: { id: s.id, title: s.t.title, path: s.t.file } }), 'ask', `Discuss the current work on ${s.t.title}.`, `Discuss ${shortTitle(s.t.title)}`);
+      usePublishFocus({ kind: 'universe', topic: { id: '', title: ov.title, path: ov.rootFile } }, [ov.title, ov.rootFile]);
+      useEffect(() => { if (anchor) setList(true); }, [anchor]);
+      useLayoutEffect(() => {
+        const el = scroller.current;
+        if (el) { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; el.scrollTop = (el.scrollHeight - el.clientHeight) / 2; }
+      }, [zoom, list]);
+      return h('section', { className: 'atlas-map', 'aria-label': 'Research map', ref: host, onKeyDown: card.dismiss },
+        !list ? h('div', { className: 'atlas-map-scroll', ref: scroller, onScroll: card.close }, h('svg', { viewBox: `0 0 ${g.width} ${g.height}`, style: { width: `${zoom * 100}%`, height: `${zoom * 100}%` }, role: 'group', 'aria-label': `Map of ${plural(g.stars.length, 'topic')}` },
+          h(ChartMarks, { g, ov, onOpen: open, onPoint: card.point, onLeave: card.leave, onInspect: card.inspect }))) : null,
+        h('div', { className: 'atlas-map-head' }, h('button', { type: 'button', className: 'atlas-map-title', 'data-atlas-open': true, onClick: (e) => go({ view: 'doc', path: ov.rootFile }, e), title: 'Open the root note' }, ov.title),
+          h('span', { className: 'atlas-map-counts' }, [plural(ov.counts.topics, 'topic'), plural(ov.directions.length, 'direction'), plural(ov.counts.papers, 'paper'), plural(ov.counts.entries, 'knowledge entry', 'knowledge entries')].join(' · '))),
+        h('div', { className: 'atlas-map-key' }, h(Button, { small: true, onClick: () => { setLegend(!legend); card.close(); }, 'aria-expanded': legend }, legend ? 'Hide directions' : 'Directions'),
+          legend ? h('ul', null, g.sectors.map((s) => h('li', { key: String(s.key) }, h('span', { className: 'atlas-dot', style: { background: s.color } }), s.title, h('i', null, s.members.length)))) : null),
+        list ? h('div', { className: 'atlas-map-list' }, h('h2', null, 'Topics by direction'), g.sectors.map((s) => h('section', { key: String(s.key), id: s.key ? 'atlas-dir-' + s.key : undefined }, h('h3', null, s.title),
+          s.members.length ? h('ul', null, s.members.map(({ t }) => h('li', { key: t.id }, h('button', { type: 'button', className: 'atlas-link', 'data-atlas-open': true, onClick: (e) => go({ view: 'doc', path: t.file }, e) }, t.title)))) : h(TextButton, { onClick: (e) => go({ view: 'doc', path: ov.rootFile, anchor: s.key }, e) }, 'No topic yet · read direction')))) : null,
+        !g.stars.length && !list ? h('p', { className: 'atlas-map-empty' }, 'No topics in this programme yet.') : null,
+        h('div', { className: 'atlas-map-controls' }, !list ? h(React.Fragment, null,
+          h(Button, { small: true, title: 'Zoom out', 'aria-label': 'Zoom out', disabled: zoom <= 0.75, onClick: () => { card.close(); setZoom((z) => z - 0.25); } }, '−'),
+          h(Button, { small: true, title: 'Zoom in', 'aria-label': 'Zoom in', disabled: zoom >= 3, onClick: () => { card.close(); setZoom((z) => z + 0.25); } }, '+'),
+          h(Button, { small: true, title: `Zoom: ${zoom * 100}%`, onClick: () => { card.close(); setZoom(1); if (scroller.current) scroller.current.scrollTo(0, 0); } }, 'Reset')) : null,
+          h(Button, { small: true, onClick: () => { setList(!list); setLegend(false); card.close(); } }, list ? 'Show chart' : 'Topic list')),
+        h(ChartCard, { state: card, onOpen: open, onDiscuss: discuss }));
     }
+
+    const ATLAS_MAP_CSS = `
+    .atlas-cart-grid { fill:none; stroke:var(--sky-line); }
+    .atlas-cart-edge { fill:none; stroke:var(--sky-line-2); }
+    .atlas-cart-label { fill:var(--text-3); font:var(--t-cap); font-size:11.5px; font-variant-caps:all-small-caps; letter-spacing:.14em; pointer-events:none; }
+    .atlas-cart-star { cursor:pointer; outline:none; }
+    .atlas-cart-star-target { fill:transparent; }
+    .atlas-cart-star:is(:focus-visible,:hover) .atlas-cart-star-target { stroke:var(--accent); fill:var(--accent-soft); }
+    .atlas-cart-card { position:absolute; z-index:var(--z-popover); width:280px; max-width:calc(100% - var(--s-8)); box-sizing:border-box; padding:var(--s-12); border:1px solid var(--border); border-radius:var(--r-md); background:var(--raised); box-shadow:var(--shadow-2); color:var(--text-1); }
+    .atlas-cart-card.is-above { transform:translateY(-100%); }
+    .atlas-cart-card h3 { font:var(--t-h3); margin:var(--s-4) 0; overflow-wrap:anywhere; }
+    .atlas-cart-card p { font:var(--t-meta); color:var(--text-2); margin:var(--s-4) 0; }
+    .atlas-cart-caption { display:flex; gap:var(--s-8); align-items:center; font:var(--t-cap); font-variant-caps:all-small-caps; color:var(--text-3); }
+    .atlas-cart-actions,.atlas-map-controls { display:flex; gap:var(--s-4); }
+    .atlas-map { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-rows:auto minmax(0,1fr) auto; gap:var(--s-8); position:relative; isolation:isolate; height:100%; min-height:240px; padding:var(--s-16); box-sizing:border-box; background:var(--surface); }
+    .atlas-map-scroll { position:absolute; inset:0; overflow:auto; z-index:-1; background:radial-gradient(ellipse at center,var(--accent-soft),transparent 68%); }
+    .atlas-map-scroll svg { display:block; margin:auto; }
+    .atlas-map-head,.atlas-map-key,.atlas-map-controls { align-self:start; justify-self:start; border:1px solid var(--border); background:color-mix(in srgb,var(--surface) 90%,transparent); border-radius:var(--r-md); }
+    .atlas-map-head { min-width:0; max-width:100%; padding:var(--s-8) var(--s-12); }
+    .atlas-map-title { display:block; max-width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font:var(--t-h3); color:var(--text-1); background:none; border:none; padding:0; cursor:pointer; }
+    .atlas-map-title:hover { text-decoration:underline; }
+    .atlas-map-counts { display:block; font:var(--t-meta); color:var(--text-2); }
+    .atlas-map-key { position:relative; justify-self:end; z-index:1; }
+    .atlas-map-key ul { position:absolute; right:0; top:100%; max-height:40vh; overflow:auto; width:max-content; max-width:min(280px,80cqw); list-style:none; margin:0; padding:var(--s-12); border:1px solid var(--border); background:var(--raised); border-radius:var(--r-md); box-shadow:var(--shadow-2); }
+    .atlas-map-key li { display:flex; align-items:baseline; gap:var(--s-8); font:var(--t-meta); padding:var(--s-4) 0; }
+    .atlas-map-key i { margin-left:auto; font:var(--t-count); }
+    .atlas-map-controls { grid-row:3; grid-column:1/-1; padding:var(--s-4); }
+    .atlas-map-list,.atlas-map-empty { grid-row:2; grid-column:1/-1; }
+    .atlas-map-list { overflow:auto; padding:var(--s-16); }
+    .atlas-map-list h2 { font:var(--t-h2); } .atlas-map-list h3 { font:var(--t-h3); }
+    .atlas-map-empty { place-self:center; font:var(--t-count); color:var(--text-2); }
+    `;
 
     // ===== client/30-topic.js
     // ------------------------------------------------------------------ topic ---
@@ -7468,7 +7359,7 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || document.getElementById('aitp-atlas-styles')) return;
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
-      style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS;
+      style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS + '\n' + ATLAS_MAP_CSS;
       document.head.appendChild(style);
     }
 
