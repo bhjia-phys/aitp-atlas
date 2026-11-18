@@ -23,6 +23,10 @@ return {
       }));
     ctx.slots.inject(CONVERSATION_SLOT, () =>
       ctx.slots.register({ name: CONVERSATION_SLOT }, AtlasConversationPanel));
+    // Optional chrome services may appear or be disposed after Atlas mounts.
+    for (const name of ['layout', 'shortcuts']) ctx.inject([name], scope => {
+      scope.effect(() => atlasBindChromeService(name, scope.get(name)), 'aitp-atlas: ' + name);
+    });
     // Agent Teams, the way DSH's own team control reaches it; absent, Atlas starts no teams.
     ctx.inject(['remote', 'remote.agentTeams'], (scope) => {
       scope.effect(() => {

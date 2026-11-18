@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const version = JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8')).version;
 const dir = path.join(here, 'client');
 const parts = readdirSync(dir).filter((f) => f.endsWith('.js')).sort();
 const body = parts.map((file) => `// ===== client/${file}\n${readFileSync(path.join(dir, file), 'utf8').trimEnd()}\n`).join('\n');
@@ -17,6 +18,7 @@ window.__ModuleLoader__.load({
   id: 'aitp-atlas',
   factory(require) {
     'use strict';
+    const ATLAS_VERSION = ${JSON.stringify(version)};
 ${indented}
   },
 });
