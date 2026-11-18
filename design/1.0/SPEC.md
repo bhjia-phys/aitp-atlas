@@ -18,14 +18,13 @@ Everything below changes that; what is not mentioned keeps its current behavior.
 - **P1 Conversation first.** The Desk opens on a composer. Places are context opened beside a
   conversation, not gates in front of it.
 - **P2 Everything is a tab.** At most two panes; the pane strips are the only row of chrome.
-- **P3 Content gets the screen.** Chrome is at most 40 px tall plus a 56 px rail, both collapsible;
+- **P3 Content gets the screen.** The only persistent Atlas chrome is the 40 px pane strip; DSH owns the left sidebar;
   Focus removes all of it.
 - **P4 Topics own knowledge.** Discussions and teams are *filed* to a topic; they can start unfiled
   and move. Filing is an index entry, never a copy of note content.
 - **P5 AITP is the protocol.** Atlas adds no memory layer. Its registries are interface state in
-  the state directory; research material lives in topic folders as AITP lays them out.
-- **P6 Reviewable changes.** Every edit an AI makes to a note is reviewable edit by edit before it
-  stands (the existing review panel).
+  the state directory; research material lives in topic folders as AITP lays them out. Workspace state is scoped by the configured research root, not merely the browser origin.
+- **P6 Reviewable changes.** Compare on-disk edits with saved note baselines. This is not an approval gate before a write and does not identify an author. An overlapping or unverified historical baseline does not offer per-discussion rollback.
 - **P7 Native.** Teams use DSH's Agent Teams and AITP's parallel-work rules. No Oh-My-BBFF.
 - **P8 A celestial atlas, harmonious by construction.** One idea in two moods — the observatory by
   night, the engraved chart by day (VISUAL §1). One focal element per screen, balanced by a calm
@@ -36,7 +35,7 @@ Everything below changes that; what is not mentioned keeps its current behavior.
 
 ## 2. Information architecture
 
-### 2.1 Places (rail order)
+### 2.1 Places (workspace menu and shortcut order)
 
 | # | Place | Icon | Purpose | Replaces |
 | --- | --- | --- | --- | --- |
@@ -49,7 +48,7 @@ Everything below changes that; what is not mentioned keeps its current behavior.
 | 7 | Write | `writing` | LaTeX documents | unchanged |
 
 Activity is retired; §12 says where each part goes. Search (`/`), New (`N`), the command palette,
-the theme and the settings menu are actions on the rail, not places.
+theme and settings live under Workspace actions, not Places. The DSH session list remains global; Atlas Discussions is the research filing view.
 
 ### 2.2 Tab kinds
 
@@ -66,7 +65,7 @@ the theme and the settings menu are actions on the rail, not places.
 | `member` | member session id | `<seat> · <team name>` | yes | no |
 
 - **TB-1** 0.8's single `page` tab that navigated between places is removed. Places and topics are
-  tabs of their own; the Desk is the only tab that cannot close. Rail items open or activate their
+  tabs of their own; the Desk is the only tab that cannot close. Workspace menu items open or activate their
   place tab. The 0.8 top-bar Back button is removed.
 - **TB-2 Preview tabs.** A topic, file or paper opened with a plain click from a list or a link opens
   as a *preview tab* (label in italic). Each pane holds at most one preview tab; the next preview in
@@ -98,7 +97,7 @@ the theme and the settings menu are actions on the rail, not places.
 | What | Where | Key |
 | --- | --- | --- |
 | Tabs and pane layout | per window, `localStorage` | `aitp-atlas:tabs.v2` |
-| Rail state, theme mode, model choice, composer drafts | per window, `localStorage` | `aitp-atlas:prefs.v1` |
+| Theme mode, model choice, composer drafts (old rail prefs ignored) | per window, `localStorage` | `aitp-atlas:prefs.v1` |
 | Discussions registry | server state directory | `discussions.json` |
 | Teams registry and observed team events | server state directory | `teams.json`, `teams/<id>.events.jsonl` |
 | Team work (charter, reports, reviews, decisions, state) | the topic's run directory (§TEAM) | files |
@@ -110,20 +109,14 @@ Every `localStorage` read and write is wrapped in try/catch and the app renders 
 ### 3.1 Frame
 
 ```
-┌ DSH sidebar ┐┌Rail┐┌────────── left pane ───────────┬────────── right pane ──────────┐
-│  (DSH's)    ││ 56 ││ strip 40: tabs …       [⤢][⋯] │ strip 40: tabs …       [⤢][⋯] │
-│             ││    ││                                │                                │
-│             ││    ││ tab content                    │ tab content                    │
-└─────────────┘└────┘└────────────────────────────────┴────────────────────────────────┘
+DSH sidebar  │ Atlas ▾   [Desk] [other tabs…] [⤢][⋯] │ [open tabs…] [⤢][⋯]
+(host-owned) │             left content               │      right content
 ```
 
 - **SH-1** There is no top bar. The 0.x brand, nav, filter box, Ask, search, add, theme and refresh
   controls leave the top; the only horizontal chrome is the pane strips (40 px).
-- **SH-2** Rail: 56 px wide, `--bg`, right border 1 px `--border`, full height.
-- **SH-3** Rail modes: *icons* (56 px, default), *labels* (208 px, icons plus names, set from the
-  rail's More menu), *hidden* (0 px; Ctrl+\ toggles hidden ⇄ previous mode). Hidden leaves a 6 px
-  hot edge at the left: hovering it 150 ms reveals the rail as an overlay (`--raised`, `--shadow-2`)
-  that hides 300 ms after the pointer leaves. The mode is a per-window preference.
+- **SH-2** One labeled `Atlas ▾` workspace button at the start of the left strip, before the scrollable tablist. Never a closable tab, a top bar, a second sidebar or a duplicate in the right strip.
+- **SH-3** Clicking the button or pressing Ctrl+\ opens destinations. No hover rail or hidden edge. Existing rail width preferences are ignored without deleting them. Entering Atlas leaves the host sidebar alone; only explicit Focus owns a temporary fold (§4).
 - **SH-4** Panes keep 0.8's model: any tab in either pane, drag to reorder, onto the other strip or
   body to move, onto the split zone to split; divider 20–80 %, double-click for 50/50; contents
   never remount when moved; hidden tabs use `content-visibility: hidden`.
@@ -133,27 +126,14 @@ Every `localStorage` read and write is wrapped in try/catch and the app renders 
 - **SH-6** Below 720 px of Atlas width, a second pane cannot be created; an existing right pane
   becomes tabs of the left pane (restored when the width returns).
 
-### 3.2 Rail
+### 3.2 The workspace menu (approved after the M1 review)
 
-Top to bottom:
+**Places:** Desk, Discussions, Teams, Map, Library, Learn, Write. **Workspace actions:** Commands, Search, Add or write, Theme, Read the files again, Keyboard shortcuts, About Atlas. The menu opens destinations; the adjacent tabs are already-open content. See the [matched real-DSH comparison](reports/nav/nav-comparison-final.png).
 
-1. **Atlas mark** (22 px glyph): opens the command palette. Tooltip "Commands · Ctrl+Shift+P".
-2. **Work** group: Desk, Discussions, Teams.
-3. A 4 px dot (`--border-strong`) with 10 px above and below.
-4. **Knowledge** group: Map, Library, Learn, Write.
-5. Flexible space.
-6. **Actions**: Search (`/`), New (`N`; opens the 0.7 add-or-write panel), Theme (cycles Auto →
-   Day → Night; icon shows the current mode), More (menu: Read the files again, Keyboard shortcuts,
-   Show labels / Hide labels, Hide the rail, About Atlas with the version).
-
-- **SH-7** Item: 40×40 px hit area, icon 20 px, 4 px between items. States in VISUAL §6.1. The
-  active place shows `--selected` behind the icon, the icon in `--accent`, and a 7 px four-point star
-  in `--accent` at the rail's left edge (VISUAL §5).
-- **SH-8** Badges: Discussions shows unread replies (accent); Teams shows items needing you (gold).
-  16 px min width, 10 px bold, placed at the item's top-right inside the hit area; hidden at zero;
-  "99+" above 99.
-- **SH-9** Tooltips after 400 ms: the name and its shortcut. Labels mode shows names instead.
-- **SH-10** Alt+1 … Alt+7 open the places in rail order.
+- **SH-7** Each row has a visible name and icon; the current place has a selected surface and `aria-current`. The trigger remains fixed when the tabs overflow.
+- **SH-8** Display an actual unread/needs count next to Discussions/Teams respectively; hide zero or unknown counts, cap visible digits at 99+.
+- **SH-9** Names are always visible in the menu, along with the effective shortcut. Arrow keys, Home/End, initial letter and Escape work without the pointer. Escape returns focus to the trigger.
+- **SH-10** Alt+1 … Alt+7 open the seven places directly in the order above.
 
 ### 3.3 Pane strip and tabs
 
@@ -175,7 +155,7 @@ Top to bottom:
 
 ### 3.4 Command palette
 
-- **SH-17** Ctrl+Shift+P or the Atlas mark. A scrim (`--overlay`) and a panel 640 px wide (max
+- **SH-17** Ctrl+Shift+P or Commands in the workspace menu. A scrim (`--overlay`) and a panel 640 px wide (max
   100 % − 32 px), 12 vh from the top, `--r-lg`, `--raised`, `--shadow-3`.
 - **SH-18** Input row 52 px, 17 px text, search icon, placeholder "Type a command, a place, a topic
   or a discussion…". Results in groups with 11 px caps headers: Commands, Places, Topics,
@@ -185,7 +165,7 @@ Top to bottom:
   6 per group and 30 in all. ↑/↓ move, Enter runs, Shift+Enter opens in the other pane, Esc closes.
   Prefixes narrow the groups: `>` commands, `#` topics, `@` discussions and teams.
 - **SH-20** Commands: New discussion, New team, Search, Add a paper, New note, New LaTeX document,
-  Focus pane, Full screen, Toggle the rail, Split, Move tab to the other pane, Reopen closed tab,
+  Focus pane, Full screen, Open workspace destinations, Split, Move tab to the other pane, Reopen closed tab,
   Theme: Auto/Day/Night, Read the files again, Keyboard shortcuts.
 
 ### 3.5 Keyboard
@@ -201,7 +181,7 @@ area, a contenteditable or DSH's conversation.
 | Add or write | `N` | — |
 | New discussion (Desk composer) | Ctrl+Shift+J | — |
 | Ask about this (Ask bar) | Ctrl+J | — |
-| Toggle rail | Ctrl+\ | Ctrl+Shift+\ |
+| Open destinations | Ctrl+\ | Ctrl+Shift+\ |
 | Focus pane | Ctrl+Shift+F | Ctrl+Alt+F |
 | Full screen (while focused) | Shift+F11 | — |
 | Exit focus | Esc | — |
@@ -218,7 +198,7 @@ area, a contenteditable or DSH's conversation.
 ## 4. Focus and full screen
 
 - **FC-1 Focus** (strip `⤢`, Ctrl+Shift+F, palette): the shown tab of the pane used last fills the
-  whole Atlas area. The rail, both strips and the other pane are hidden (the other pane stays
+  whole Atlas area. The workspace button, both strips and the other pane are hidden (the other pane stays
   mounted). Content keeps its own rules (reading width, PDF fit).
 - **FC-2** On entering Focus, if DSH's left sidebar is expanded, Atlas folds it with
   `ctx.layout.toggleSidebar()` and remembers that it did; on leaving Focus it unfolds it only if
@@ -273,7 +253,7 @@ area, a contenteditable or DSH's conversation.
 
 - **DK-4** Anatomy and sizes in VISUAL §6.6. Max 720 px wide, centered. The text area grows from 3
   to 12 lines, then scrolls. Placeholder: "Ask, think out loud, or start a line of work…".
-- **DK-5** It takes focus when the Desk is opened from the rail or with Ctrl+Shift+J, not when a
+- **DK-5** It takes focus when the Desk is opened from the workspace menu or with Ctrl+Shift+J, not when a
   window is restored with another tab active.
 - **DK-6** Controls row, left to right: **Attach** (`+`: Add files…, Add a paper by link or ID,
   Include what is open in the other pane); **Topic** (§5.3); **Model** (a menu of DSH's model
@@ -324,7 +304,7 @@ area, a contenteditable or DSH's conversation.
 - **DK-17 Running**: discussions, team leads and members working now. Row: twinkle, title, leader,
   what it shows ("4 of 9" tasks for a team, "replying" for a discussion).
 - **DK-18** There is no separate topics strip: the sky band is the topic overview, and the Map is one
-  click away on the rail.
+  click away in the workspace menu.
 - **DK-19 First run**: while the workspace is not set up (0.9.1 `WorkspaceSetup`), the Desk shows
   the setup card in place of the cards, and the composer is disabled with one line saying why.
 
@@ -401,7 +381,7 @@ area, a contenteditable or DSH's conversation.
   recently shown hidden one releases its session and shows "Reopening…" while it remounts when shown
   again. Clicks on links inside it open in Atlas (0.8 `conversationLink`, RT-4).
 - **DS-12** Unread: when a discussion finishes a turn while its tab is not shown, it is unread until
-  shown; unread shows an accent dot on its tab's status slot, its rows, and counts in the rail badge.
+  shown; unread shows an accent dot on its tab's status slot, its rows, and counts in the workspace menu.
   Showing the tab sets `seenAt`.
 - **DS-13** Resolve (0.4): archives the session in DSH and marks the record; it leaves open tabs
   open with a "Resolved" chip in the header and **Reopen**.

@@ -187,11 +187,13 @@ States: rest, hover (`--hover`), pressed (`--pressed`), focus-visible (`outline:
 var(--accent); outline-offset: 2px`, `-2px` inside tabs and rows), disabled (40 % opacity),
 selected (`--selected`).
 
-### 6.1 Rail
-56 wide, `--bg`, right hairline. Mark 40×40 then 10 below. Items 40×40, radius md, icon `--text-3`;
-hover `--hover` and `--text-1`; active `--selected`, icon `--accent`, star marker. Groups are
-separated by a 4 px dot (`--border-strong`) with 10 above and below. Badges: 16 tall, radius full,
-10/16 bold, accent or gold.
+### 6.1 Workspace switcher (post-M1 navigation review)
+DSH owns the only persistent left sidebar. In the first pane strip, a 28 px high compact outlined
+button has the gold Atlas mark, the word **Atlas**, and a downward chevron. It is not a tab. One
+240 px menu groups named **Places** above **Workspace actions**; 32 px rows have readable names,
+effective shortcuts and, where applicable, real counts. Focus is visible and returns on Escape.
+The 56/208 px rail values and rail markers elsewhere in this historical style sheet and mockup
+are superseded. See [the running comparison](reports/nav/nav-comparison-final.png).
 
 ### 6.2 Strip and tabs
 Strip 40, `--bg`, bottom hairline, padding 0 4 0 6. Tabs are **pills**: 30 tall, radius 8, padding
