@@ -157,7 +157,7 @@ try {
   const beforeHeadless = await tree();
 
   const overlay = path.join(fx.base, 'overlay.yml');
-  await fsp.writeFile(overlay, ['- id: aitp-atlas', '  config:', `    root: ${JSON.stringify(fx.root)}`, ''].join('\n'), 'utf8');
+  await fsp.writeFile(overlay, ['- id: aitp-atlas', '  config:', `    root: ${JSON.stringify(fx.root)}`, `    stateDir: ${JSON.stringify(fx.file('atlas-state'))}`, ''].join('\n'), 'utf8');
 
   // 1. headless
   const installed = await install('headless');
@@ -246,7 +246,7 @@ try {
   const newRoot = fx.file('fresh-workspace/topics');
   await fsp.mkdir(newRoot, { recursive: true });
   const newOverlay = fx.file('fresh-workspace.yml');
-  await fsp.writeFile(newOverlay, `- id: aitp-atlas\n  config:\n    root: ${JSON.stringify(newRoot)}\n    web: false\n`);
+  await fsp.writeFile(newOverlay, `- id: aitp-atlas\n  config:\n    root: ${JSON.stringify(newRoot)}\n    stateDir: ${JSON.stringify(fx.file('fresh-atlas-state'))}\n    web: false\n`);
   const freshHost = await startWeb(newOverlay);
   const post = (name, body, options) => freshHost.call(name, { method: 'POST', body, ...options });
   assert.equal((await post('workspace/init', {})).status, 201);
