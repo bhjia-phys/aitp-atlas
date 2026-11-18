@@ -127,9 +127,16 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, on
     shortcut: shortcuts.get(id), run: (opts) => p.openPlace(id, { ...opts, focusComposer: id === 'desk' }) }));
   const topics = Object.values(p.overview?.topics || {}).filter((t) => t && t.file && t.id !== '').map((t) => ({ group: 'Topics',
     id: 'topic:' + t.file, label: t.title, icon: 'topics', detail: t.id, run: (opts) => p.openTopic(t.file, opts) }));
-  const index = threads.filter((t) => t?.id && knownThread(rows, t)).map((t) => {
+  const registry = Array.isArray(p.discussionRecords) ? p.discussionRecords : null;
+  const records = new Map();
+  // M2's registry is authoritative for discussions (even when empty). Legacy
+  // teams keep their existing entry until M3; a registry title wins on overlap.
+  for (const t of threads) if (t?.id && (!registry || t.kind === 'team')) records.set(t.id, t);
+  for (const t of registry || []) if (t?.id) records.set(t.id, t);
+  const index = [...records.values()].filter(t => knownThread(rows, t)).map((t) => {
     const row = rowOf(rows, t.id), team = t.kind === 'team' || !!teamOf(row);
-    return { group: team ? 'Teams' : 'Discussions', id: 'session:' + t.id, label: threadLabel(t), detail: t.context?.topic?.title || (team ? 'Team discussion' : 'Discussion'),
+    return { group: team ? 'Teams' : 'Discussions', id: 'session:' + t.id, label: registry && t.title ? t.title : threadLabel(t),
+      detail: ('topic' in t ? t.topic?.title : t.context?.topic?.title) || (team ? 'Team discussion' : 'Discussion'),
       updated: t.updated || t.created, icon: team ? 'team' : 'chat', run: (opts) => p.openThread(t.id, opts) };
   });
   const files = (p.recentFiles || []).filter((f) => f.path).map((f) => ({ group: 'Recent files', id: 'file:' + f.path, label: f.title || baseName(f.path),
@@ -227,7 +234,7 @@ function useAtlasChrome(p) {
       onClose: close, shortcut, onPalette: palette, onAbout: () => setOverlay('about'), onShortcuts: keys }),
     overlays: h(React.Fragment, null,
       focus.focused && h(AtlasFocusHeader, { ...focus, activeTab: p.activeTab, rootRef: p.rootRef }),
-      overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, p.discussionRecords ?? threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
+      overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
       overlay === 'shortcuts' && h(Dialog, { title: 'Keyboard shortcuts', onClose: close },
         h('p', null, shortcuts ? 'These bindings apply inside Atlas. DSH keeps its own shortcuts.' : 'The DSH shortcut catalog is unavailable. These are the local Atlas bindings.'),
         shortcuts?.runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),

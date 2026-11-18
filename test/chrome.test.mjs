@@ -154,4 +154,8 @@ test('palette: real sources and callbacks, never deleted sessions; Shift+Enter i
   assert.ok(!items.some(i=>i.id==='session:lost')); assert.ok(items.find(i=>i.id==='cmd:full').disabled); assert.ok(items.find(i=>i.id==='cmd:team').disabled);
   for (const id of ['topic:/r/x','file:/r/note.md','session:real','place:desk','cmd:theme:night','cmd:tex']) items.find(i=>i.id===id).run({otherPane:true});
   assert.deepEqual(calls,[['topic','/r/x',{otherPane:true}],['file','/r/note.md',{otherPane:true}],['thread','real',{otherPane:true}],['place','desk',{otherPane:true,focusComposer:true}],['theme','night'],['quick','tex']]);
+  const sessions = [{id:'old',title:'Old entry'}, {id:'team',title:'Legacy team',kind:'team'}], rows={byId:{old:{},team:{},real:{}}};
+  const registered = records => chrome.atlasPaletteItems({...p,discussionRecords:records},sessions,rows,keys,{focused:false},()=>{},()=>{}).filter(x=>x.id.startsWith('session:'));
+  assert.deepEqual(registered([]).map(x=>x.id), ['session:team']);
+  assert.deepEqual(registered([{id:'real',title:'Renamed',topic:{title:'Filed topic'}}]).map(x=>[x.label,x.detail]),[['Legacy team','Team discussion'],['Renamed','Filed topic']]);
 });
