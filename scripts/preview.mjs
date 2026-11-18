@@ -46,7 +46,7 @@ async function stageProfile(fx, env) {
   for (const dir of [bundle, env.HOME, env.APPDATA, env.LOCALAPPDATA, env.TMP, fx.file('atlas-state')]) await fs.mkdir(dir, { recursive: true });
   // No joint installer, pnpm, network or symlink back to the checkout. Use only the shipped
   // runtime files, including optional vendored assets; do not copy the worktree or its siblings.
-  for (const name of ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'lib', 'vendor']) {
+  for (const name of ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'lib', 'vendor', 'templates/team']) {
     await fs.cp(path.join(repo, name), path.join(bundle, name), { recursive: true });
   }
   await fs.writeFile(path.join(profile, 'package.json'), JSON.stringify({ name: 'atlas-preview-profile', private: true,

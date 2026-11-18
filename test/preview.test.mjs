@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { findRuntime, withPreview } from '../scripts/preview.mjs';
 import { startModel } from '../scripts/preview-model.mjs';
+import { makeFixture } from './fixture.mjs';
+import { renderTeamKit, TEAM_PRESETS } from '../lib/team-templates.js';
 
 const exec = promisify(execFile);
 const script = fileURLToPath(new URL('../scripts/preview.mjs', import.meta.url));
@@ -58,6 +60,27 @@ test('private fixture can hold two independent replies and finish them out of or
     a.release(); const textA = await first;
     assert.match(textA, /Fixture stream A begins\./); assert.match(textA, /Stream A complete\./); assert.doesNotMatch(textA, /Stream B complete/);
   } finally { a.release(); b.release(); await model.close(); }
+});
+
+test('opt-in team model serves the shipped seat arguments; only matching child card results count', async()=>{
+  const fx=await makeFixture(), model=await startModel();try{
+    assert.throws(()=>model.enableFixtureTeam(process.cwd()));
+    const receipts=model.enableFixtureTeam(fx.root), runDir=fx.file('topics/mc/worm/runs/team-20261118-fixture');
+    const kit=renderTeamKit({goal:'Check fixture signs.',doneWhen:'Two receipts.',topic:{id:'mc/worm',title:'Worm',path:fx.file('topics/mc/worm/research.md')},seats:TEAM_PRESETS[0].seats},{runDir,date:'2026-11-18'});
+    const ask=async messages=>{
+      const r=await request(model.url+'/v1/messages',{method:'POST',headers:{'x-api-key':model.key},body:JSON.stringify({tools:[{name:'subagent'},{name:'read'}],messages})});assert.equal(r.status,200);
+      return (await r.text()).split('\n').filter(l=>l.startsWith('data: ')).map(l=>JSON.parse(l.slice(6)));
+    };
+    for(const args of kit.seatCalls){
+      const rootTurn=await ask([{role:'user',content:kit.brief}]);assert.equal(rootTurn.find(e=>e.content_block)?.content_block.name,'subagent');
+      assert.deepEqual(JSON.parse(rootTurn.find(e=>e.delta?.partial_json).delta.partial_json),args);
+      const child=[{role:'user',content:args.prompt}], childTurn=await ask(child);assert.equal(childTurn.find(e=>e.content_block)?.content_block.name,'read');
+      assert.equal(JSON.parse(childTurn.find(e=>e.delta?.partial_json).delta.partial_json).file_path,path.join(runDir,'roles',args.name+'.md'));
+      assert.ok(!receipts().roleRead.includes(args.name));
+      await ask([...child,{role:'user',content:[{type:'tool_result',content:kit.files['roles/'+args.name+'.md']}]}]);
+    }
+    assert.deepEqual(receipts(),{started:['theorist','referee'],promptDelivered:['theorist','referee'],roleRead:['theorist','referee'],messages:{member:[],decision:[],unknown:[]}});
+  }finally{await model.close();await fx.cleanup();}
 });
 
 test('real DSH serves only the staged Atlas fixture and consumes the streamed mock reply', {
