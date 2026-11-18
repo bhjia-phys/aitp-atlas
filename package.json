@@ -48,6 +48,7 @@
   "scripts": {
     "build": "node build-client.mjs",
     "preview": "node scripts/preview.mjs",
+    "preview:team": "node scripts/preview.mjs --team",
     "install:dsh": "node scripts/install-dsh.mjs",
     "prepack": "node build-client.mjs --check",
     "test": "node build-client.mjs --check && node --test \"test/*.test.mjs\"",

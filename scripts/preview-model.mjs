@@ -13,11 +13,13 @@ const reply = ['This is the Atlas fixture. ', 'Open the [worm note](mc/worm/rese
 // Accept controls only from the test process. Parsed model requests are never logged or kept.
 // A fixed test lead can start exactly the two Derive-and-check seats; a child can read only
 // the generated card for its seat. No arbitrary tool/call forwarding or filesystem tools here.
-function fixtureTeam(root) {
+function fixtureTeam(root, worker) {
   const base=path.dirname(root);
   if(path.dirname(base)!==os.tmpdir() || !/^atlas-fixture-[a-z0-9]+$/i.test(path.basename(base)) || path.basename(root)!=='topics') throw Error('Team mock requires a fresh Atlas fixture');
-  const seats=['theorist','referee'], sent=new Set(), seen=new Set(), requested=new Set(), received=new Set();
+  if(!['theorist','numerics'].includes(worker))throw Error('Unknown fixture worker');
+  const seats=[worker,'referee'], sent=new Set(), seen=new Set(), requested=new Set(), received=new Set();
   const calls=new Map(), messages={member:[],decision:[],unknown:[]};
+  let boardRequested=false;
   const textOf=v=>typeof v==='string'?v:Array.isArray(v)?v.map(x=>x?.type==='tool_result'?textOf(x.content):x?.text||'').join('\n'):'';
   const script=body=>{
     const tools=Array.isArray(body.tools)?body.tools:[], user=(body.messages||[]).filter(m=>m.role==='user');
@@ -35,12 +37,15 @@ function fixtureTeam(root) {
         if(sent.has(seat))continue;
         // Inherited fixture route only: never forward a provider/model from a prompt.
         const row=lead.split('\n').map(x=>x.trim()).find(x=>x.startsWith(`- subagent(name="${seat}",`));
-        const args=/^- subagent\(name="(?:theorist|referee)", description=("(?:\\.|[^"\\])*"), prompt=("(?:\\.|[^"\\])*")\)(?:\s|$)/.exec(row||'');
+        const args=/^- subagent\(name="(?:theorist|numerics|referee)", description=("(?:\\.|[^"\\])*"), prompt=("(?:\\.|[^"\\])*")\)(?:\s|$)/.exec(row||'');
         if(!args)continue;
         const description=JSON.parse(args[1]), prompt=JSON.parse(args[2]);
         if(!prompt.replaceAll('\\','/').includes(card.replaceAll('\\','/')) || !prompt.includes('fixture'))continue;
         const tool=tools.find(x=>x.name==='subagent'); if(!tool) return {};
         calls.set(seat,{card,prompt});sent.add(seat);return {tool:tool.name,input:{name:seat,description,prompt}};
+      }
+      if(!boardRequested && sent.size===2 && tools.some(t=>t.name==='team_task_create')) {
+        boardRequested=true;return {tool:'team_task_create',input:{subject:'Check the limiting coefficient',description:'Record the fixture convention and check the dimensionless limit in the numerical report.'}};
       }
     } else for(const [seat,{card,prompt}] of calls){
       if(!history.some(t=>t.includes(prompt)))continue;
@@ -61,7 +66,7 @@ export async function startModel() {
   // no prompt/body inspection. The ordinary CLI continues streaming its short fixture.
   const plans = [], stop = new AbortController();
   let team;
-  const enableFixtureTeam = root => {if(team)throw Error('Team fixture already armed');team=fixtureTeam(root);return team.receipts;};
+  const enableFixtureTeam = (root,worker='theorist') => {if(team)throw Error('Team fixture already armed');team=fixtureTeam(root,worker);return team.receipts;};
   const holdNext = label => {
     if (!['A', 'B'].includes(label)) throw new Error('Unknown fixture stream');
     let start, release, finish;

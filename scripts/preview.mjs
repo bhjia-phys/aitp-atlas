@@ -17,7 +17,31 @@ import { startModel } from './preview-model.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
-const usage = 'Usage: npm run preview [-- --debug]. Open the printed local URL and select Atlas. Stop with q + Enter or Ctrl+C.';
+const usage = `Usage: npm run preview [-- [--team] [--debug]]
+  npm run preview                 Ordinary fixture replies (no tool calls)
+  npm run preview -- --team       Enable the two-seat Worm team demo in the temporary fixture
+  npm run preview -- --team --debug
+Open the printed private local URL and select Atlas. Stop with q + Enter or Ctrl+C.`;
+
+// Only the manual CLI opts in here; never arm a model in the shared preview lifecycle.
+export function previewCliOptions(args) {
+  if (args.some(a => a !== '--team' && a !== '--debug') || new Set(args).size !== args.length) throw new Error(usage);
+  return {
+    debug: args.includes('--debug'),
+    prepare({ fx, model }) {
+      if (!args.includes('--team')) return '';
+      model.enableFixtureTeam(fx.root, 'numerics');
+      return `Two-seat fixture demo (one team per launch; nothing starts until you submit):
+  1. Atlas → Teams → New team.
+  2. What should the team find out?  Check the fixture limiting coefficient and convention.
+     Done when:  Both named fixture seats have read their independent role cards.
+  3. Topic: Worm algorithm: equilibration and reproducibility (mc/worm).
+  4. Choose “Theory and numerics”; remove “theorist”. Keep exactly numerics and referee, with their original names, roles, and core mode.
+     Lead model: DSH default. Both seat models: Same as the lead. Do not override model or effort.
+  5. Click “Start the team”. Open the numerics and referee stars in the room to verify their role-card receipts.`;
+    },
+  };
+}
 
 export function findRuntime() {
   // Resolve the installation BEFORE isolating the child environment. Never consult a profile.
@@ -121,7 +145,7 @@ export async function withPreview(use, { signal, debug = false } = {}) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 1 && args[0] === '--help') { console.log(usage); return; }
-  if (args.length && !(args.length === 1 && args[0] === '--debug')) throw new Error(usage);
+  const options = previewCliOptions(args);
   const control = new AbortController();
   const stop = () => control.abort();
   const input = createInterface({ input: process.stdin, terminal: false });
@@ -129,11 +153,13 @@ async function main() {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   try {
-    await withPreview(async ({ url, closed }) => {
+    await withPreview(async ({ url, closed, fx, model }) => {
+      const instructions = options.prepare({ fx, model });
       console.log(`Open this private launch URL, then select Atlas in the DSH sidebar:\n${url}\nFixture only; type q + Enter or Ctrl+C to stop and discard it.`);
+      if (instructions) console.log(instructions);
       if (!control.signal.aborted) await Promise.race([closed.then(() => { throw new Error('DSH exited.'); }),
         new Promise((resolve) => control.signal.addEventListener('abort', resolve, { once: true }))]);
-    }, { signal: control.signal, debug: args.includes('--debug') });
+    }, { signal: control.signal, debug: options.debug });
   } catch (error) { if (!control.signal.aborted || error.name !== 'AbortError') throw error; }
   finally { input.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop); }
 }

@@ -182,15 +182,16 @@ export async function makeFixture() {
 
 // Seed authored artifact examples only; never synthesize DSH sessions, rosters or board rows.
 // Accept only the fresh fixture's canonical worm-topic run, with exclusive new files.
-export async function seedTeamArtifacts(fx, run) {
+export async function seedTeamArtifacts(fx, run, taskId=null) {
+  if(taskId!==null && !/^task-[0-9]+$/.test(taskId))throw Error('Invalid real DSH board id');
   const parent=fx.file('topics/mc/worm/runs');
   if(path.dirname(run)!==parent || !/^team-\d{8}-[a-z0-9-]+$/.test(path.basename(run)) || await fsp.realpath(run)!==run) throw Error('Refusing non-fixture team run');
   const samples={
-    'reports/01-theorist-limit.md':'---\nkind: report\nid: R01\nseat: theorist\ntitle: Fixture limiting case\nstatus: accepted\nclaims:\n  - id: R01.1\n    text: The fixture has a dimensionless coefficient.\n    basis: derived\nassumptions: [Fixture convention]\nevidence: [work/theorist/check.md]\nchecks: [Dimensional consistency]\nopen: []\nimplication: Keep the sign convention explicit.\n---\n# Fixture limiting case\n\nSynthetic report text for the Team room reader.\n',
+    'reports/01-numerics-limit.md':'---\nkind: report\nid: R01\nseat: numerics\ntitle: Fixture limiting case\nstatus: accepted\nclaims:\n  - id: R01.1\n    text: The fixture has a dimensionless coefficient.\n    basis: derived\nassumptions: [Fixture convention]\nevidence: [work/numerics/check.md]\nchecks: [Dimensional consistency]\nopen: []\nimplication: Keep the sign convention explicit.\n---\n# Fixture limiting case\n\nSynthetic report text for the Team room reader.\n',
     'reviews/01-referee-on-R01.md':'---\nkind: review\nid: V01\nseat: referee\non: R01\nverdict: holds\nclaims: { R01.1: holds }\nfindings: []\n---\n# Independent fixture review\n\nSynthetic review text for the Team room reader.\n',
     'decisions/D01-convention.md':'---\nkind: decision\nid: D01\nfrom: lead\nstatus: open\nquestion: Which fixture convention should we retain?\noptions:\n  A: Keep the original normalization.\n  B: Use the symmetric normalization.\nrecommendation: B\n---\n# Fixture convention decision\n',
   };
-  for(const [name,data] of Object.entries(samples)) await fsp.writeFile(path.join(run,name),data,{flag:'wx'});
+  for(const [name,data] of Object.entries(samples)) await fsp.writeFile(path.join(run,name),taskId && name.startsWith('reports/') ? data.replace('id: R01\n','id: R01\ntask: '+taskId+'\n') : data,{flag:'wx'});
 }
 
 /** Every file under `dir` with its size and modification time, to show that nothing changed. */
