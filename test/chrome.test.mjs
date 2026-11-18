@@ -154,6 +154,10 @@ test('palette: real sources and callbacks, never deleted sessions; Shift+Enter i
   assert.ok(!items.some(i=>i.id==='session:lost')); assert.ok(items.find(i=>i.id==='cmd:full').disabled); assert.ok(items.find(i=>i.id==='cmd:team').disabled);
   for (const id of ['topic:/r/x','file:/r/note.md','session:real','place:desk','cmd:theme:night','cmd:tex']) items.find(i=>i.id===id).run({otherPane:true});
   assert.deepEqual(calls,[['topic','/r/x',{otherPane:true}],['file','/r/note.md',{otherPane:true}],['thread','real',{otherPane:true}],['place','desk',{otherPane:true,focusComposer:true}],['theme','night'],['quick','tex']]);
+  assert.ok(!items.some(i=>i.id==='cmd:moveDiscussion'), 'no filing action for a place or a member session');
+  const active = chrome.atlasPaletteItems({...p,onMoveDiscussion:cb('open-existing-move')},[],{},keys,{focused:false},()=>{},()=>{});
+  const [filing] = chrome.atlasPaletteResults(active,'>move discussion');
+  assert.equal(filing.label,'Move discussion to a topic…'); filing.run({otherPane:true}); assert.deepEqual(calls.at(-1),['open-existing-move']);
   const sessions = [{id:'old',title:'Old entry'}, {id:'team',title:'Legacy team',kind:'team'}], rows={byId:{old:{},team:{},real:{}}};
   const registered = records => chrome.atlasPaletteItems({...p,discussionRecords:records},sessions,rows,keys,{focused:false},()=>{},()=>{}).filter(x=>x.id.startsWith('session:'));
   assert.deepEqual(registered([]).map(x=>x.id), ['session:team']);

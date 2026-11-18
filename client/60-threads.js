@@ -600,7 +600,7 @@ function DiscussionMarginalia({ context, replied }) {
     open && (all ? chips : chips.slice(0, 3)).map((chip, i) => h(Chip, { key: i, variant: 'context', contextKey: chip.label, title: chip.title || chip.text }, chip.text)),
     open && chips.length > 3 && h('button', { type: 'button', onClick: () => showAll(!all) }, all ? 'Show less' : `+${chips.length - 3}`));
 }
-function Companion({ threadId, record, flash, root, overview, go, onOpenLink }) {
+function Companion({ threadId, record, flash, root, overview, go, onOpenLink, moveTopicRef }) {
   const actions = React.useContext(AtlasActions), tabId = usePaneName();
   const threads = useThreadIndex(), rows = useSessionRows(), focus = useFocus();
   const thread = record || threads.find(t => t.id === threadId);
@@ -626,6 +626,7 @@ function Companion({ threadId, record, flash, root, overview, go, onOpenLink }) 
     try { await atlasRenameDiscussion(thread, renaming); stopRename(); } catch (e) { flash(e.message); } finally { setBusy(false); }
   };
   const openMove = () => setMove(topicButton.current || trigger.current);
+  React.useImperativeHandle(moveTopicRef || null, () => editable ? openMove : null, [editable]);
   const addView = () => {
     if (draftIntoThread(threadId, contextBlock(focusContext(focus)) + '\n\n')) flash('Added to the input box. Send it when ready.');
     else flash('DSH could not add context to this discussion’s draft.');

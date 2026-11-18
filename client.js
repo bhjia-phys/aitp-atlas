@@ -4905,7 +4905,7 @@ window.__ModuleLoader__.load({
         open && (all ? chips : chips.slice(0, 3)).map((chip, i) => h(Chip, { key: i, variant: 'context', contextKey: chip.label, title: chip.title || chip.text }, chip.text)),
         open && chips.length > 3 && h('button', { type: 'button', onClick: () => showAll(!all) }, all ? 'Show less' : `+${chips.length - 3}`));
     }
-    function Companion({ threadId, record, flash, root, overview, go, onOpenLink }) {
+    function Companion({ threadId, record, flash, root, overview, go, onOpenLink, moveTopicRef }) {
       const actions = React.useContext(AtlasActions), tabId = usePaneName();
       const threads = useThreadIndex(), rows = useSessionRows(), focus = useFocus();
       const thread = record || threads.find(t => t.id === threadId);
@@ -4931,6 +4931,7 @@ window.__ModuleLoader__.load({
         try { await atlasRenameDiscussion(thread, renaming); stopRename(); } catch (e) { flash(e.message); } finally { setBusy(false); }
       };
       const openMove = () => setMove(topicButton.current || trigger.current);
+      React.useImperativeHandle(moveTopicRef || null, () => editable ? openMove : null, [editable]);
       const addView = () => {
         if (draftIntoThread(threadId, contextBlock(focusContext(focus)) + '\n\n')) flash('Added to the input box. Send it when ready.');
         else flash('DSH could not add context to this discussion’s draft.');
@@ -5390,6 +5391,28 @@ window.__ModuleLoader__.load({
       });
       return found.sort((a,b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'created' ? b.created-a.created : (b.updated || b.created)-(a.updated || a.created));
     }
+    // Group the already filtered/sorted rows by current filing, not by the context at creation.
+    function registryRunningGroups(list) {
+      const groups = new Map();
+      for (const record of list) {
+        const id = record.topic?.id ?? null;
+        if (!groups.has(id)) groups.set(id, { id, title: record.topic?.title || (id === null ? 'Unfiled' : id || 'Programme'), rows: [] });
+        groups.get(id).rows.push(record);
+      }
+      // Stable headings even as two live sessions trade places in Recent activity; Unfiled comes last.
+      return [...groups.values()].sort((a,b) => a.id === null ? 1 : b.id === null ? -1 : a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+    }
+    function RegistryDiscussionList({ list, filter, row }) {
+      const prefix = React.useId();
+      if (filter !== 'running') return h('ul', { className: 'atlas-disc-list' }, list.map(row));
+      const groups = registryRunningGroups(list);
+      return groups.map(g => {
+        const key = g.id === null ? 'unfiled' : 'topic:' + g.id, label = prefix + '-' + encodeURIComponent(key);
+        const name = groups.some(other => other.id !== g.id && other.title === g.title) && g.id !== null ? `${g.title} (${g.id || 'programme'})` : g.title;
+        return h('section', { key, 'aria-labelledby': label, className: 'atlas-disc-running-group' },
+          h('h2', { id: label }, name), h('ul', { className: 'atlas-disc-list', 'aria-labelledby': label }, g.rows.map(row)));
+      });
+    }
     function registryOtherRows(root, rows, records, legacy, query) {
       if (rows?.phase !== 'ready') return [];
       const known = new Set([...records,...legacy].map(t => t.id));
@@ -5451,14 +5474,14 @@ window.__ModuleLoader__.load({
             h(Button,{small:true,onClick:()=>actions.ask(focusContext({topic:w.topic},{section:'Current work › '+w.thread.name}),'ask',`Help me decide “${w.thread.name}” based on the options in my note.`,'Decide '+w.thread.name)},'Discuss'),
             h(DecideButtons,{topic:{...w.topic,file:w.topic.path},thread:w.thread}))),
           filter==='other' ? (others.length ? h('ul',{className:'atlas-disc-list'},others.map(({id,row}) => h('li',{key:id,className:'atlas-disc-row'},h('span',null,row.displayTitle||row.title||id),h(Button,{small:true,disabled:busy,onClick:()=>guarded(async()=>{await registryCreate(registryAdoption(id,row));flash('Discussion adopted.');})},'Adopt')))) : h(EmptyState,null,'No other root sessions in this workspace.')) :
-          h('ul',{className:'atlas-disc-list'},list.map(r=>{
+          h(RegistryDiscussionList,{ list, filter, row:r=>{
             const title=titleOf(r), running=Boolean(rowOf(rows,r.id)?.running), unread=registryUnread(r), review=reviewById.get(r.id);
             return h('li',{key:r.id,className:'atlas-disc-row'},select && h(Checkbox,{label:'', 'aria-label':'Select '+title,checked:selected.includes(r.id),onChange:e=>setSelected(ids=>e.target.checked?[...new Set([...ids,r.id])]:ids.filter(id=>id!==r.id))}),
               h('button',{type:'button',className:'atlas-disc-open',onClick:()=>actions.openThread(r.id)},h('span',{className:'atlas-disc-top'},
                 h('span',{className:cx('atlas-light',running && 'is-running'),title:running?'Working':'Idle','aria-label':running?'Working':'Idle'}),h('span',{className:unread?'atlas-disc-unread':undefined},title),unread && h('small',null,'Unread'),h('time',null,ago(r.updated || r.created))),
                 h('span',{className:'atlas-disc-sub'},[r.topic?.title||'Unfiled',r.model?.model,r.question?.slice(0,90),review?`${review.edits} changes to review`:null].filter(Boolean).join(' · '))),
               h('div',{className:'atlas-disc-row-actions'},btn((r.pinned?'Unpin ':'Pin ')+title,r.pinned?'★':'☆',()=>pin(r)),btn('Move '+title,'↔',e=>setMove({ids:[r.id],anchor:e.currentTarget})),btn((r.status==='resolved'?'Reopen ':'Resolve ')+title,r.status==='resolved'?'↺':'✓',()=>resolve(r)),btn('More actions for '+title,'⋯',e=>setMenu({record:r,anchor:e.currentTarget}))));
-          })),
+          }}),
           !snap.loading && !snap.error && filter!=='other' && !list.length && !(filter==='needs' && waiting.length) && h(EmptyState,null,filter||search?'Nothing here.':'No discussions yet. Ask from the Desk, or select a passage and press Ctrl+J.'),
           snap.loading && h(Skeleton,{label:'Loading discussions…'})),
         move && h(MoveDiscussion,{...move,overview,onClose:()=>setMove(null),flash}),
@@ -5480,6 +5503,7 @@ window.__ModuleLoader__.load({
     .atlas-disc-filter:hover,.atlas-disc-filter:focus-visible,.atlas-disc-row:hover {background:var(--hover)} .atlas-disc-filter.is-current {background:var(--selected);color:var(--accent)}
     .atlas-disc-results {min-width:0;padding:var(--s-24)} .atlas-disc-tools,.atlas-disc-row-actions,.atlas-disc-topic-option {display:flex;align-items:center;gap:var(--s-8)}
     .atlas-disc-tools {flex-wrap:wrap;margin-bottom:var(--s-12)} .atlas-disc-tools input {flex:1 1 12em}
+    .atlas-disc-running-group h2 {margin:var(--s-16) 0 var(--s-4);font:var(--t-h3);color:var(--text-2)}
     .atlas-disc-list {padding:0;margin:0;list-style:none} .atlas-disc-row {display:flex;min-height:var(--row-58);align-items:center;gap:var(--s-8);border-bottom:1px solid var(--border)}
     .atlas-disc-open {flex:1;min-width:0;padding:var(--s-4) var(--s-8)} .atlas-disc-top {display:flex;align-items:center;gap:var(--s-8)}
     .atlas-disc-open .atlas-disc-top>span:nth-child(2),.atlas-disc-sub {overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -6029,6 +6053,7 @@ window.__ModuleLoader__.load({
       const [quick, setQuick] = useState(null);
       const [ask, setAsk] = useState(null);
       const [deskRequest, setDeskRequest] = useState(0);
+      const moveTopicRef = useRef(null); // The active discussion's own filing popover, not a second dialog.
       const [libFilter, setLibFilter] = useState('');
       const [drag, setDrag] = useState(null);
       const [drop, setDrop] = useState(null);
@@ -6193,6 +6218,7 @@ window.__ModuleLoader__.load({
         setVersion(Date.now()); registry.refresh();
       };
       const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+        onMoveDiscussion:tab.kind === 'discussion' && registryGet(tab.sessionId) && !rowOf(rows,tab.sessionId)?.parentId ? () => moveTopicRef.current?.() : null,
         activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
         openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
         openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
@@ -6260,7 +6286,7 @@ window.__ModuleLoader__.load({
         if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
-        if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
+        if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
         return h(Empty,null,'This team room is not available in this version.');
       };
       const split=liveSplit ?? layout.split;
@@ -7085,6 +7111,7 @@ window.__ModuleLoader__.load({
         commands.push({ id: 'cmd:' + id, group: 'Commands', label, icon, detail, disabled, run, shortcut: shortcuts.get(id) });
       }
       cmd('newDiscussion', 'New discussion', 'chat', () => p.onNewDiscussion());
+      if (typeof p.onMoveDiscussion === 'function') cmd('moveDiscussion', 'Move discussion to a topic…', 'topics', () => p.onMoveDiscussion());
       cmd('team', 'New team', 'team', null, 'Native team setup is not available yet', true);
       cmd('search', 'Search', 'search', (opts) => p.openPlace('search', opts));
       cmd('paper', 'Add a paper', 'paper', () => p.onQuick('paper'));

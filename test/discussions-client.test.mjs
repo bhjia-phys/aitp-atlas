@@ -10,10 +10,11 @@ const code = readFileSync(new URL('../client/61-discussions.js',import.meta.url)
 function ui(api=()=>{ throw new Error('Unexpected API call'); }) {
   return new Function('api',`
     const externalStore=initial=>{let value=initial;return {get:()=>value,set:v=>value=v};};
+    const React={useId:()=>':discussions-test:'}, h=(type,props,...children)=>({type,props,children:children.flat()});
     const rowOf=(rows,id)=>rows?.byId?.[id], knownThread=(rows,t)=>rows?.phase!=='ready'||Boolean(rowOf(rows,t.id));
     const parentOf=row=>row.parentId,teamOf=row=>row.projectionValues?.agentTeam?.enabled;
     ${code}
-    return {registryLegacyCandidates,registryImportLegacy,registryMoveController,registryVisibleList,registryOtherRows,registryTopicTree,registryGet,registryCreate,registryPatch,registryRefresh,registryState,registryAdoption,registryUnread};`)(api);
+    return {registryLegacyCandidates,registryImportLegacy,registryMoveController,registryVisibleList,RegistryDiscussionList,registryOtherRows,registryTopicTree,registryGet,registryCreate,registryPatch,registryRefresh,registryState,registryAdoption,registryUnread};`)(api);
 }
 const root='/physics', topic={id:'worm',title:'Worm',path:'/physics/worm/research.md'};
 const old=(id,ctx={topic})=>({id,title:id,context:ctx,created:1,status:'open'});
@@ -99,6 +100,22 @@ test('filters use filing rather than original context, truthful unread turns, kn
   assert.deepEqual(c.registryOtherRows(root,rows,records,[{id:'t',kind:'team'}],'import').map(x=>x.id),['x']);
   assert.equal(c.registryAdoption('x',rows.byId.x,99).origin,'import');assert.equal(c.registryAdoption('x',rows.byId.x,99).seenAt,99);
 });
+test('Running groups use accessible topic headings, keep matching rows sorted and distinguish unfiled from the programme',()=>{
+  const c=ui(), file=(id,title)=>({id,title,path:'/physics/'+id+'/research.md'}), a=file('alpha','Shared'), b=file('beta','Shared'), programme=file('','Programme');
+  const records=[['1','Zeta',a,40],['2','Gamma',b,50],['3','Alpha',a,20],['4','Unfiled row',null,10],['5','Programme row',programme,30],['6','Idle',a,100]].map(([id,title,topic,updated])=>({...old(id),title,topic,updated,question:'fixture'}));
+  const rows=rowsOf(Object.fromEntries(records.map(r=>[r.id,{running:r.id!=='6'}])));
+  const render=(filter,search,sort)=>c.RegistryDiscussionList({filter,list:c.registryVisibleList(records,rows,{},filter,search,sort),row:r=>({type:'li',id:r.id})});
+  const groups=render('running','','title');
+  assert.deepEqual(groups.map(g=>g.children[0].children[0]),['Programme','Shared (alpha)','Shared (beta)','Unfiled']);
+  assert.deepEqual(groups.map(g=>g.children[1].children.map(r=>r.id)),[['5'],['3','1'],['2'],['4']]);
+  assert.deepEqual(render('running','','activity').map(g=>g.children[1].children.map(r=>r.id)),[['5'],['1','3'],['2'],['4']]);
+  assert.equal(new Set(groups.map(g=>g.children[0].props.id)).size,4);
+  for(const g of groups){const [heading,list]=g.children;assert.equal(g.type,'section');assert.equal(heading.type,'h2');assert.equal(list.type,'ul');assert.equal(g.props['aria-labelledby'],heading.props.id);assert.equal(list.props['aria-labelledby'],heading.props.id);assert.equal(heading.props.tabIndex,undefined);}
+  assert.deepEqual(render('running','Zeta','title').map(g=>g.children[1].children.map(r=>r.id)),[['1']]);
+  assert.deepEqual(render('running','unmatched','title'),[]);
+  assert.equal(render('','','title').type,'ul','other filters remain flat and keep their existing row actions');
+});
+
 test('GET/POST/PATCH share one canonical store; network failures do not optimistically corrupt it',async()=>{
   let saved=null;const needs={reviews:[],decisions:[],waiting:[]};const calls=[];
   const c=ui(async (path,opts)=>{calls.push([path,opts]); if(path==='needs')return needs;if(!opts.method)return{discussions:saved?[saved]:[]};

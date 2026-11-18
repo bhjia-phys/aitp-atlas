@@ -30,6 +30,7 @@ function AtlasApp() {
   const [quick, setQuick] = useState(null);
   const [ask, setAsk] = useState(null);
   const [deskRequest, setDeskRequest] = useState(0);
+  const moveTopicRef = useRef(null); // The active discussion's own filing popover, not a second dialog.
   const [libFilter, setLibFilter] = useState('');
   const [drag, setDrag] = useState(null);
   const [drop, setDrop] = useState(null);
@@ -194,6 +195,7 @@ function AtlasApp() {
     setVersion(Date.now()); registry.refresh();
   };
   const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+    onMoveDiscussion:tab.kind === 'discussion' && registryGet(tab.sessionId) && !rowOf(rows,tab.sessionId)?.parentId ? () => moveTopicRef.current?.() : null,
     activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
     openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
     openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
@@ -261,7 +263,7 @@ function AtlasApp() {
     if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
-    if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
+    if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
     return h(Empty,null,'This team room is not available in this version.');
   };
   const split=liveSplit ?? layout.split;

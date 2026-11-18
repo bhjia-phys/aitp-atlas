@@ -15,6 +15,7 @@ function harness(services = {}, extra = {}, fetch = () => { throw new Error('Une
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
     createContext: (value) => ({ value }), useContext: (c) => c.value,
+    useImperativeHandle: (ref, create) => { if (ref) ref.current = create(); },
     useSyncExternalStore: (_subscribe, snapshot) => snapshot(), useEffect() {}, useLayoutEffect() {}, useMemo: (f) => f(), useCallback: (f) => f,
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}], useRef: (current) => ({ current }), ...extra,
   };

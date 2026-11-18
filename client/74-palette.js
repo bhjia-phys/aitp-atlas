@@ -111,6 +111,7 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, on
     commands.push({ id: 'cmd:' + id, group: 'Commands', label, icon, detail, disabled, run, shortcut: shortcuts.get(id) });
   }
   cmd('newDiscussion', 'New discussion', 'chat', () => p.onNewDiscussion());
+  if (typeof p.onMoveDiscussion === 'function') cmd('moveDiscussion', 'Move discussion to a topic…', 'topics', () => p.onMoveDiscussion());
   cmd('team', 'New team', 'team', null, 'Native team setup is not available yet', true);
   cmd('search', 'Search', 'search', (opts) => p.openPlace('search', opts));
   cmd('paper', 'Add a paper', 'paper', () => p.onQuick('paper'));
