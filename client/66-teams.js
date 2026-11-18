@@ -124,14 +124,15 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
   useEffect(()=>{live.current=true;return ()=>{live.current=false;};},[]);
   useEffect(()=>{let current=true;setCatalog(null);setCatalogError('');atlasFetchModelCatalog(service).then(c=>{if(current)setCatalog(c);},e=>{if(current)setCatalogError(e.message);});return ()=>{current=false;};},[service,check]);
   const errors=atlasCrewErrors(draft), first=Object.keys(errors)[0];
-  const capability=catalogError || (!overview?.root ? 'No research workspace was selected.' : catalog ? atlasCrewCapabilities(atlasCrewServices(),catalog,draft.leadModel) : '');
+  const capability=(!requestId && 'A secure launch identity is unavailable in this browser.') || catalogError || (!overview?.root ? 'No research workspace was selected.' : catalog ? atlasCrewCapabilities(atlasCrewServices(),catalog,draft.leadModel) : '');
   const locked=busy || !!problem?.startedRequest;
   const update=patch=>{if (locked) return;setDraft(d=>({...d,...patch}));setProblem(null);};
-  const saved=JSON.stringify(draft);
+  const payload={...draft,extraAllowed:draft.extraAllowed.map(s=>s.trim()).filter(Boolean)};
+  const saved=JSON.stringify(payload);
   useEffect(()=>{
     let current=true;setPreview(null);
     if (!opened || first || locked) return;
-    const timer=setTimeout(()=>api('teams/preview',{method:'POST',body:{...draft,requestId},query:{expectedRoot:overview.root}},20).then(data=>{
+    const timer=setTimeout(()=>api('teams/preview',{method:'POST',body:{...payload,requestId},query:{expectedRoot:overview.root}},20).then(data=>{
       if(current)setPreview({key:saved,...data});
     },error=>{if(current)setPreview({key:saved,error:error.message});}),250);
     return ()=>{current=false;clearTimeout(timer);};
@@ -139,7 +140,7 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
   const launch=async()=>{
     if (latch.current || locked || first || capability || !catalog) return;
     latch.current=true;setBusy(true);setProblem(null);
-    try {const team=await atlasStartNativeTeam({root:overview.root,draft,requestId}); if(live.current){flash?.('Brief delivered to the lead.');onStarted(team);}}
+    try {const team=await atlasStartNativeTeam({root:overview.root,draft:payload,requestId}); if(live.current){flash?.('Brief delivered to the lead.');onStarted(team);}}
     catch(e){if(live.current)setProblem(e);} finally {if(live.current)setBusy(false);latch.current=false;}
   };
   const close=()=>{if(!latch.current)onClose();};

@@ -58,8 +58,10 @@ function registryRemember(row) {
 }
 function registryGet(id) { return registryState.get().records.find(r => r.id === id); }
 function registryCommand(name, method, body) {
+  const root=registryState.get().root;
+  if (!root) return Promise.reject(new Error('The research workspace is not ready.'));
   return registrySerial(async current => {
-    const result = await api(name, { method, body });
+    const result = await api(name, { method, body, query:{expectedRoot:root} });
     if (current()) registryRemember(result.discussion);
     return result;
   });
@@ -68,17 +70,20 @@ async function registryCreate(record) { return (await registryCommand('discussio
 function registryPatchRaw(id, patch) { return registryCommand('discussions/' + encodeURIComponent(id), 'PATCH', patch); }
 async function registryPatch(id, patch) { return (await registryPatchRaw(id, patch)).discussion; }
 function registryRefresh() {
-  if (!registryState.get().root) return Promise.resolve();
-  const epoch = registryEpoch;
+  const root=registryState.get().root;
+  if (!root) return Promise.resolve();
+  const epoch = registryEpoch, changed='The research workspace changed. Refresh the research desk.';
   const list = registrySerial(async current => {
     try {
-      const data = await api('discussions', { query: { status: 'all' } });
+      const data = await api('discussions', { query: { status: 'all',expectedRoot:root } });
+      if (!data?.root || registryPath(data.root)!==registryPath(root)) throw new Error(changed);
       if (current()) registryPublish({ records: data.discussions, error: '', loading: false });
-    } catch (e) { if (current()) registryPublish({ error: e.message, loading: false }); }
+    } catch (e) { if (current()) registryPublish({ records:[],error: e.status===409 ? changed : e.message, loading: false }); }
   });
-  const needs = api('needs').then(data => {
+  const needs = api('needs',{query:{expectedRoot:root}}).then(data => {
+    if (!data?.root || registryPath(data.root)!==registryPath(root)) throw new Error(changed);
     if (epoch === registryEpoch) registryPublish({ needs: data, needsError: '' });
-  }, e => { if (epoch === registryEpoch) registryPublish({ needsError: e.message }); });
+  }).catch(e => { if (epoch === registryEpoch) registryPublish({ needs:registryEmptyNeeds,needsError: e.status===409 ? changed : e.message }); });
   return Promise.all([list, needs]);
 }
 function useRegistrySnapshot() {
@@ -117,7 +122,7 @@ function useDiscussionRegistry(root) {
       try {
         const problems = await registryImportLegacy(candidates, ack, body => {
           if (!current()) throw new Error('The research workspace changed.');
-          return api('discussions/import', { method: 'POST', body });
+          return api('discussions/import', { method: 'POST', body, query:{expectedRoot:root} });
         }, value => storageSet(key, value));
         if (current()) registryPublish({ migrationError: problems.join('; ') });
       } catch (e) { if (current()) registryPublish({ migrationError: e.message }); }
@@ -262,7 +267,8 @@ function registryAdoption(id, row, now = Date.now()) {
 }
 
 function DiscussionsPlace({ overview, go, flash, filter = '' }) {
-  const snap = useRegistrySnapshot(), rows = useSessionRows();
+  const current = useRegistrySnapshot(), rows = useSessionRows();
+  const snap=current.root===overview.root ? current : {...registryInitial,refresh:current.refresh};
   const legacy = React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
   const actions = React.useContext(AtlasActions);
   const [search,setSearch] = useState(''), [sort,setSort] = useState('activity'), [select,setSelect] = useState(false), [selected,setSelected] = useState([]);
@@ -292,9 +298,11 @@ function DiscussionsPlace({ overview, go, flash, filter = '' }) {
   const reviewById = new Map((snap.needs.reviews||[]).map(r=>[r.session,r]));
   const searchBox = h(Input,{label:'Search discussions',placeholder:'Search discussions…',type:'search',value:search,onChange:e=>setSearch(e.target.value)});
   const filters = [['','All'],['running','Running'],['needs','Needs you'],['unread','Unread'],['pinned','Pinned'],['unfiled','Unfiled']];
+  const decisions=(snap.needs.decisions || []).filter(d=>!search || `${d.question} ${d.teamName}`.toLowerCase().includes(search.toLowerCase()));
+  const incomplete=snap.loading || snap.needsError || snap.needs.teamErrors?.length;
   const waiting = (snap.needs.waiting || []).filter(w => !search || `${w.thread.name} ${w.topic.title}`.toLowerCase().includes(search.toLowerCase()));
   return h('div',{className:'atlas-discussions-place'},
-    h('nav',{'aria-label':'Discussion filters',className:'atlas-disc-filters'},h('h2',null,'Discussions'),filters.map(([key,label])=>nav(key,label,countFor(key)+(key==='needs'?(snap.needs.waiting?.length||0):0))),
+    h('nav',{'aria-label':'Discussion filters',className:'atlas-disc-filters'},h('h2',null,'Discussions'),filters.map(([key,label])=>nav(key,label,key==='needs' ? incomplete ? undefined : countFor(key)+(snap.needs.waiting?.length||0)+(snap.needs.decisions?.length||0) : countFor(key))),
       h('details',null,h('summary',null,'By topic'),tree.map(x=>nav('topic:'+x.topic.id,x.topic.title,visibleTopics.get(x.topic.id)||0,x.depth))),
       nav('resolved','Resolved',countFor('resolved')),nav('other','Other DSH sessions',others.length)),
     h('section',{className:'atlas-disc-results'},h('h1',null,filter==='other'?'Other DSH sessions':'Discussions'),
@@ -306,6 +314,8 @@ function DiscussionsPlace({ overview, go, flash, filter = '' }) {
         h(Button,{small:true,disabled:busy,onClick:e=>setMove({ids:chosen.map(r=>r.id),anchor:e.currentTarget})},'Move'),
         h(Button,{small:true,disabled:busy,onClick:()=>runMany(chosen,r=>registryPatch(r.id,{pinned:!chosen.every(t=>t.pinned)}))},chosen.every(t=>t.pinned)?'Unpin':'Pin'),
         h(Button,{small:true,disabled:busy,onClick:()=>runMany(chosen,r=>atlasResolveDiscussion(r,filter==='resolved'?'open':'resolved'))},filter==='resolved'?'Reopen':'Resolve')),
+      filter==='needs' && !!snap.needs.teamErrors?.length && h(Banner,null,'Some team decisions could not be read. Showing verified requests only. ',h(TextButton,{onClick:snap.refresh},'Retry')),
+      filter==='needs' && decisions.map(d=>h('article',{key:'decision:'+d.teamId+':'+d.id,className:'atlas-disc-wait'},h('strong',null,d.question || d.id),h('p',null,d.teamName),h(Button,{small:true,onClick:()=>actions.openTeam(d.teamId,{decisionId:d.id})},'Answer'))),
       filter==='needs' && waiting.map(w=>h('article',{key:w.topic.path+':'+w.thread.name,className:'atlas-disc-wait'},h('strong',null,w.thread.name),h('p',null,w.topic.title),
         h(Button,{small:true,onClick:()=>go({view:'doc',path:w.topic.path,anchor:'current-work'})},'Open note'), ' ',
         h(Button,{small:true,onClick:()=>actions.ask(focusContext({topic:w.topic},{section:'Current work › '+w.thread.name}),'ask',`Help me decide “${w.thread.name}” based on the options in my note.`,'Decide '+w.thread.name)},'Discuss'),
@@ -319,7 +329,7 @@ function DiscussionsPlace({ overview, go, flash, filter = '' }) {
             h('span',{className:'atlas-disc-sub'},[r.topic?.title||'Unfiled',r.model?.model,r.question?.slice(0,90),review?`${review.edits} changes to review`:null].filter(Boolean).join(' · '))),
           h('div',{className:'atlas-disc-row-actions'},btn((r.pinned?'Unpin ':'Pin ')+title,r.pinned?'★':'☆',()=>pin(r)),btn('Move '+title,'↔',e=>setMove({ids:[r.id],anchor:e.currentTarget})),btn((r.status==='resolved'?'Reopen ':'Resolve ')+title,r.status==='resolved'?'↺':'✓',()=>resolve(r)),btn('More actions for '+title,'⋯',e=>setMenu({record:r,anchor:e.currentTarget}))));
       }}),
-      !snap.loading && !snap.error && filter!=='other' && !list.length && !(filter==='needs' && waiting.length) && h(EmptyState,null,filter||search?'Nothing here.':'No discussions yet. Ask from the Desk, or select a passage and press Ctrl+J.'),
+      !snap.loading && !snap.error && filter!=='other' && !list.length && !(filter==='needs' && (waiting.length || decisions.length || incomplete)) && h(EmptyState,null,filter||search?'Nothing here.':'No discussions yet. Ask from the Desk, or select a passage and press Ctrl+J.'),
       snap.loading && h(Skeleton,{label:'Loading discussions…'})),
     move && h(MoveDiscussion,{...move,overview,onClose:()=>setMove(null),flash}),
     menu && h(Menu,{label:'Discussion actions',anchor:menu.anchor,onClose:()=>setMenu(null),items:[

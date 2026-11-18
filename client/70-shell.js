@@ -5,16 +5,16 @@ function AtlasApp() {
   const overview = useApi('overview', version ? { fresh: 1 } : null, 'overview', version);
   const root=overview.data?.root;
   const registry=useDiscussionRegistry(root), rows=useSessionRows(), legacy=useThreadIndex();
-  const workspaces=useAtlasCatalog(svc('workspaces')?.list);
+  const workspaces=useAtlasCatalog(svc('workspaces')?.list), teams=useTeamIndex(root);
   // Key the entire body plane (including its focus, action callbacks and LRU).
   // No render under B may inherit a single retained SessionProvider from A.
-  return h(AtlasRootShell,{key:tabStorageKey(root) || 'setup',overview,version,setVersion,registry,rows,legacy,workspaces});
+  return h(AtlasRootShell,{key:tabStorageKey(root) || 'setup',overview,version,setVersion,registry,rows,legacy,workspaces,teams});
 }
 
-function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,workspaces}) {
+function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,workspaces,teams}) {
   const ov = overview.data, root=ov?.root;
   const places = useMemo(() => placeKeys(ov), [ov]);
-  const scope=useMemo(()=>({root,registry,rows,legacy,workspaces,places}),[root,registry.root,registry.records,registry.loading,registry.error,rows,legacy,workspaces,places]);
+  const scope=useMemo(()=>({root,registry,rows,legacy,workspaces,places,teams}),[root,registry.root,registry.records,registry.loading,registry.error,rows,legacy,workspaces,places,teams]);
   const [source,setSource]=useState(()=>readTabSource(root));
   // Keep unverified legacy storage OUT of React's rendered plane and closed
   // stack, even while a catalog lags the overview. Re-project on new evidence.
@@ -41,7 +41,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
 
   const [message, flash] = useFlash();
   const [quick, setQuick] = useState(null);
-  const [ask, setAsk] = useState(null);
+  const [ask, setAsk] = useState(null), [assembly,setAssembly]=useState(null), [seatTeam,setSeatTeam]=useState(null);
   const [deskRequest, setDeskRequest] = useState(0);
   const moveTopicRef = useRef(null); // The active discussion's own filing popover, not a second dialog.
   const [libFilter, setLibFilter] = useState('');
@@ -144,7 +144,8 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
     const routing = { narrow,ctrlKey:opts.ctrlKey, metaKey:opts.metaKey,shiftKey:opts.shiftKey, button:opts.button,permanent:opts.permanent, otherPane:opts.otherPane, samePane:opts.samePane };
     const spec = tabSpec(next,places);
     if (!spec) return;
-    if (spec.sessionId && !tabSessionInScope(spec.sessionId,{...scopeRef.current,registry:registryState.get()})) {
+    const currentScope={...scopeRef.current,registry:registryState.get()};
+    if ((spec.kind==='team' && spec.teamId && !tabTeamRecord(spec.teamId,currentScope)) || (spec.sessionId && !(spec.kind==='member' && spec.teamId ? tabTeamMember(spec,currentScope) : tabSessionInScope(spec.sessionId,currentScope)))) {
       flash('This session is not verified for the current research workspace.'); return;
     }
     if (spec.kind==='desk' && opts.focusComposer) setDeskRequest(n=>n+1);
@@ -158,10 +159,23 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
   };
   const openThread = (id,from = activeId(stateRef.current),opts={}) => {
     if (!id) return;
+    if (opts.teamId) {
+      const team=tabTeamRecord(opts.teamId,scopeRef.current);
+      const name=id===team?.leadId?'lead':rowOf(rows,team?.leadId)?.projectionValues?.subagentCatalog?.find(c=>c.id===id)?.name;
+      if (name) openSeat(opts.teamId,id,name,from); else flash('This seat has not been verified by DSH.');
+      return;
+    }
     const record=registryGet(id),row=rowOf(rows,id);
     const isMember=!record && Boolean(row?.parentId || row?.parentSessionId);
     nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:record?.title || row?.displayTitle || row?.title || 'Discussion'},opts);
   };
+  const openTeam=(id,from=activeId(stateRef.current),opts={})=>{
+    const team=tabTeamRecord(id,scopeRef.current);
+    if (!team) {flash('This team is not available in this workspace.');return;}
+    nav.current(from,{view:'team',teamId:id,title:team.name,section:opts.section,decisionId:opts.decisionId},opts);
+  };
+  const openSeat=(teamId,id,name,from)=>nav.current(from,{view:'member',teamId,sessionId:id,seatName:name,title:name});
+  const assemble=(from,preset={})=>{if(root)setAssembly({from,preset});};
   // Desk submission activates the real session only after DSH accepts its first
   // message; failure is returned to the Desk so the researcher can retry.
   const submitDesk = async ({question,topicId,attachments=[],model=null,filing='none',candidates=[]}) => {
@@ -206,9 +220,9 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
   const onQuick = (kind,from=activeId(stateRef.current)) => setQuick({tab:kind || 'paper',from,at:Date.now()});
   const onRefresh = () => {
     if (Object.keys(stateRef.current.tabs).some(id=>editorDirty[id])) { flash('Save or discard your edits before reading the files again.'); return; }
-    setVersion(Date.now()); registry.refresh();
+    setVersion(Date.now()); registry.refresh();teams.refresh();
   };
-  const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+  const chrome = useAtlasChrome({rootRef, overview:ov, mode, teamRecords:teams.records, onAssemble:root?()=>assemble(activeId(stateRef.current)):null,openTeam:(id,opts)=>openTeam(id,activeId(stateRef.current),opts),discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.root===root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? (registry.needs?.decisions?.length || 0) : 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
     onMoveDiscussion:tab.kind === 'discussion' && registryGet(tab.sessionId) && !rowOf(rows,tab.sessionId)?.parentId ? () => moveTopicRef.current?.() : null,
     activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
     openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
@@ -239,6 +253,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
     focusStore.set({byTab,paneOf,active,visible:{left:visibleLeft,right:visibleRight}});
   }, [state.layout, active, narrow, visibleLeft, visibleRight]);
   const actionsFor = from => ({
+    assembleTeam:preset=>assemble(from,preset),openTeam:(id,opts)=>openTeam(id,from,opts),
     current:besideDiscussion(state.tabs,layout,visibleIds,from), targets, openDiscussionIds:state.order.map(id=>state.tabs[id]).filter(t=>t.kind==='discussion').map(t=>t.sessionId), keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
     ask:(...args)=>askFrom(from,...args),openThread:(id,opts)=>openThread(id,from,opts),startAsk:preset=>setAsk({from,preset:preset||{}}),
     addToThread(context) {
@@ -268,7 +283,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
     if (t.kind==='place') {
       if (t.view==='library') return h(React.Fragment,null,h('label',{className:'atlas-library-local-filter'},h('input',{className:'atlas-input',type:'search',value:libFilter,placeholder:'Filter papers and entries','aria-label':'Filter papers and entries',onChange:e=>setLibFilter(e.target.value)})),h(LibraryView,{...props,filter:libFilter,tab:t.tab,focusAdd:t.add}));
       if (t.view==='discussions') return h(DiscussionsPlace,{...props,filter:t.filter||''});
-      if (t.view==='teams') return h(LegacyTeamsPlace,{...props,filter:t.filter||''});
+      if (t.view==='teams') return h(TeamsPlace,{...props,filter:t.filter||'active',onAssemble:p=>assemble(t.id,p),onTeam:(id,opts)=>openTeam(id,t.id,opts)});
       if (t.view==='map') return h(UniverseView,{...props,filter:'',anchor:t.anchor});
       if (t.view==='learn') return h(LearnView,{...props,path:t.path});
       if (t.view==='search') return h(SearchView,{...props,q:t.q,at:t.at});
@@ -277,6 +292,12 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
     if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
     if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
+    if (t.kind==='team') {
+      const team=tabTeamRecord(t.teamId,scope) || (t.sessionId && teams.records.find(r=>r.leadId===t.sessionId));
+      if (!team) return h(Empty,null,'This team is no longer available here.');
+      return h(TeamRoom,{...props,scope,teamId:team.id,team,visible:visibleIds.includes(t.id),section:t.section,decisionId:t.decisionId,onMember:(id,name)=>openSeat(team.id,id,name,t.id),onAddSeat:()=>setSeatTeam(team.id)});
+    }
+    if (t.kind==='member' && t.teamId) return h(TeamMemberTab,{...props,scope,team:tabTeamRecord(t.teamId,scope),seatName:t.seatName,sessionId:t.sessionId,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onTeam:()=>openTeam(t.teamId,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
     if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
     return h(Empty,null,'This team room is not available in this version.');
   };
@@ -333,6 +354,15 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
         drag && !focused && !narrow && shown.length===1 && h('div',{className:cx('atlas-drop-split is-right',drop?.where==='split'&&'is-over'),...dropHandlers('right','split')},h(Icon,{name:'panel'}),'Drop here to split'),
         visibleIds.filter(id=>!tabConversation(state.tabs[id])).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
         ask && state.tabs[ask.from] && wrap(ask.from,h(AskBar,{preset:ask.preset,onClose:()=>setAsk(null)})),
+        assembly && ov && h(AssembleTeamSheet,{overview:ov,preset:assembly.preset,flash,onClose:()=>setAssembly(null),onStarted:team=>{
+          if (!live.current || !team?.id) return;
+          const from=assembly.from;recordTeamInIndex(root,team);
+          const latest=lookupTeam(team.id,root);setAssembly(null);
+          if (!latest) {flash('Team no longer available in this workspace.');return;}
+          scopeRef.current={...scopeRef.current,teams:{...teams,records:[latest,...teams.records.filter(r=>r.id!==latest.id)]}};
+          openTeam(latest.id,stateRef.current.tabs[from]?from:'desk');
+        }}),
+        seatTeam && tabTeamRecord(seatTeam,scope) && h(AddTeamSeatSheet,{team:tabTeamRecord(seatTeam,scope),overview:ov,scope,flash,onClose:()=>setSeatTeam(null)}),
         quick && ov && wrap(quick.from,h(QuickAdd,{key:quick.at,tab:quick.tab,overview:ov,go:goOf(quick.from),flash,onClose:()=>setQuick(null)})),
         h(Toast,{message:message || (starting?'Starting the discussion…':null)}))),
     chrome.overlays);

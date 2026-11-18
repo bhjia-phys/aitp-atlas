@@ -112,7 +112,7 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, on
   }
   cmd('newDiscussion', 'New discussion', 'chat', () => p.onNewDiscussion());
   if (typeof p.onMoveDiscussion === 'function') cmd('moveDiscussion', 'Move discussion to a topic…', 'topics', () => p.onMoveDiscussion());
-  cmd('team', 'New team', 'team', null, 'Native team setup is not available yet', true);
+  cmd('team', 'Assemble a team…', 'team', p.onAssemble, p.onAssemble ? '' : 'Choose a research workspace first', !p.onAssemble);
   cmd('search', 'Search', 'search', (opts) => p.openPlace('search', opts));
   cmd('paper', 'Add a paper', 'paper', () => p.onQuick('paper'));
   cmd('note', 'New note', 'note', () => p.onQuick('note'));
@@ -132,7 +132,8 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, on
   const records = new Map();
   // M2's registry is authoritative for discussions (even when empty). Legacy
   // teams keep their existing entry until M3; a registry title wins on overlap.
-  for (const t of threads) if (t?.id && (!registry || t.kind === 'team')) records.set(t.id, t);
+  const verifiedTeams=Array.isArray(p.teamRecords) ? p.teamRecords : null;
+  for (const t of threads) if (t?.id && (!registry || t.kind === 'team') && !(verifiedTeams && t.kind==='team')) records.set(t.id, t);
   for (const t of registry || []) if (t?.id) records.set(t.id, t);
   const index = [...records.values()].filter(t => knownThread(rows, t)).map((t) => {
     const row = rowOf(rows, t.id), team = t.kind === 'team' || !!teamOf(row);
@@ -142,7 +143,8 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, on
   });
   const files = (p.recentFiles || []).filter((f) => f.path).map((f) => ({ group: 'Recent files', id: 'file:' + f.path, label: f.title || baseName(f.path),
     icon: 'note', detail: f.path, run: (opts) => p.openFile(f.path, opts) }));
-  return [...commands, ...places, ...topics, ...index, ...files];
+  const teamItems=(verifiedTeams || []).map(t=>({group:'Teams',id:'team:'+t.id,label:t.name,detail:t.topic?.title || (t.legacy?'Legacy team':'Team room'),updated:t.updated || t.created,icon:'team',run:opts=>p.openTeam(t.id,opts)}));
+  return [...commands, ...places, ...topics, ...index, ...teamItems, ...files];
 }
 
 function AtlasCommandPalette({ items, recent, onClose, onRun }) {

@@ -123,7 +123,7 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
         t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
       h('div', { className: 'atlas-actions' },
         h(Button, { primary: true, icon: 'chat', onClick: discuss }, 'Discuss'),
-        h(Button, { icon: 'team', disabled: !actions.startTeam, title: actions.startTeam ? 'Start a team for this topic' : 'Native team setup arrives in M3.', onClick: () => actions.startTeam?.({ topic: t.id }) }, 'Start a team'),
+        h(Button, { icon: 'team', disabled: !actions.assembleTeam, title: 'Assemble a research team for this topic', onClick: () => actions.assembleTeam({topicId:t.id}) }, 'Start a team'),
         data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
         h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
         h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),

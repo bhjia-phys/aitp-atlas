@@ -19,7 +19,7 @@ function harness(services = {}, extra = {}, fetch = () => { throw new Error('Une
     useSyncExternalStore: (_subscribe, snapshot) => snapshot(), useEffect() {}, useLayoutEffect() {}, useMemo: (f) => f(), useCallback: (f) => f,
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}], useRef: (current) => ({ current }), ...extra,
   };
-  return new Function('require', 'window', 'services', 'fetch', `${body}\n${stubViews}\npluginCtx = { get: k => services[k] }; return { contextBlock, chipsOf, focusContext, startThread, paneFocus, legacyTeamGroups, LegacyTeamsPlace, DecideButtons, AtlasActions, PaneContext, Companion, focusStore, threadStore, readingStore, SelectionTools };`)(
+  return new Function('require', 'window', 'services', 'fetch', `${body}\n${stubViews}\npluginCtx = { get: k => services[k] }; return { contextBlock, chipsOf, focusContext, startThread, paneFocus, DecideButtons, AtlasActions, PaneContext, Companion, focusStore, threadStore, readingStore, SelectionTools };`)(
     () => react, { localStorage: { getItem: () => null, setItem() {} }, getSelection: () => null }, services, fetch);
 }
 function nodes(tree) {
@@ -72,17 +72,7 @@ test('Keep in note promotes the selected PDF tab, not whichever tab was used las
   assert.deepEqual(actions, [['promote', source], ['/aitp-atlas/api/append', { path: '/map.md', heading: 'Your reading', line: '- [p. 3](/paper.pdf#page=3): “Selected words”' }]]);
 });
 
-test('Discussions and Teams partition legacy and native rows; running includes a working child of an idle team', () => {
-  const a = harness();
-  const index = [{ id: 'disc', question: 'Question', created: 1 }, { id: 'legacy', kind: 'team', created: 2 }, { id: 'promoted', created: 3 }, { id: 'gone' }];
-  const team = { projectionValues: { agentTeam: { enabled: true, tasks: [] } } };
-  const rows = { phase: 'ready', byId: { disc: { running: true }, legacy: {}, promoted: team, native: team, child: { parentId: 'legacy', running: true }, external: { running: true }, closed: { archived: true } } };
-  const ids = filter => { const list = a.legacyTeamGroups(index, rows, filter); return [list.groups.flatMap((g) => g.items.map((t) => t.id)), list.others.map((x) => x.id)]; };
-  assert.deepEqual(ids(''), [['promoted', 'legacy'], ['native']]);
-  assert.deepEqual(ids('running'), [['legacy'], []]);
-});
-
-test('Needs you shows real Current work choices; the new places never expose the old team launcher', () => {
+test('Needs you opens the real Current work choice as a new decision discussion', () => {
   const a = harness();
   const thread = { name: 'Choose', status: 'waiting on you', markdown: 'A: keep the sample; B: extend it' };
   const topic = { id: 'qc', reached: true, file: '/qc/research.md', title: 'QC', waiting: [thread] };
@@ -93,8 +83,4 @@ test('Needs you shows real Current work choices; the new places never expose the
   assert.equal(sent[0].topic.path, topic.file);
   assert.match(sent[2], /My decision on "Choose": B: extend it/);
   assert.deepEqual(sent[4], {origin:'decide',targetId:'new'});
-  const page = nodes(a.LegacyTeamsPlace({overview:ov, go:next=>{route=next;}}));
-  assert.ok(!page.some(n => n.children.includes('Start a team') || n.type==='form'));
-  page.find(n => n.props['aria-pressed'] === false && n.children.includes('Running')).props.onClick();
-  assert.deepEqual(route,{view:'teams',filter:'running'});
 });

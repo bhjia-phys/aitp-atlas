@@ -1617,7 +1617,7 @@ window.__ModuleLoader__.load({
       return { topicId, filing: topicId ? (choice === null ? 'auto' : 'user') : 'none', candidates };
     }
 
-    function deskAlmanacData(ov, index, rows, needs = null) {
+    function deskAlmanacData(ov, index, rows, needs = null, teams = []) {
       const items = [];
       for (const t of index) {
         const row = rowOf(rows, t.id);
@@ -1639,25 +1639,37 @@ window.__ModuleLoader__.load({
           running.push({ id: m.id, title: `${team.title} · ${m.role || m.name || m.row.displayTitle || m.row.title || 'Member'}`, running: true, progress: 'working' }); seen.add(m.id);
         }
       }
+      for (const team of teams) {
+        const v=teamIndexSummary(team,rows,needs);
+        if (v.isDone) continue;
+        const item={id:team.id,title:team.name,at:v.at,running:v.working,team:true,openTeam:true,progress:v.total===null?'working':`${v.done} of ${v.total}`};
+        items.push(item);
+        if (v.working) running.push(item);
+        for (const m of v.members) if (m.row?.running && !seen.has(m.id)) {
+          running.push({id:m.id,teamId:team.id,legacy:!!team.legacy,title:`${m.name || m.row.displayTitle || 'Member'} · ${team.name}`,running:true,progress:'working'}); seen.add(m.id);
+        }
+      }
+      for (const d of needs?.decisions || []) if (d.teamId && d.id) waiting.push({kind:'decision',teamId:d.teamId,id:d.id,title:d.question || d.id,teamName:d.teamName});
+      items.sort((a,b)=>b.at-a.at || a.id.localeCompare(b.id));
       return { items, waiting, running };
     }
 
     function DeskAlmanac({ ov, go, onOpenThread, registry }) {
-      const rows = useSessionRows(), legacy = useThreadIndex(), actions = React.useContext(AtlasActions);
+      const rows = useSessionRows(), teams=useTeamIndexSnapshot(ov.root), actions = React.useContext(AtlasActions);
       const { items, waiting, running } = useMemo(() => {
-        const sameRoot = registry.root === ov.root, records = sameRoot ? registry.records || [] : [], listed = new Set(records.map((r) => r.id));
-        const index = [...records, ...legacy.filter((t) => t.kind === 'team' && !listed.has(t.id) && registryInRoot(ov.root, t.context?.topic?.path || rowOf(rows, t.id)?.cwd))];
-        return deskAlmanacData(ov, index, rows, sameRoot && !registry.needsError && !registry.loading ? registry.needs : null);
-      }, [ov, legacy, registry.root, registry.records, registry.needs, registry.needsError, registry.loading, rows]);
-      const row = (t, active) => h('button', { type: 'button', className: 'atlas-almanac-row', key: t.id, title: `${t.running ? 'Working' : 'Open'} · ${t.title}${t.at ? ` · Last active ${dateOf(t.at)}` : ''}`, onClick: () => onOpenThread(t.id) },
+        const sameRoot = registry.root === ov.root, records = sameRoot ? registry.records || [] : [];
+        const leadIds=new Set(teams.records.map(t=>t.leadId));
+        return deskAlmanacData(ov, records.filter(r=>!leadIds.has(r.id)), rows, sameRoot && !registry.needsError && !registry.loading ? registry.needs : null,teams.records);
+      }, [ov, teams.records, registry.root, registry.records, registry.needs, registry.needsError, registry.loading, rows]);
+      const row = (t, active) => h('button', { type: 'button', className: 'atlas-almanac-row', key: t.id, title: `${t.running ? 'Working' : 'Open'} · ${t.title}${t.at ? ` · Last active ${dateOf(t.at)}` : ''}`, onClick: () => t.openTeam ? actions.openTeam(t.id) : t.teamId ? (t.legacy ? actions.openTeam(t.teamId) : actions.openThread(t.id,{kind:'member',teamId:t.teamId})) : onOpenThread(t.id) },
         h('span', { className: cx('atlas-almanac-mark', t.running && 'is-working'), 'aria-label': t.running ? 'Working' : 'Open' }), h('span', { className: 'atlas-almanac-title' }, t.team ? 'Team · ' : '', t.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h('em', null, active ? (t.progress || (t.team ? 'working' : 'replying')) : ago(t.at)));
       const decide = ({ topic, thread }) => actions.ask(focusContext({ topic: { id: topic.id, title: topic.title, path: topic.path || topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide “${thread.name}”: lay out the options my note records, what each would settle, and what you recommend.`, `Decide ${thread.name}`);
       const group = (name, n, link, filter, children, empty) => h('section', { className: 'atlas-almanac-group', 'aria-label': name },
         h('header', null, h('h2', null, name), n ? h('em', null, n) : null, h(TextButton, { onClick: () => go({ view: 'discussions', filter }), title: filter ? `All · ${name}` : 'All discussions' }, link)),
         children.length ? children : h('p', { className: 'atlas-almanac-empty' }, empty));
-      return h(React.Fragment, null, registry.error || registry.needsError ? h('p', { className: 'atlas-desk-message', role: 'status' }, registry.error ? 'Discussion records are unavailable. ' : '', registry.needsError ? 'Review requests could not be read. ' : '', h(TextButton, { onClick: registry.refresh }, 'Retry')) : null, h('div', { className: 'atlas-desk-almanac' },
+      return h(React.Fragment, null, !!registry.needs?.teamErrors?.length && h('p',{className:'atlas-desk-message',role:'status'},'Some team decisions could not be read. Showing verified requests only. ',h(TextButton,{onClick:registry.refresh},'Retry')), registry.error || registry.needsError ? h('p', { className: 'atlas-desk-message', role: 'status' }, registry.error ? 'Discussion records are unavailable. ' : '', registry.needsError ? 'Review requests could not be read. ' : '', h(TextButton, { onClick: registry.refresh }, 'Retry')) : null, h('div', { className: 'atlas-desk-almanac' },
         group('Continue', 0, 'All discussions', '', items.slice(0, 5).map((t) => row(t, false)), registry.loading ? 'Reading discussions…' : registry.error ? 'Discussion records could not be read.' : 'Your open discussions will appear here.'),
-        group('Needs you', waiting.length, 'All', 'needs', waiting.slice(0, 5).map((w, i) => w.kind === 'review' ? h('div', { className: 'atlas-almanac-row', key: 'review:' + w.id }, h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Unreviewed edits' }), h('span', { className: 'atlas-almanac-title', title: w.title }, w.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => onOpenThread(w.id) }, 'Review')) : h('div', { className: 'atlas-almanac-row', key: w.topic.id + ':' + i },
+        group('Needs you', registry.needsError || registry.needs?.teamErrors?.length ? 0 : waiting.length, 'All', 'needs', waiting.slice(0, 5).map((w, i) => w.kind === 'decision' ? h('div',{className:'atlas-almanac-row',key:'decision:'+w.teamId+':'+w.id},h('span',{className:'atlas-almanac-mark is-waiting','aria-label':'Team decision'}),h('span',{className:'atlas-almanac-title',title:w.teamName},w.title),h('i',{className:'atlas-almanac-leader','aria-hidden':true}),h(Button,{small:true,onClick:()=>actions.openTeam(w.teamId,{decisionId:w.id})},'Answer')) : w.kind === 'review' ? h('div', { className: 'atlas-almanac-row', key: 'review:' + w.id }, h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Unreviewed edits' }), h('span', { className: 'atlas-almanac-title', title: w.title }, w.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => onOpenThread(w.id) }, 'Review')) : h('div', { className: 'atlas-almanac-row', key: w.topic.id + ':' + i },
           h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Waiting' }), h('button', { type: 'button', 'data-atlas-open': true, className: 'atlas-almanac-title', title: `${w.topic.title} · ${w.thread.name}`, onClick: (e) => go({ view: 'doc', path: w.topic.path || w.topic.file, anchor: 'current-work' }, e) }, w.thread.name),
           h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => decide(w), title: 'Discuss this decision' }, 'Decide'))), 'Nothing in your notes waits on a decision.'),
         group('Running', running.length, 'All', 'running', running.slice(0, 5).map((t) => row(t, true)), rows?.phase === 'ready' ? 'Nothing is in motion.' : 'Live session state is unavailable.')));
@@ -1718,6 +1730,8 @@ window.__ModuleLoader__.load({
 
     function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStartDiscussion, onOpenThread }) {
       const [draft, setDraft] = useState(() => deskDraft(ov?.root));
+      const actions=React.useContext(AtlasActions), [mode,setMode]=useState('discuss');
+      const teamMode=mode==='team';
       const [error, setError] = useState(''), [busy, setBusy] = useState(false), [popup, setPopup] = useState(null);
       const input = useRef(null), topicButton = useRef(null), attachButton = useRef(null), latch = useRef(false);
       const otherPane = useFocus().beside, registry = useRegistrySnapshot();
@@ -1731,9 +1745,9 @@ window.__ModuleLoader__.load({
       const topic = selection.topicId ? ov?.topics[selection.topicId] : null;
       const topicLabel = draft.topicId === null ? 'Auto' : topic?.title || 'No topic';
       const sessions = svc('sessions');
-      const disabledReason = setup || !ov ? 'Set up a research workspace before starting a discussion.' : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
+      const disabledReason = setup || !ov ? 'Set up a research workspace before starting work.' : teamMode ? (!actions.assembleTeam?'Team setup is unavailable.':'') : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
       const disabled = !!disabledReason || busy;
-      const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
+      const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0) + (registry.needs?.decisions?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
       const patch = (change) => { setDraft((prev) => ({ ...prev, ...change })); setError(''); };
       usePublishFocus({ kind: 'universe', topic: ov ? { id: '', title: ov.title, path: ov.rootFile } : null }, [ov?.rootFile, ov?.title]);
       useEffect(() => { if (focusRequest && !disabledReason) input.current?.focus(); }, [focusRequest, disabledReason]);
@@ -1755,7 +1769,9 @@ window.__ModuleLoader__.load({
         try {
           const latest = key ? await router.flush(key) : null;
           if (key && !latest) return; // This draft/root was replaced before lookup finished.
-          await onStartDiscussion({ question: draft.question.trim(), ...deskFiling(ov, draft.topicId, latest), model, attachments: draft.attachments });
+          const filing=deskFiling(ov,draft.topicId,latest);
+          if(teamMode){ actions.assembleTeam({goal:draft.question.trim(),topicId:filing.topicId,leadModel:model,attachments:draft.attachments}); return; }
+          await onStartDiscussion({ question: draft.question.trim(), ...filing, model, attachments: draft.attachments });
           setDraft({ topicId: null, question: '', attachments: [] });
         } catch (cause) { setError(cause?.message || 'The discussion could not start.'); }
         finally { latch.current = false; setBusy(false); }
@@ -1771,8 +1787,9 @@ window.__ModuleLoader__.load({
           h('div', { className: 'atlas-desk-controls' }, h(IconButton, { label: 'Attach a reference', icon: 'plus', buttonRef: attachButton, disabled, 'aria-expanded': popup === 'attach', onClick: () => setPopup(popup === 'attach' ? null : 'attach') }),
             h('button', { type: 'button', className: 'atlas-desk-topic', ref: topicButton, disabled, 'aria-label': `Choose topic: ${topicLabel}`, 'aria-expanded': popup === 'topic', onClick: () => setPopup(popup === 'topic' ? null : 'topic') }, topic ? h('i', { className: 'atlas-dot', style: { background: directionColor(ov, topicDirection(ov, topic.id)) } }) : null, h('span', null, topicLabel), h('span', { 'aria-hidden': true }, '⌄')),
             h(AtlasModelPicker, { value: model, disabled, onChange: (next) => { setModel(next); storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), model: next }); } }),
+            h(Segmented,{label:'Composer mode',value:mode,options:[{value:'discuss',label:'Discuss',disabled:busy},{value:'team',label:'Team',disabled:busy}],onChange:setMode}),
             h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
-            h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+            teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
           popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: draft.topicId, onChoose: choose, onClose: () => setPopup(null) }) : null,
           popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
         disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
@@ -1783,6 +1800,16 @@ window.__ModuleLoader__.load({
     }
 
     const ATLAS_DESK_CSS = `
+    .atlas-teams-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--s-16); margin-bottom:var(--s-24); }
+    .atlas-team-index { list-style:none; padding:0; margin:var(--s-24) 0; }
+    .atlas-team-index-row { width:100%; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-12); text-align:left; color:var(--text-2); font:var(--t-meta); padding:var(--s-12) var(--s-8); border:0; border-top:1px solid var(--border); background:none; cursor:pointer; }
+    .atlas-team-index-row:hover { background:var(--hover); }
+    .atlas-team-index-name { flex:1 1 11ch; color:var(--text-1); font:var(--t-body); overflow-wrap:anywhere; }
+    .atlas-team-index-topic,.atlas-team-index-chip { font:var(--t-meta); padding:var(--s-4) var(--s-8); border:1px solid var(--border); border-radius:var(--r-full); }
+    .atlas-team-index-chip.is-waiting { color:var(--gold); } .atlas-team-index-chip.is-working { color:var(--accent); }
+    .atlas-team-index-row em { color:var(--text-3); }
+    @container (max-width:820px) { .atlas-desk-controls {flex-wrap:wrap;} .atlas-desk-hint {display:none;} }
+
     .atlas-desk { box-sizing:border-box; max-width:1120px; margin:0 auto; padding:0 var(--s-32) var(--s-56); background:var(--surface); }
     .atlas-desk-sky { position:relative; margin:0 calc(-1 * var(--s-32)); }
     .atlas-desk-sky > svg { position:absolute; bottom:0; width:100%; }
@@ -2054,7 +2081,7 @@ window.__ModuleLoader__.load({
             t.reached ? null : h(Chip, { dot: 'var(--status-waiting)', title: 'No link from the root or a parent note reaches this note' }, 'not linked')),
           h('div', { className: 'atlas-actions' },
             h(Button, { primary: true, icon: 'chat', onClick: discuss }, 'Discuss'),
-            h(Button, { icon: 'team', disabled: !actions.startTeam, title: actions.startTeam ? 'Start a team for this topic' : 'Native team setup arrives in M3.', onClick: () => actions.startTeam?.({ topic: t.id }) }, 'Start a team'),
+            h(Button, { icon: 'team', disabled: !actions.assembleTeam, title: 'Assemble a research team for this topic', onClick: () => actions.assembleTeam({topicId:t.id}) }, 'Start a team'),
             data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
             h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
             h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
@@ -5221,8 +5248,10 @@ window.__ModuleLoader__.load({
     }
     function registryGet(id) { return registryState.get().records.find(r => r.id === id); }
     function registryCommand(name, method, body) {
+      const root=registryState.get().root;
+      if (!root) return Promise.reject(new Error('The research workspace is not ready.'));
       return registrySerial(async current => {
-        const result = await api(name, { method, body });
+        const result = await api(name, { method, body, query:{expectedRoot:root} });
         if (current()) registryRemember(result.discussion);
         return result;
       });
@@ -5231,17 +5260,20 @@ window.__ModuleLoader__.load({
     function registryPatchRaw(id, patch) { return registryCommand('discussions/' + encodeURIComponent(id), 'PATCH', patch); }
     async function registryPatch(id, patch) { return (await registryPatchRaw(id, patch)).discussion; }
     function registryRefresh() {
-      if (!registryState.get().root) return Promise.resolve();
-      const epoch = registryEpoch;
+      const root=registryState.get().root;
+      if (!root) return Promise.resolve();
+      const epoch = registryEpoch, changed='The research workspace changed. Refresh the research desk.';
       const list = registrySerial(async current => {
         try {
-          const data = await api('discussions', { query: { status: 'all' } });
+          const data = await api('discussions', { query: { status: 'all',expectedRoot:root } });
+          if (!data?.root || registryPath(data.root)!==registryPath(root)) throw new Error(changed);
           if (current()) registryPublish({ records: data.discussions, error: '', loading: false });
-        } catch (e) { if (current()) registryPublish({ error: e.message, loading: false }); }
+        } catch (e) { if (current()) registryPublish({ records:[],error: e.status===409 ? changed : e.message, loading: false }); }
       });
-      const needs = api('needs').then(data => {
+      const needs = api('needs',{query:{expectedRoot:root}}).then(data => {
+        if (!data?.root || registryPath(data.root)!==registryPath(root)) throw new Error(changed);
         if (epoch === registryEpoch) registryPublish({ needs: data, needsError: '' });
-      }, e => { if (epoch === registryEpoch) registryPublish({ needsError: e.message }); });
+      }).catch(e => { if (epoch === registryEpoch) registryPublish({ needs:registryEmptyNeeds,needsError: e.status===409 ? changed : e.message }); });
       return Promise.all([list, needs]);
     }
     function useRegistrySnapshot() {
@@ -5280,7 +5312,7 @@ window.__ModuleLoader__.load({
           try {
             const problems = await registryImportLegacy(candidates, ack, body => {
               if (!current()) throw new Error('The research workspace changed.');
-              return api('discussions/import', { method: 'POST', body });
+              return api('discussions/import', { method: 'POST', body, query:{expectedRoot:root} });
             }, value => storageSet(key, value));
             if (current()) registryPublish({ migrationError: problems.join('; ') });
           } catch (e) { if (current()) registryPublish({ migrationError: e.message }); }
@@ -5425,7 +5457,8 @@ window.__ModuleLoader__.load({
     }
 
     function DiscussionsPlace({ overview, go, flash, filter = '' }) {
-      const snap = useRegistrySnapshot(), rows = useSessionRows();
+      const current = useRegistrySnapshot(), rows = useSessionRows();
+      const snap=current.root===overview.root ? current : {...registryInitial,refresh:current.refresh};
       const legacy = React.useSyncExternalStore(threadStore.subscribe, threadStore.get);
       const actions = React.useContext(AtlasActions);
       const [search,setSearch] = useState(''), [sort,setSort] = useState('activity'), [select,setSelect] = useState(false), [selected,setSelected] = useState([]);
@@ -5455,9 +5488,11 @@ window.__ModuleLoader__.load({
       const reviewById = new Map((snap.needs.reviews||[]).map(r=>[r.session,r]));
       const searchBox = h(Input,{label:'Search discussions',placeholder:'Search discussions…',type:'search',value:search,onChange:e=>setSearch(e.target.value)});
       const filters = [['','All'],['running','Running'],['needs','Needs you'],['unread','Unread'],['pinned','Pinned'],['unfiled','Unfiled']];
+      const decisions=(snap.needs.decisions || []).filter(d=>!search || `${d.question} ${d.teamName}`.toLowerCase().includes(search.toLowerCase()));
+      const incomplete=snap.loading || snap.needsError || snap.needs.teamErrors?.length;
       const waiting = (snap.needs.waiting || []).filter(w => !search || `${w.thread.name} ${w.topic.title}`.toLowerCase().includes(search.toLowerCase()));
       return h('div',{className:'atlas-discussions-place'},
-        h('nav',{'aria-label':'Discussion filters',className:'atlas-disc-filters'},h('h2',null,'Discussions'),filters.map(([key,label])=>nav(key,label,countFor(key)+(key==='needs'?(snap.needs.waiting?.length||0):0))),
+        h('nav',{'aria-label':'Discussion filters',className:'atlas-disc-filters'},h('h2',null,'Discussions'),filters.map(([key,label])=>nav(key,label,key==='needs' ? incomplete ? undefined : countFor(key)+(snap.needs.waiting?.length||0)+(snap.needs.decisions?.length||0) : countFor(key))),
           h('details',null,h('summary',null,'By topic'),tree.map(x=>nav('topic:'+x.topic.id,x.topic.title,visibleTopics.get(x.topic.id)||0,x.depth))),
           nav('resolved','Resolved',countFor('resolved')),nav('other','Other DSH sessions',others.length)),
         h('section',{className:'atlas-disc-results'},h('h1',null,filter==='other'?'Other DSH sessions':'Discussions'),
@@ -5469,6 +5504,8 @@ window.__ModuleLoader__.load({
             h(Button,{small:true,disabled:busy,onClick:e=>setMove({ids:chosen.map(r=>r.id),anchor:e.currentTarget})},'Move'),
             h(Button,{small:true,disabled:busy,onClick:()=>runMany(chosen,r=>registryPatch(r.id,{pinned:!chosen.every(t=>t.pinned)}))},chosen.every(t=>t.pinned)?'Unpin':'Pin'),
             h(Button,{small:true,disabled:busy,onClick:()=>runMany(chosen,r=>atlasResolveDiscussion(r,filter==='resolved'?'open':'resolved'))},filter==='resolved'?'Reopen':'Resolve')),
+          filter==='needs' && !!snap.needs.teamErrors?.length && h(Banner,null,'Some team decisions could not be read. Showing verified requests only. ',h(TextButton,{onClick:snap.refresh},'Retry')),
+          filter==='needs' && decisions.map(d=>h('article',{key:'decision:'+d.teamId+':'+d.id,className:'atlas-disc-wait'},h('strong',null,d.question || d.id),h('p',null,d.teamName),h(Button,{small:true,onClick:()=>actions.openTeam(d.teamId,{decisionId:d.id})},'Answer'))),
           filter==='needs' && waiting.map(w=>h('article',{key:w.topic.path+':'+w.thread.name,className:'atlas-disc-wait'},h('strong',null,w.thread.name),h('p',null,w.topic.title),
             h(Button,{small:true,onClick:()=>go({view:'doc',path:w.topic.path,anchor:'current-work'})},'Open note'), ' ',
             h(Button,{small:true,onClick:()=>actions.ask(focusContext({topic:w.topic},{section:'Current work › '+w.thread.name}),'ask',`Help me decide “${w.thread.name}” based on the options in my note.`,'Decide '+w.thread.name)},'Discuss'),
@@ -5482,7 +5519,7 @@ window.__ModuleLoader__.load({
                 h('span',{className:'atlas-disc-sub'},[r.topic?.title||'Unfiled',r.model?.model,r.question?.slice(0,90),review?`${review.edits} changes to review`:null].filter(Boolean).join(' · '))),
               h('div',{className:'atlas-disc-row-actions'},btn((r.pinned?'Unpin ':'Pin ')+title,r.pinned?'★':'☆',()=>pin(r)),btn('Move '+title,'↔',e=>setMove({ids:[r.id],anchor:e.currentTarget})),btn((r.status==='resolved'?'Reopen ':'Resolve ')+title,r.status==='resolved'?'↺':'✓',()=>resolve(r)),btn('More actions for '+title,'⋯',e=>setMenu({record:r,anchor:e.currentTarget}))));
           }}),
-          !snap.loading && !snap.error && filter!=='other' && !list.length && !(filter==='needs' && waiting.length) && h(EmptyState,null,filter||search?'Nothing here.':'No discussions yet. Ask from the Desk, or select a passage and press Ctrl+J.'),
+          !snap.loading && !snap.error && filter!=='other' && !list.length && !(filter==='needs' && (waiting.length || decisions.length || incomplete)) && h(EmptyState,null,filter||search?'Nothing here.':'No discussions yet. Ask from the Desk, or select a passage and press Ctrl+J.'),
           snap.loading && h(Skeleton,{label:'Loading discussions…'})),
         move && h(MoveDiscussion,{...move,overview,onClose:()=>setMove(null),flash}),
         menu && h(Menu,{label:'Discussion actions',anchor:menu.anchor,onClose:()=>setMenu(null),items:[
@@ -5704,6 +5741,134 @@ window.__ModuleLoader__.load({
         error && h('p', { role:'alert' }, error));
     }
 
+    // ===== client/64-team-index.js
+    // One root-owned team registry. Old browser records are only migration input;
+    // neither the Discussions ack nor a host-wide list of sessions proves ownership.
+    const teamIndexInitial={root:'',records:[],projections:[],loading:true,error:'',migrationError:''};
+    const teamIndexStore=externalStore(teamIndexInitial), teamIndexRetry=externalStore(0);
+    let teamIndexEpoch=0,teamIndexRead=0;
+
+    function teamRootWitness(root,t,rows,workspaces) {
+      if (!root || !t?.id) return false;
+      const row=rowOf(rows,t.id), file=t.context?.topic?.path;
+      if (file && !tabInside(root,file) || row?.cwd && !tabInside(root,row.cwd)) return false;
+      const list=workspaces?.items;
+      if (workspaces && !Array.isArray(workspaces) && (workspaces.phase!=='ready' || workspaces.state==='error' || !Array.isArray(list))) return false;
+      const owners=list?.filter(w=>w.sessionIds?.includes(t.id));
+      if (owners?.length) return owners.length===1 && tabRootKey(owners[0].path)===tabRootKey(root);
+      const path=file || (rows?.phase==='ready' && row?.cwd);
+      if (!path || !tabInside(root,path)) return false;
+      const nearest=list?.filter(w=>tabInside(w.path,path)).sort((a,b)=>tabRootKey(b.path).length-tabRootKey(a.path).length)[0];
+      return !nearest || tabRootKey(nearest.path)===tabRootKey(root);
+    }
+    function teamLegacyCandidates(legacy,root,rows,workspaces) {
+      const seen=new Set();
+      return (Array.isArray(legacy)?legacy:[]).filter(t=>t?.kind==='team' && !seen.has(t.id) && teamRootWitness(root,t,rows,workspaces) && seen.add(t.id));
+    }
+    function teamProjectionRecords(root,rows,workspaces) {
+      if (rows?.phase!=='ready') return [];
+      return Object.entries(rows.byId || {}).filter(([id,row])=>!parentOf(row) && !row.blank && !row.archived && teamOf(row) && teamRootWitness(root,{id},rows,workspaces)).map(([id,row])=>({id,leadId:id,name:row.displayTitle || row.title || 'Unnamed team',seats:[],legacy:true,projectionOnly:true,runDir:null}));
+    }
+    function teamIndexCombined(s) {
+      const known=new Set(s.records.flatMap(t=>[t.id,t.leadId]));
+      return [...s.records,...s.projections.filter(t=>!known.has(t.id))];
+    }
+    function lookupTeam(id,root) {
+      const s=teamIndexStore.get();
+      return (!root || s.root===root) && s.root ? teamIndexCombined(s).find(t=>t.id===id) || null : null;
+    }
+    function recordTeamInIndex(root,team) {
+      const s=teamIndexStore.get();
+      if (!root || s.root!==root || !team?.id) return;
+      ++teamIndexRead; // A list already in flight mustn't undo this accepted edit.
+      const old=s.records.find(t=>t.id===team.id);
+      teamIndexStore.set({...s,records:[{...old,...team},...s.records.filter(t=>t.id!==team.id)]});
+    }
+    async function teamIndexRefresh(root=teamIndexStore.get().root) {
+      if (!root || teamIndexStore.get().root!==root) return;
+      const epoch=teamIndexEpoch,read=++teamIndexRead;
+      try {
+        const data=await api('teams',{query:{expectedRoot:root}});
+        if (!data?.root || tabRootKey(data.root)!==tabRootKey(root)) {
+          if(epoch===teamIndexEpoch && read===teamIndexRead) teamIndexStore.set({...teamIndexStore.get(),records:[],projections:[],loading:false,error:'The team index belongs to another workspace. Refresh the research desk.'});
+          return;
+        }
+        if (!Array.isArray(data.teams)) throw new Error('The team index returned no list.');
+        if (epoch===teamIndexEpoch && read===teamIndexRead) teamIndexStore.set({...teamIndexStore.get(),records:data.teams,loading:false,error:''});
+      } catch(e) { if (epoch===teamIndexEpoch && read===teamIndexRead) teamIndexStore.set({...teamIndexStore.get(),...(e.status===409 ? {records:[],projections:[],error:'The research workspace changed. Refresh the research desk.'}:{error:e.message}),loading:false}); }
+    }
+    function useTeamIndexSnapshot(root) {
+      const current=React.useSyncExternalStore(teamIndexStore.subscribe,teamIndexStore.get);
+      const s=(root===undefined || current.root===root) ? current : teamIndexInitial;
+      return useMemo(()=>({...s,records:teamIndexCombined(s),refresh:()=>{teamIndexRetry.set(teamIndexRetry.get()+1);return teamIndexRefresh(s.root);}}),[s]);
+    }
+    function useTeamIndex(root) {
+      const rows=useSessionRows(), workspaces=useAtlasCatalog(svc('workspaces')?.list);
+      const legacy=React.useSyncExternalStore(threadStore.subscribe,threadStore.get);
+      const retry=React.useSyncExternalStore(teamIndexRetry.subscribe,teamIndexRetry.get);
+      const candidates=teamLegacyCandidates(legacy,root,rows,workspaces), ids=JSON.stringify(candidates.map(t=>t.id));
+      useEffect(()=>{
+        ++teamIndexEpoch;teamIndexStore.set({...teamIndexInitial,root:root || ''});
+        if (!root) return;
+        teamIndexRefresh(root);
+        const refresh=()=>{if(document.visibilityState!=='hidden')teamIndexRefresh(root);};
+        const timer=setInterval(refresh,30000);window.addEventListener('focus',refresh);
+        return ()=>{++teamIndexEpoch;clearInterval(timer);window.removeEventListener('focus',refresh);};
+      },[root]);
+      useEffect(()=>{
+        if (root && root===teamIndexStore.get().root) teamIndexStore.set({...teamIndexStore.get(),projections:teamProjectionRecords(root,rows,workspaces)});
+      },[root,rows,workspaces]);
+      useEffect(()=>{
+        if(!root || !candidates.length) return;
+        const epoch=teamIndexEpoch,key='threads-imported:teams:'+encodeURIComponent(tabRootKey(root));
+        const saved=storageGet(key,[]),ack=Array.isArray(saved)?saved:[];
+        if(candidates.every(t=>ack.includes(t.id))) return;
+        let live=true;const current=()=>live && epoch===teamIndexEpoch && teamIndexStore.get().root===root;
+        registryImportLegacy(candidates,ack,body=>{
+          if(!current()) throw new Error('The research workspace changed.');
+          return api('teams/import',{method:'POST',query:{expectedRoot:root},body:{...body,expectedRoot:root}});
+        },v=>{if(current())storageSet(key,v);}).then(errors=>{
+          if(current())teamIndexStore.set({...teamIndexStore.get(),migrationError:errors.join('; ')});
+        },e=>{if(current())teamIndexStore.set({...teamIndexStore.get(),migrationError:e.message});}).finally(()=>{if(current())teamIndexRefresh(root);});
+        return ()=>{live=false;};
+      },[root,ids,retry]);
+      return useTeamIndexSnapshot(root || '');
+    }
+
+    // Team identity is the registry id, not the DSH lead id. Only registered seats
+    // and the lead's actual DSH projections contribute live status and task counts.
+    function teamIndexSummary(team,rows,needs) {
+      const row=rowOf(rows,team.leadId), projection=projectionOf(row), catalog=projection.subagentCatalog;
+      const members=(Array.isArray(catalog) && catalog.length ? catalog : Object.entries(rows?.byId || {}).filter(([,r])=>parentOf(r)===team.leadId && team.leadId).map(([id,r])=>({id,...projectionOf(r).subagent}))).map(m=>({...m,row:rowOf(rows,m.id)}));
+      const tasks=teamOf(row)?.tasks, total=Array.isArray(tasks)?tasks.length:null, done=total===null?null:tasks.filter(t=>t.status==='completed').length;
+      const working=!!row?.running || members.some(m=>m.row?.running);
+      const decisions=Number.isInteger(team.counts?.openDecisions) ? team.counts.openDecisions : (needs?.decisions || []).filter(d=>d.teamId===team.id).length;
+      const waiting=decisions>0 || (needs?.reviews || []).some(r=>r.session===team.leadId && r.edits>0);
+      const isDone=Boolean(team.closing && rows?.phase==='ready' && row && !working || team.legacy && row?.archived);
+      const present=new Set(members.map(m=>m.name).filter(Boolean));
+      const starting=!team.legacy && (!team.leadId || (row && (team.seats || []).some(s=>!present.has(s.name))));
+      const status=isDone ? 'Done' : waiting ? 'Waiting on you' : team.ending ? 'Ending' : team.paused ? 'Paused' : working ? 'Working' : starting ? 'Starting' : row ? 'Idle' : 'Live state unavailable';
+      return {team,row,members,working,waiting,isDone,status,total,done,at:team.updated || team.created || 0};
+    }
+    function teamPlaceItems(records,rows,needs,filter='active') {
+      const rank=v=>v.waiting?0:v.working?1:2;
+      return records.map(t=>teamIndexSummary(t,rows,needs)).filter(v=>filter==='done'?v.isDone:!v.isDone && (!['waiting','needs'].includes(filter) || v.waiting) && (filter!=='running' || v.working)).sort((a,b)=>rank(a)-rank(b) || b.at-a.at || a.team.name.localeCompare(b.team.name));
+    }
+    function TeamsPlace({overview:ov,go,onAssemble,onTeam,filter='active'}) {
+      const actions=React.useContext(AtlasActions), index=useTeamIndexSnapshot(ov.root), registry=useRegistrySnapshot(), rows=useSessionRows();
+      const needs=registry.root===ov.root && !registry.needsError ? registry.needs:null;
+      const selection=filter==='needs'?'waiting':filter || 'active', items=teamPlaceItems(index.records,rows,needs,selection);
+      usePublishFocus({kind:'universe',topic:{id:'',title:ov.title || 'Root note',path:ov.rootFile}},[ov.rootFile,ov.title]);
+      const assemble=onAssemble || actions.assembleTeam, open=onTeam || actions.openTeam;
+      return h('div',{className:'atlas-page is-wide atlas-teams-place'},h('header',{className:'atlas-teams-heading'},h('div',null,h('p',{className:'atlas-kicker'},'Research desk'),h('h1',null,'Teams')),h(Button,{primary:true,icon:'plus',disabled:!assemble,onClick:()=>assemble({})},'New team')),
+        h(Segmented,{label:'Filter teams',value:selection,options:[{value:'active',label:'Active'},{value:'waiting',label:'Waiting on you'},{value:'done',label:'Done'}],onChange:value=>go({view:'teams',filter:value})}),
+        index.error || index.migrationError ? h(Banner,null,index.error || index.migrationError,' ',h(TextButton,{onClick:index.refresh},'Retry')):null,
+        (index.records.some(t=>t.artifactError) || needs?.teamErrors?.length>0) ? h(Banner,null,'Some team artifacts could not be read. Waiting status may be incomplete. ',h(TextButton,{onClick:index.refresh},'Retry')):null,
+        items.length ? h('ul',{className:'atlas-team-index'},items.map(({team,row,status,done,total,at,waiting,working,members})=>h('li',{key:team.id},h('button',{type:'button',className:'atlas-team-index-row','data-atlas-open':true,onClick:()=>open(team.id)},
+          h(TeamConstellation,{mode:'thumbnail',lead:{name:'lead',running:!!row?.running},seats:team.legacy?members:team.seats || []}),h('span',{className:'atlas-team-index-name'},team.name),h('span',{className:'atlas-team-index-topic'},team.topic?.title || 'Unfiled'),team.legacy?h('span',{className:'atlas-team-index-chip'},'Legacy'):null,h('span',{className:cx('atlas-team-index-chip',waiting && 'is-waiting',working && 'is-working')},status),h('span',null,total===null?'Board unavailable':`${done} of ${total} tasks`), at?h('em',null,ago(at)):null)))):
+          h(Empty,null,index.loading?'Reading teams…':index.error?'The team index could not be read.':selection==='waiting'?'No teams are waiting on you.':selection==='done'?'No finished teams.':'No active teams.'));
+    }
+
     // ===== client/65-activity.js
     // Read-only legacy team index and Current work decision controls. Discussions and needs live in the registry.
 
@@ -5768,38 +5933,10 @@ window.__ModuleLoader__.load({
           h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
     }
 
-    function sessionState(row, record) {
-      if (row && row.running) return { label: 'working', className: 'is-running' };
-      if (record && record.status === 'resolved') return { label: 'resolved', className: 'is-done' };
-      if (row && row.archived) return { label: 'archived', className: '' };
-      return { label: 'idle', className: '' };
-    }
-
     function parentOf(row) {
       return row ? row.parentSessionId || row.parentId || '' : '';
     }
 
-    /** Preserve topic groupings and historical labels; live child projections count
-     * towards the Running filter. Ordinary discussions belong to the registry. */
-    function legacyTeamGroups(index, rows, filter = '') {
-      const groups = new Map(), indexed = new Set();
-      const running = (id, row) => row?.running || membersOf(rows, id).some(m => m.row?.running);
-      for (const t of index) {
-        const row = rowOf(rows, t.id);
-        if (!knownThread(rows,t) || parentOf(row) || (t.kind !== 'team' && !teamOf(row))) continue;
-        indexed.add(t.id);
-        if (filter === 'running' && !running(t.id,row)) continue;
-        const topic = t.context?.topic || null, key = topic?.path || '';
-        if (!groups.has(key)) groups.set(key, { key, topic, latest: 0, items: [] });
-        const group = groups.get(key);
-        group.items.push(t);
-        group.latest = Math.max(group.latest, t.created || 0);
-      }
-      for (const group of groups.values()) group.items.sort((a,b) => (b.created || 0) - (a.created || 0));
-      const others = Object.entries(rows?.byId || {}).filter(([id,row]) => !indexed.has(id) && !parentOf(row) && !row.archived && !row.blank && teamOf(row) && (filter !== 'running' || running(id,row)))
-        .map(([id,row]) => ({id,row}));
-      return {groups: [...groups.values()].sort((a,b) => b.latest - a.latest), others};
-    }
     /** What DSH's session list says about a session (its projection), or nothing. */
     function projectionOf(row) {
       return (row && row.projectionValues) || {};
@@ -5844,55 +5981,7 @@ window.__ModuleLoader__.load({
       return selection && selection.lastUsed ? selection.lastUsed.model || '' : '';
     }
 
-    function TeamMembers({ rows, leadId, onOpen }) {
-      const members = membersOf(rows, leadId);
-      const board = boardSummary(teamOf(rowOf(rows, leadId)));
-      return h('div', { className: 'atlas-activity-team' },
-        board ? h('p', { className: 'atlas-muted' }, board) : null,
-        h('ul', { className: 'atlas-activity-members' },
-          members.map((m) => h('li', { key: m.id },
-            h('span', { className: cx('atlas-light', m.row && m.row.running && 'is-running'), 'aria-hidden': true }),
-            h(TextButton, { onClick: () => onOpen(m.id), title: m.task }, m.name || m.role || 'Member'),
-            m.role && m.name ? h('span', { className: 'atlas-chip' }, m.role) : null,
-            h('span', { className: 'atlas-activity-task' }, m.task),
-            modelOf(m.row) ? h('span', { className: 'atlas-date' }, modelOf(m.row)) : null)),
-          members.length === 0 ? h('li', { className: 'atlas-muted' }, 'No members yet: the lead staffs the seats in its first turn.') : null));
-    }
-
-    function LegacyTeamRow({ id, kind, title, row, record, onOpen, children }) {
-      const state = sessionState(row, record);
-      const when = record && record.created ? new Date(record.created).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-      return h('li', { className: 'atlas-activity-row' },
-        h('span', { className: 'atlas-activity-kind' }, kind),
-        h('span', { className: 'atlas-activity-main' },
-          h(TextButton, { onClick: onOpen, title }, title),
-          children),
-        h('span', { className: 'atlas-activity-state' }, h('span', { className: cx('atlas-light', state.className), 'aria-hidden': true }), state.label),
-        when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
-    }
-
-    function LegacyTeamsPlace({overview: ov, go, filter = ''}) {
-      const actions = React.useContext(AtlasActions), index = useThreadIndex(), rows = useSessionRows();
-      const {groups, others} = useMemo(() => legacyTeamGroups(index,rows,filter), [index,rows,filter]);
-      usePublishFocus({kind:'universe', topic:{id:'',title:ov.title || 'Root note',path:ov.rootFile}}, [ov.rootFile,ov.title]);
-      const teamRow = (id, record, row) => h(LegacyTeamRow, {
-        key:id, id, row, record, kind:'Team', title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Untitled team',
-        onOpen:() => actions.openThread(id),
-      }, h(TeamMembers,{rows,leadId:id,onOpen:actions.openThread}));
-      return h('div',{className:'atlas-page is-wide atlas-activity'},
-        h('p',{className:'atlas-kicker'},'Research desk'), h('h1',null,'Teams'),
-        h('p',{className:'atlas-lede'},'Inspect existing team leads, members and task counts from DSH.'),
-        h('div',{className:'atlas-actions',role:'group','aria-label':'Filter teams'},
-          [['','All'],['running','Running']].map(([value,label])=>h('button',{type:'button',key:value,'aria-pressed':filter===value,className:cx('atlas-button is-small',filter===value && 'is-primary'),onClick:()=>go({view:'teams',filter:value})},label))),
-        groups.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'By topic'),groups.map(g =>
-          h('div',{className:'atlas-activity-group',key:g.key},h('h3',null,g.topic ? h(TextButton,{'data-atlas-open':true,onClick:()=>go({view:'doc',path:g.topic.path})},g.topic.title) : 'The research programme'),
-            h('ul',null,g.items.map(t=>teamRow(t.id,t,rowOf(rows,t.id))))))),
-        others.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'Other teams in DSH'),h('ul',{className:'atlas-activity-others'},others.map(({id,row})=>teamRow(id,null,row)))),
-        !groups.length && !others.length && h(Empty,null,filter==='running' ? 'No teams are running.' : 'No existing teams to show.'));
-    }
-
-    // Optional DSH Agent Teams capability installed by 90-register. No M2
-    // launcher calls it. Team mutations and new rooms belong to M3.
+    // Optional DSH Agent Teams capability registered in 90-register.
     let teamScope = null;
 
     // ===== client/66-teams.js
@@ -6022,14 +6111,15 @@ window.__ModuleLoader__.load({
       useEffect(()=>{live.current=true;return ()=>{live.current=false;};},[]);
       useEffect(()=>{let current=true;setCatalog(null);setCatalogError('');atlasFetchModelCatalog(service).then(c=>{if(current)setCatalog(c);},e=>{if(current)setCatalogError(e.message);});return ()=>{current=false;};},[service,check]);
       const errors=atlasCrewErrors(draft), first=Object.keys(errors)[0];
-      const capability=catalogError || (!overview?.root ? 'No research workspace was selected.' : catalog ? atlasCrewCapabilities(atlasCrewServices(),catalog,draft.leadModel) : '');
+      const capability=(!requestId && 'A secure launch identity is unavailable in this browser.') || catalogError || (!overview?.root ? 'No research workspace was selected.' : catalog ? atlasCrewCapabilities(atlasCrewServices(),catalog,draft.leadModel) : '');
       const locked=busy || !!problem?.startedRequest;
       const update=patch=>{if (locked) return;setDraft(d=>({...d,...patch}));setProblem(null);};
-      const saved=JSON.stringify(draft);
+      const payload={...draft,extraAllowed:draft.extraAllowed.map(s=>s.trim()).filter(Boolean)};
+      const saved=JSON.stringify(payload);
       useEffect(()=>{
         let current=true;setPreview(null);
         if (!opened || first || locked) return;
-        const timer=setTimeout(()=>api('teams/preview',{method:'POST',body:{...draft,requestId},query:{expectedRoot:overview.root}},20).then(data=>{
+        const timer=setTimeout(()=>api('teams/preview',{method:'POST',body:{...payload,requestId},query:{expectedRoot:overview.root}},20).then(data=>{
           if(current)setPreview({key:saved,...data});
         },error=>{if(current)setPreview({key:saved,error:error.message});}),250);
         return ()=>{current=false;clearTimeout(timer);};
@@ -6037,7 +6127,7 @@ window.__ModuleLoader__.load({
       const launch=async()=>{
         if (latch.current || locked || first || capability || !catalog) return;
         latch.current=true;setBusy(true);setProblem(null);
-        try {const team=await atlasStartNativeTeam({root:overview.root,draft,requestId}); if(live.current){flash?.('Brief delivered to the lead.');onStarted(team);}}
+        try {const team=await atlasStartNativeTeam({root:overview.root,draft:payload,requestId}); if(live.current){flash?.('Brief delivered to the lead.');onStarted(team);}}
         catch(e){if(live.current)setProblem(e);} finally {if(live.current)setBusy(false);latch.current=false;}
       };
       const close=()=>{if(!latch.current)onClose();};
@@ -6351,6 +6441,272 @@ window.__ModuleLoader__.load({
       return out.sort((a,b)=>a.stage-b.stage || b.time-a.time || a.key.localeCompare(b.key));
     }
 
+    // ===== client/67-team-room.js
+    // Team operations use exact DSH identities. A seat's name is not an address:
+    // require the declared seat and exactly one matching entry in THIS lead's live
+    // subagent catalog. Never send an unrouteable member message to the lead.
+    function teamRoomTarget(team, rows, seat = 'lead') {
+      if (!team || team.legacy) throw new Error('Legacy teams are read-only.');
+      const lead = rows?.byId?.[team.leadId];
+      if (rows?.phase !== 'ready' || !lead || (lead.id && lead.id !== team.leadId) || lead.parentId || lead.archived || !lead.projectionValues?.agentTeam?.enabled || !team.leadId) throw new Error('The native team lead is not verified in DSH.');
+      if (seat === 'lead') return team.leadId;
+      if (!team.seats?.some(s => s.name === seat)) throw new Error('Unknown team member: @' + seat);
+      const catalog = lead.projectionValues.subagentCatalog;
+      const matches = Array.isArray(catalog) ? catalog.filter(c => c.name === seat) : [];
+      const member = matches.length === 1 ? matches[0] : null;
+      const child = member && rows.byId[member.id];
+      if (!member?.id || member.id === team.leadId || member.phase === 'failed' || child?.archived || (child?.id && child.id !== member.id) || (child?.parentId && child.parentId !== team.leadId)) throw new Error('@' + seat + ' has no verified, available session in this team.');
+      return member.id;
+    }
+    // Shared with AddTeamSeatSheet. Both snapshots are live at each check, not
+    // the scope that was captured when the user first opened the team's tab.
+    function teamRoomScopeGuard(team,root,getScope) {
+      return (id,name,rows)=>{
+        const scope=getScope?.(), teams=teamIndexStore.get(), workspaces=svc('workspaces')?.list?.getSnapshot?.();
+        const current=teams?.records?.find(r=>r.id===team.id);
+        if(!root || !scope || scope.root!==root || teams.root!==root || current?.legacy || current?.leadId!==team.leadId || workspaces?.phase!=='ready' || workspaces.state==='error' || !Array.isArray(workspaces.items)) throw new Error('The team or research workspace changed. Nothing was sent.');
+        const owners=workspaces.items.filter(w=>w.sessionIds?.includes(team.leadId));
+        const childOwners=id===team.leadId?[]:workspaces.items.filter(w=>w.sessionIds?.includes(id));
+        if(owners.length!==1 || tabRootKey(owners[0].path)!==tabRootKey(root) || childOwners.length>1 || childOwners.some(w=>tabRootKey(w.path)!==tabRootKey(root)) || !tabTeamMember({teamId:team.id,seatName:name,sessionId:id},{...scope,rows,teams,workspaces})) throw new Error('Cannot verify this team in the current research workspace. Nothing was sent.');
+      };
+    }
+    function teamRoomAddress(value) {
+      const text = String(value || '').trim();
+      if (!text) throw new Error('Write a message first.');
+      if (!text.startsWith('@')) return { name: 'lead', text };
+      const m = /^@([a-z][a-z0-9-]*)\s+([\s\S]+)$/u.exec(text);
+      if (!m || m[2].startsWith('@')) throw new Error('Start with one @seat followed by your message.');
+      return { name:m[1], text:m[2].trim() };
+    }
+    async function teamRoomSend(team, name, text, sessions, verify) {
+      if (typeof sessions?.retain !== 'function' || !sessions.list?.getSnapshot) throw new Error('DSH session messaging is unavailable.');
+      if (typeof verify !== 'function') throw new Error('Cannot verify the research workspace.');
+      const resolve = () => {const rows=sessions.list.getSnapshot(), id=teamRoomTarget(team, rows, name);verify(id,name,rows);return id;};
+      const id = resolve();
+      const ref = sessions.retain(id, {source:'atlas'});
+      try {
+        const binding = await ref.ready;
+        if (id !== resolve() || (ref.sessionId && ref.sessionId !== id) || typeof binding?.session?.prompt !== 'function') throw new Error('This team session changed; nothing was sent.');
+        const result = await binding.session.prompt([{type:'text',text}], 'queue');
+        if (result?.ok === false) throw new Error(result.error?.message || 'DSH did not accept the message.');
+        return id;
+      } finally { ref.release(); }
+    }
+    async function teamRoomAnswer(team, decision, choice, note, request, send) {
+      if (!team || team.legacy || !decision?.formatted || decision.answerable === false || decision.status !== 'open' || !decision.revision || !Object.hasOwn(decision.options || {},choice)) throw new Error('Choose one of the options for this open decision.');
+      const r = await request(`teams/${encodeURIComponent(team.id)}/decisions/${encodeURIComponent(decision.id)}/answer`, {method:'POST',body:{choice,note,revision:decision.revision}});
+      if (r?.replayed === true) return 'This answer was already saved. No second message was sent.';
+      if (r?.replayed !== false || !r.message) throw new Error('Answer response was incomplete. Check the decision file; no message was sent.');
+      try { await send(r.message); } catch (e) { throw new Error(`Answer saved to ${decision.id}; delivery to the lead was not confirmed. ${e.message}`); }
+      return `Answer saved to ${decision.id} and sent to the lead.`;
+    }
+    function teamRoomDiff(previous, next) {
+      if (!previous || !next) return [];
+      const out=[];
+      for (const [key,value] of Object.entries(next)) {
+        if (previous[key] === value) continue;
+        const split=key.indexOf(':'), type=key.slice(0,split), id=key.slice(split+1);
+        if (type === 'seat' && (!previous[key] || previous[key] === 'unknown' || value === 'unknown')) continue;
+        out.push({ type, text:`${id}: ${value}`, ...(type==='seat'?{seat:id}:{taskId:id}), observed:true });
+      }
+      return out;
+    }
+    function teamRoomSnapshot(tasks, people) {
+      return Object.fromEntries([...tasks.map(t=>['task:'+t.id,`${t.status}${t.owner ? ' · '+t.owner : ''}${t.blockedBy?.length?' · blocked by '+t.blockedBy.join(', '):''}`]),
+        ...people.map(s=>['seat:'+s.name,s.state])]);
+    }
+    function teamRoomData(team, rows, artifacts, now) {
+      const leadRow=rows?.byId?.[team.leadId], board=leadRow?.projectionValues?.agentTeam;
+      const tasks=Array.isArray(board?.tasks) ? board.tasks : [];
+      const reports=artifacts?.reports || [], reviews=artifacts?.reviews || [];
+      const records = team.legacy ? membersOf(rows,team.leadId).map(m=>({name:m.name||m.role||m.id,role:m.role,legacyMember:m})) : (team.seats || []).filter(s=>s.name!=='lead');
+      const make = (s, i) => {
+        const taskList=tasks.filter(t=>t.owner===s.name), status = s.name==='lead' ? {state:!leadRow||typeof leadRow.running!=='boolean'?'unknown':leadRow.running?'running':'idle',id:team.leadId} : s.legacyMember ? {state:!s.legacyMember.row?'unknown':s.legacyMember.row.running?'running':'idle',id:s.legacyMember.id} : atlasTeamSeatStatus(team,s,leadRow,now,rows);
+        let sessionId=null; try {sessionId=teamRoomTarget(team,rows,s.name);} catch { /* not addressable */ }
+        return {...s,slot:i,state:status.state==='running'?'working':status.state, sessionId, error:status.error,
+          task:taskList.find(t=>t.status==='in_progress')?.subject || '',total:taskList.length,done:taskList.filter(t=>t.status==='completed').length,
+          reports:reports.filter(r=>r.formatted && r.seat===s.name).map(r=>r.id),reviews:reviews.filter(r=>r.formatted && r.seat===s.name).map(r=>r.id)};
+      };
+      const lead=make({name:'lead',role:'Lead',model:team.leadModel || null},0), seats=records.map((s,i)=>make(s,i+1));
+      const flow=teamFlowRows(tasks,artifacts || {reports:[],reviews:[]});
+      const paths=[];
+      for (const line of flow) {
+        const r=line.report;
+        if (!r?.formatted || !r.seat || r.status!=='submitted') continue;
+        const reviewing=(line.reviewTasks || []).filter(t=>t.status==='in_progress' && t.owner && t.owner!==r.seat);
+        if (reviewing.length) for (const t of reviewing) paths.push({id:r.id,from:r.seat,to:t.owner,kind:'review'});
+        else if (line.leadRouting) paths.push({id:r.id,from:r.seat,to:'lead',kind:'submitted'});
+      }
+      return {tasks,boardKnown:Array.isArray(board?.tasks),lead,seats,flow,paths};
+    }
+    function teamRoomState(team, people, decisions, editCount, closing) {
+      if (team.legacy) return 'Legacy · read-only';
+      if (closing && people[0]?.state === 'idle') return 'Done';
+      if (team.ending) return 'Ending';
+      if (decisions.length || editCount) return 'Waiting on you';
+      if (team.paused) return 'Paused';
+      if (people.some(s=>s.state==='working')) return 'Working';
+      if (!team.leadId || people.some(s=>s.state==='starting' || s.state==='not-started')) return 'Starting';
+      if (people.some(s=>s.state==='unknown')) return 'Status unavailable';
+      return 'Idle';
+    }
+
+    function TeamRoomDecision({ decision:d, team, send, reload, flash, initiallyOpen, request }) {
+      const [open,setOpen]=useState(!!initiallyOpen),[choice,pick]=useState(''),[note,setNote]=useState(''),[busy,setBusy]=useState(false),[error,fail]=useState('');
+      const lock=useRef(false), trigger=useRef(null), first=useRef(null), group=React.useId();
+      useEffect(()=>{if(open)first.current?.focus();},[open]);
+      const close=()=>{setOpen(false);trigger.current?.focus();};
+      const answer=async e=>{
+        e.preventDefault(); if(lock.current || !choice) return; lock.current=true;setBusy(true); fail('');
+        try { const message=await teamRoomAnswer(team,d,choice,note,request,send); flash(message);close(); }
+        catch(e){fail(e.message);flash(e.message);} finally {lock.current=false;setBusy(false);reload();}
+      };
+      return h('div',{className:'atlas-room-need'},h('div',{className:'atlas-room-line'},h('span',null,d.question||d.title),h('button',{type:'button',ref:trigger,className:'atlas-button is-small',disabled:d.answerable===false,title:d.answerIssue||undefined,'aria-label':`Answer ${d.id}`,'aria-expanded':open,onClick:()=>setOpen(!open)},'Answer')),
+        open && h('form',{onSubmit:answer},h('fieldset',{disabled:busy},h('legend',null,`${d.id} · Choose an option`),Object.entries(d.options||{}).map(([key,v],i)=>{
+          const cmd=typeof v==='string' && /\b(?:sbatch|srun|qsub|bsub)\b[^\n]*/i.exec(v);
+          return h('label',{key,className:'atlas-room-option'},h('input',{type:'radio',name:group,value:key,checked:choice===key,onChange:()=>pick(key),ref:i===0?first:undefined}),
+            key+' · '+(cmd?v.slice(0,cmd.index).replace(/[\s—:-]+$/,''):v),key===d.recommendation && h(Chip,null,'Recommended'),cmd && h(React.Fragment,null,h(Chip,null,'Runs on the cluster'),h('code',null,cmd[0])));
+        })),h('label',null,'Note (optional)',h('textarea',{value:note,disabled:busy,onChange:e=>setNote(e.target.value),rows:2})),
+        error && h(Banner,{tone:'error'},error),h('div',{className:'atlas-room-line'},h(Button,{type:'submit',small:true,primary:true,disabled:busy||!choice},busy?'Saving…':'Save answer'),h(Button,{small:true,disabled:busy,onClick:close},'Cancel'))));
+    }
+
+    function TeamRoomLog({team, artifacts, decisions, send, reload, flash, openFile, onReview, edits, decisionId, missing=[], retry, request}) {
+      const sections=artifacts?.state?.sections || {}, all=[...(artifacts?.reports||[]),...(artifacts?.reviews||[]),...(artifacts?.decisions||[])];
+      const stateEntry=(entry,i)=>h('li',{key:i},entry.text,(entry.refs||[]).map(ref=>{const r=all.find(a=>a.formatted&&a.kind===ref.kind&&a.id===ref.id);return r?h(TextButton,{key:ref.id,onClick:()=>openFile(r.path)},ref.id):null;}));
+      const fold=(title,entries,render,expanded=false)=>h('details',{key:title,open:expanded || undefined,className:'atlas-room-fold'},h('summary',null,title, h('i',null,String(entries.length))), entries.length?h('ul',null,entries.map(render)):h('p',null,'No entries.'));
+      return h('div',{className:'atlas-room-log-content'},h('section',null,h('h3',null,'Needs you'),decisions.map(d=>h(TeamRoomDecision,{key:d.id,decision:d,team,send,request,reload,flash,initiallyOpen:decisionId===d.id})),
+        edits>0 && h(Button,{small:true,onClick:onReview},`Review edits · ${edits}`),missing.map(s=>h(Button,{key:s.name,small:true,disabled:!retry,onClick:()=>retry(s)},`Ask the lead to start ${s.name}`)), !decisions.length&&!edits&&!missing.length && h('p',null,artifacts?'No open requests.':'Run artifacts unavailable.')),
+        h('section',null,h('h3',null,'State of the question'),...['Established','Open','Conflicts','Next'].map(name=>fold(name,sections[name]||[],stateEntry,name==='Established'))),
+        h('section',null,h('h3',null,'Artifacts'),...['reports','reviews','decisions'].map(key=>fold(key[0].toUpperCase()+key.slice(1),[...(artifacts?.[key]||[])].sort((a,b)=>b.mtimeMs-a.mtimeMs),(r,i)=>h('li',{key:r.path||i},h(TextButton,{onClick:()=>openFile(r.path)},`${r.id||'File'} · ${r.title}`),' ',r.verdict||r.status||(r.formatted?'':'Unformatted'))))),
+        artifacts?.state?.path && h(TextButton,{onClick:()=>openFile(artifacts.state.path)},'Open state.md'),
+        h('section',null,h('h3',null,'Charter'),h('p',null,'Done when: '+(artifacts?.charter?.doneWhen || team.doneWhen || 'Not recorded.')),artifacts?.charter?.path && h(TextButton,{onClick:()=>openFile(artifacts.charter.path)},'Open charter.md')));
+    }
+
+    function TeamRoomWork({view, data, artifacts, events, openFile}) {
+      const artifact=(r)=>r && h('button',{type:'button',key:r.path,className:'atlas-room-cell',onClick:()=>openFile(r.path),title:r.title},h('code',null,r.id || 'File'),h('span',null,r.title),h('small',null,r.formatted ? r.verdict || r.status || 'No verdict' : 'Unformatted'));
+      const table = (label,heads,rows) => h('table',{className:'atlas-room-table','aria-label':label},h('thead',null,h('tr',null,heads.map(k=>h('th',{key:k,scope:'col'},k)))),h('tbody',null,rows));
+      if(view==='timeline') {
+        const fileEvents=[...(artifacts?.reports||[]),...(artifacts?.reviews||[]),...(artifacts?.decisions||[])].filter(r=>r.mtimeMs).map(r=>({key:r.path,at:r.mtimeMs,seat:r.seat||r.from,text:`${r.id||r.title} · file updated`,path:r.path}));
+        const timeline=[...events,...fileEvents].sort((a,b)=>b.at-a.at);
+        return timeline.length?h('ol',{className:'atlas-room-events'},timeline.map((e,i)=>h('li',{key:e.key||e.id||i},h('time',{dateTime:new Date(e.at).toISOString()},new Date(e.at).toLocaleString()),e.seat && h(SeatGlyph,{name:e.seat}),e.path?h(TextButton,{onClick:()=>openFile(e.path)},e.text):e.text,e.observed && h('small',null,'observed')))):h(EmptyState,null,'No events observed yet.');
+      }
+      if(view==='board') {
+        if(!data.boardKnown)return h(EmptyState,null,'The DSH board is unavailable.');
+        if(!data.tasks.length)return h(EmptyState,null,'The lead has not added board tasks yet.');
+        const groups=teamBoardGroups(data.tasks);
+        return table('Team board',['Status','Task','Owner','Blocked by','Write scopes'],Object.entries({Ready:groups.ready,Blocked:groups.blocked,'In progress':groups.inProgress,Done:groups.done}).flatMap(([label,list])=>!list?.length?[]:[h('tr',{key:label},h('th',{colSpan:5,scope:'rowgroup'},label)),...list.map(t=>h('tr',{key:t.id},h('td',null,t.status),h('td',null,h('code',null,t.id),' ',t.subject),h('td',null,t.owner||'Unassigned'),h('td',null,t.blockedBy?.join(', ')||'—'),h('td',null,t.writeScopes?.join(', ')||'—',!!t.writeScopeWarnings?.length && h('small',null,' · Scope overlap'))))]));
+      }
+      if(!data.flow.length)return h(EmptyState,null,'No work lines yet. Flow links board tasks to reports by their recorded IDs.');
+      const counts=[data.flow.filter(r=>r.task).length,data.flow.filter(r=>r.report).length,data.flow.filter(r=>r.reviews?.length||r.reviewTasks?.length).length,data.flow.filter(r=>r.integrated).length];
+      const empty=s=>h('span',{className:'atlas-room-empty-cell'},s);
+      return table('Work pipeline',['Work','Report','Review','Integrated'].map((s,i)=>`${s} · ${counts[i]}`),data.flow.map(line=>h('tr',{key:line.key},
+        h('td',null,line.task?h('div',{className:'atlas-room-task'},h(SeatGlyph,{name:line.task.owner}),h('span',null,line.task.subject,h('small',null,line.task.id+' · '+line.task.status))):empty('(no task)')),
+        h('td',null,artifact(line.report)||empty('Not yet')),h('td',null,line.reviews?.length?line.reviews.map(artifact):line.reviewTasks?.length?line.reviewTasks.map(t=>h('span',{key:t.id},t.id+' · '+t.status)):empty(line.leadRouting?'Lead routing':'—')),
+        h('td',null,line.integrated?h('span',{className:'atlas-room-cell'},'Accepted',!!line.noteRefs?.length && h('small',null,line.noteRefs.length+' linked edits')):empty('—')))));
+    }
+
+    function TeamRoom({teamId, team:provided, scope, overview, visible=true, section, decisionId, go, flash, onMember, onAddSeat}) {
+      const index=useTeamIndexSnapshot(overview?.root), rows=useSessionRows();
+      const team=index.records?.find(r=>r.id===teamId) || provided;
+      if(!team || team.id!==teamId)return h(EmptyState,null,index.loading?'Loading team…':index.error||'Team unavailable in this workspace.');
+      return h(TeamRoomSurface,{key:team.id,team,scope,rows,root:overview?.root,visible,section,decisionId,go,flash,onMember,onAddSeat});
+    }
+    function TeamRoomSurface({team,scope,rows,root,visible,section,decisionId,go,flash,onMember,onAddSeat}) {
+      const scopeRef=useRef(scope);scopeRef.current=scope;
+      const verify=teamRoomScopeGuard(team,root,()=>scopeRef.current);
+      const request=(endpoint,opts={})=>api(endpoint,{...opts,query:{...opts.query,expectedRoot:root}},opts.method && opts.method!=='GET'?20:0);
+      const [artifacts,setArtifacts]=useState(null),[events,setEvents]=useState([]),[error,fail]=useState('');
+      const [version,bump]=useState(0),[now,tick]=useState(Date.now),[view,setView]=useState(team.legacy?'board':team.view||'flow');
+      const [overlay,show]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+      const [logRequested,setLog]=useState(false),[narrow,setNarrow]=useState(false);
+      const ref=useRef(null), text=useRef(null), menuButton=useRef(null), lock=useRef(false), prev=useRef(null), lastRunning=useRef(null);
+      const needs=useRegistrySnapshot().needs, path=`teams/${encodeURIComponent(team.id)}`;
+      const edits=(needs?.reviews || []).find(r=>r.session===team.leadId)?.edits || 0;
+      const data=teamRoomData(team,rows,artifacts,now), people=[data.lead,...data.seats], decisions=(artifacts?.decisions||[]).filter(d=>d.formatted&&d.status==='open');
+      const state=teamRoomState(team,people,decisions,edits,team.closing), writable=!team.legacy && state!=='Done';
+      const refresh=()=>bump(v=>v+1);
+      useEffect(()=>{const el=ref.current; if(!el)return; const size=()=>setNarrow(el.clientWidth<1040);size();const ro=typeof ResizeObserver==='function'&&new ResizeObserver(size);if(ro)ro.observe(el);return()=>ro&&ro.disconnect();},[]);
+      useEffect(()=>{if(section==='logbook'||decisionId)setLog(true);},[section,decisionId]);
+      useEffect(()=>{if(!visible||team.legacy) return;const timer=setInterval(()=>{if(document.visibilityState!=='hidden'){tick(Date.now());refresh();}},20000);return()=>clearInterval(timer);},[visible,team.legacy]);
+      useEffect(()=>{
+        if(!visible||team.legacy)return; let live=true;
+        Promise.all([request(path+'/artifacts'),request(path+'/events')]).then(([a,e])=>{if(live){setArtifacts(a);setEvents(e.events||[]);fail('');tick(Date.now());}},e=>live&&fail(e.message));
+        return()=>{live=false;};
+      },[path,version,visible,team.legacy]);
+      const runningKey=JSON.stringify(people.filter(s=>s.state==='working').map(s=>s.name).sort());
+      useEffect(()=>{const next=JSON.parse(runningKey), before=lastRunning.current;lastRunning.current=visible?next:null;
+        if(!team.legacy&&visible&&before?.some(s=>!next.includes(s)))refresh();},[runningKey,visible,team.legacy]);
+      const observation=JSON.stringify(teamRoomSnapshot(data.tasks,people));
+      useEffect(()=>{
+        if(team.legacy||!visible||!data.boardKnown){prev.current=null;return;}
+        const next=JSON.parse(observation), changes=teamRoomDiff(prev.current,next);prev.current=next;
+        if(changes.length)request(path+'/events',{method:'POST',body:{events:changes}}).then(refresh,e=>fail('Could not save observed events: '+e.message));
+      },[observation,visible,team.legacy,data.boardKnown,path]);
+      const sessions=svc('sessions'),send=(name,value)=>teamRoomSend(team,name,value,sessions,verify);
+      const patch=async fields=>{const r=await request(path,{method:'PATCH',body:fields}); recordTeamInIndex(root,r.team);};
+      const work=async f=>{if(lock.current)return;lock.current=true;setBusy(true);try{await f();}catch(e){fail(e.message);flash(e.message);}finally{lock.current=false;setBusy(false);}};
+      const chooseView=v=>{setView(v);if(!team.legacy)patch({view:v}).catch(e=>flash('Could not save view: '+e.message));};
+      const openFile=p=>{if(p)go({view:'doc',path:p,link:true},{otherPane:true});};
+      const openSeat=s=>{try{const live=sessions?.list?.getSnapshot(),id=teamRoomTarget(team,live,s.name);verify(id,s.name,live);onMember?.(id,s.name);}catch(e){flash(e.message);}};
+      const leadRequest=(prompt,fields,receipt)=>work(async()=>{await send('lead',prompt);try{await patch(fields);}catch(e){throw new Error(`Request sent, but Atlas could not save its status: ${e.message}`);}flash(receipt);});
+      const compose=(name)=>{setMessage(name==='lead'?'':`@${name} `);text.current?.focus();};
+      const post=()=>work(async()=>{const dest=teamRoomAddress(message);await send(dest.name,dest.text);setMessage('');flash(`Sent to ${dest.name}.`);
+        try{await request(path+'/events',{method:'POST',body:{events:[{type:'message',seat:dest.name,text:`You → ${dest.name}`}]}});refresh();}catch(e){throw new Error('Message sent. Could not record the Timeline event: '+e.message);}});
+      const retry=seat=>work(async()=>{
+        const call=team.seatCalls?.find(c=>c.name===seat.name);
+        if(!call)throw new Error('The exact seat start call is unavailable. Open the charter instead.');
+        await teamRoomSend(team,'lead',`Check your subagent catalog. Only if ${seat.name} is still absent, start it using this exact subagent call: ${JSON.stringify(call)}. Do not duplicate a seat.`,sessions,(id,name,fresh)=>{verify(id,name,fresh);if(atlasTeamSeatStatus(team,seat,fresh.byId[team.leadId],Date.now(),fresh).state!=='not-started')throw new Error('The seat is no longer verified as missing. Nothing was sent.');});
+        flash(`Asked the lead to start ${seat.name}.`);
+      });
+      const canLead=!!data.lead.sessionId && writable;
+      const answerRequest=(endpoint,opts)=>{const live=sessions?.list?.getSnapshot?.();const id=teamRoomTarget(team,live,'lead');verify(id,'lead',live);return request(endpoint,opts);};
+      const log=h(TeamRoomLog,{request:answerRequest,team,artifacts,decisions,edits,send:s=>send('lead',s),reload:()=>{refresh();teamIndexRefresh(root);registryRefresh();},flash,openFile,onReview:()=>show('review'),decisionId,missing:data.seats.filter(s=>s.state==='not-started'),retry:canLead?retry:null});
+      const files=[artifacts?.charter,artifacts?.state,...(artifacts?.reports||[]),...(artifacts?.reviews||[]),...(artifacts?.decisions||[])].filter(r=>r?.path);
+      const menu=[{id:'charter',label:'Open charter',disabled:!artifacts?.charter?.path,onSelect:()=>openFile(artifacts.charter.path)},
+        {id:'state',label:'Open state.md',disabled:!artifacts?.state?.path,onSelect:()=>openFile(artifacts.state.path)},
+        {id:'run',label:'Run files…',disabled:!team.runDir,onSelect:()=>show('files')},
+        {id:'lead',label:'Open lead conversation',disabled:!data.lead.sessionId||team.legacy,onSelect:()=>openSeat(data.lead)},
+        {id:'topic',label:'Open topic',disabled:!team.topic?.path,onSelect:()=>openFile(team.topic.path)},
+        {id:'review',label:'Review edits',disabled:!team.leadId||team.legacy,onSelect:()=>show('review')},
+        {id:'refresh',label:'Read run artifacts again',disabled:team.legacy,onSelect:refresh},
+        {id:'add',label:'Add a seat',disabled:!canLead || !onAddSeat,onSelect:()=>onAddSeat(team)},
+        {id:'end',label:'End the team',disabled:!canLead || team.ending,onSelect:()=>show('end')}];
+      const mention=/^@([a-z0-9-]*)$/i.exec(message), mentions=mention?[data.lead,...data.seats].filter(s=>s.name.startsWith(mention[1])):[];
+      let destination='lead';try{destination=teamRoomAddress(message).name;}catch{if(message.startsWith('@'))destination='choose a seat';}
+      const needsCount=decisions.length+edits+data.seats.filter(s=>s.state==='not-started').length;
+      const completed=data.tasks.filter(t=>t.status==='completed').length;
+      return h('div',{ref,className:'atlas-team-room','aria-label':'Team room'},h('div',{className:'atlas-room-main'},
+        h('div',{className:'atlas-room-band'},h(TeamConstellation,{lead:data.lead,seats:data.seats,paths:data.paths,onOpen:team.legacy?undefined:openSeat,onMessage:writable?s=>compose(s.name):undefined,onAskStart:canLead?retry:undefined}),
+          h('section',{className:'atlas-room-mission'},h('span',{className:'atlas-room-cap'},(team.topic?.title||'Workspace')+' · Team'),h('h2',null,team.name),h('p',null,team.goal||artifacts?.charter?.goal),
+            h('div',{className:'atlas-room-line'},h(Chip,null,state),team.created && h('time',{dateTime:new Date(team.created).toISOString()},'Started '+ago(team.created))),
+            h('div',{className:'atlas-room-line'},data.boardKnown && data.tasks.length>0 && h('progress',{max:data.tasks.length,value:completed,'aria-label':'Board task completion'}),h('small',null,data.boardKnown?`${completed} of ${data.tasks.length} tasks done`:'Board unavailable')),
+            h('div',{className:'atlas-room-line'},!team.legacy && h(Button,{small:true,primary:true,disabled:!canLead,onClick:()=>compose('lead')},'Message team'),
+              !team.legacy && h(Button,{small:true,disabled:busy||!canLead||team.ending,onClick:()=>team.paused?leadRequest('Resume work from state.md Next.',{paused:false},'Asked the team to resume.'):leadRequest('Please finish current steps, start nothing new, and report the state in state.md.',{paused:true},'Asked the team to pause.')},team.paused?'Resume':'Ask to pause'),
+              narrow&&!team.legacy&&h(Button,{small:true,onClick:()=>setLog(true)},`Logbook${needsCount?' · '+needsCount:''}`),
+              h(IconButton,{small:true,label:'Team options',icon:'more',buttonRef:menuButton,'aria-haspopup':'menu',onClick:()=>show('menu')})))),
+        (artifacts?.errors||[]).map((issue,i)=>h(Banner,{key:i,tone:'error'},`${issue.area}${issue.file?' / '+issue.file:''}: ${issue.message}`)),error && h(Banner,{tone:'error'},error),team.legacy && h(Banner,null,'Legacy team · Board and roster are read-only; no run directory is available.'),
+        h('div',{className:'atlas-room-views'},h(Segmented,{label:'Team view',value:view,onChange:chooseView,options:(team.legacy?['board']:['flow','board','timeline']).map(v=>({value:v,label:v[0].toUpperCase()+v.slice(1)}))})),
+        h('div',{className:'atlas-room-center'},h(TeamRoomWork,{view,data,artifacts,events,openFile})),
+        !team.legacy && h('form',{className:'atlas-room-composer',onSubmit:e=>{e.preventDefault();post();}},h('textarea',{ref:text,value:message,onChange:e=>setMessage(e.target.value),rows:1,'aria-label':'Message the team',placeholder:'Message the team, or @a seat…',disabled:busy||!writable,onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent?.isComposing){e.preventDefault();if(message.trim())post();}}}),
+          mentions.length>0 && h('div',{className:'atlas-room-line','aria-label':'Team members'},mentions.map(s=>h(Button,{key:s.name,small:true,onClick:()=>compose(s.name)},'@'+s.name))),
+          h('div',{className:'atlas-room-line'},h('small',null,'Goes to '+destination),h(Button,{primary:true,type:'submit',disabled:busy||!writable||!message.trim()},'Send')))),
+        !narrow&&!team.legacy && h('aside',{className:'atlas-room-log','aria-label':'Logbook'},log),
+        narrow&&logRequested&&!team.legacy && h(Dialog,{title:'Logbook',className:'atlas-room-log-dialog',onClose:()=>setLog(false)},log),
+        overlay==='menu'&&h(Menu,{anchor:menuButton,label:'Team options',onClose:()=>show(null),items:menu}),
+        overlay==='files'&&h(Dialog,{title:'Run files',onClose:()=>show(null)},h('p',null,'Files indexed for this run:'),files.map(r=>h('p',{key:r.path},h(TextButton,{onClick:()=>{show(null);openFile(r.path);}},r.title||baseName(r.path)))),h('code',null,team.runDir),h(Button,{small:true,onClick:()=>work(async()=>{await navigator.clipboard.writeText(team.runDir);flash('Run folder path copied.');})},'Copy folder path')),
+        overlay==='review'&&!team.legacy&&h(Dialog,{title:'Lead note edits',onClose:()=>show(null)},h('p',null,'Compare with the lead’s saved baseline. Changes are not automatically attributed to the team.'),h(ReviewPanel,{sessionId:team.leadId,running:data.lead.state==='working',flash,expectedRoot:root,verifyOwner:()=>verify(team.leadId,'lead',sessions.list.getSnapshot())})),
+        overlay==='end'&&h(Dialog,{title:'Ask the team to end?',onClose:()=>show(null),footer:h(Button,{primary:true,onClick:()=>{show(null);leadRequest('Write the closing report and ask all members to finish; update state.md with remaining questions.',{ending:true},'Asked the lead for a closing report.');}},'Ask the lead to end')},h('p',null,'The lead will be asked to wrap up. Atlas does not force-stop agents.')));
+    }
+
+    const ATLAS_TEAM_ROOM_CSS = `
+    .atlas-team-room{height:100%;min-height:0;position:relative;display:flex;container-type:inline-size;color:var(--text-1);background:var(--surface)}.atlas-room-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.atlas-room-band{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:center;gap:var(--s-8);padding:var(--s-4) var(--s-20) 0 var(--s-8);border-bottom:1px solid var(--border)}
+    .atlas-room-mission{padding:var(--s-8) var(--s-8) var(--s-16) 0;display:flex;flex-direction:column;gap:var(--s-8);min-width:0}.atlas-room-mission h2{margin:0;font:600 26px/32px var(--font-serif)}.atlas-room-mission p{margin:0;font:italic 16px/24px var(--font-serif);color:var(--text-2)}.atlas-room-cap,.atlas-room-log-content h3{font:var(--t-cap);font-variant-caps:all-small-caps;letter-spacing:.1em;color:var(--text-2)}.atlas-room-line{display:flex;align-items:center;flex-wrap:wrap;gap:var(--s-8)}.atlas-team-room progress{height:var(--s-8);accent-color:var(--accent)}
+    .atlas-room-views{padding:var(--s-8) var(--s-20)}.atlas-room-center{overflow:auto;min-height:0;flex:1;padding:0 var(--s-20) var(--s-8)}.atlas-room-table{width:100%;border-collapse:collapse;font:var(--t-ui)}.atlas-room-table th,.atlas-room-table td{text-align:start;padding:var(--s-8) var(--s-4);border-bottom:1px solid var(--border);vertical-align:middle}.atlas-room-table th{font:var(--t-cap);font-variant-caps:all-small-caps;letter-spacing:.08em}.atlas-room-table td:first-child{min-width:120px}.atlas-room-table thead th{position:sticky;top:0;background:var(--surface);z-index:1}.atlas-room-table small{display:block}.atlas-room-task{display:flex;gap:var(--s-8)}.atlas-room-cell,.atlas-room-empty-cell{min-width:72px;display:flex;flex-direction:column;gap:var(--s-4);padding:var(--s-8);border:1px solid var(--border);border-radius:var(--r-sm);background:var(--raised);color:var(--text-1);font:var(--t-ui);text-align:start}.atlas-room-empty-cell{border-style:dashed;background:transparent;color:var(--text-3);font:var(--t-count)}button.atlas-room-cell{cursor:pointer}.atlas-room-events{list-style:none;padding:0}.atlas-room-events li{display:flex;align-items:baseline;gap:var(--s-8);padding:var(--s-8) 0;border-bottom:1px solid var(--border)}.atlas-room-events time,.atlas-team-room small{font:var(--t-meta);color:var(--text-3)}
+    .atlas-room-log{width:300px;box-sizing:border-box;flex:none;overflow:auto;padding:var(--s-20);border-left:1px solid var(--border)}.atlas-room-log-content{display:flex;flex-direction:column;gap:var(--s-20)}.atlas-room-log-content h3{font-weight:600;margin:0 0 var(--s-8)}.atlas-room-fold summary{cursor:pointer;padding:var(--s-4) 0;border-bottom:1px solid var(--border);font:var(--t-ui)}.atlas-room-fold summary i{float:right;color:var(--text-3);font:var(--t-count)}.atlas-room-fold ul{list-style:none;padding:0;margin:var(--s-4) 0}.atlas-room-fold li{padding:var(--s-4) 0;font:14px/20px var(--font-serif)}.atlas-room-fold li button{margin-inline-start:var(--s-4)}.atlas-room-need{padding:var(--s-8);margin:var(--s-4) 0;background:var(--gold-soft);border-radius:var(--r-md);font:var(--t-ui)}.atlas-room-need fieldset{border:0;padding:0}.atlas-room-option{display:block;margin:var(--s-8) 0}.atlas-room-option code{display:block;overflow-wrap:anywhere}.atlas-room-need textarea,.atlas-room-composer textarea{width:100%;box-sizing:border-box;background:var(--raised);color:var(--text-1);border:1px solid var(--border-control);font:var(--t-ui);border-radius:var(--r-sm);padding:var(--s-8)}
+    .atlas-room-composer{margin:var(--s-8) var(--s-20) var(--s-16);padding:var(--s-8) var(--s-12);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-1);background:var(--raised)}.atlas-room-composer textarea{border:0;resize:vertical;max-height:80px}.atlas-room-composer>.atlas-room-line:last-child{justify-content:space-between}.atlas-room-log-dialog{margin-inline-start:auto}
+    @container (max-width:759px){.atlas-room-band{grid-template-columns:minmax(0,1fr)}.atlas-room-mission{padding:0 var(--s-8) var(--s-8)}.atlas-room-main{overflow:auto}.atlas-room-center{min-height:180px;flex:auto}.atlas-room-band,.atlas-room-composer{flex:none}}
+    `;
+
     // ===== client/68-review.js
     // ------------------------------------------------------------------ review ---
     // What changed since this discussion's saved copies (not who made it): each edit with
@@ -6409,11 +6765,11 @@ window.__ModuleLoader__.load({
             : h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
     }
 
-    function ReviewPanel({ sessionId, running, flash }) {
+    function ReviewPanel({ sessionId, running, flash, expectedRoot, verifyOwner }) {
       const [data, setData] = useState(null);
       const [open, setOpen] = useState(false);
       const [busy, setBusy] = useState('');
-      const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
+      const load = useCallback(() => api('review/changes', { query: { session: sessionId, expectedRoot } }).then(setData, () => {}), [sessionId, expectedRoot]);
       // Poll more frequently while running; a change can also come from outside this session.
       useEffect(() => {
         load();
@@ -6426,7 +6782,8 @@ window.__ModuleLoader__.load({
       const act = async (kind, file, id) => {
         setBusy(`${kind}:${id}`);
         try {
-          setData(await api(`review/${kind}`, { method: 'POST', body: { session: sessionId, path: file, id } }));
+          if(expectedRoot) { if(typeof verifyOwner!=='function') throw new Error('Cannot verify this review’s research workspace.'); verifyOwner(); }
+          setData(await api(`review/${kind}`, { method: 'POST', query:{expectedRoot}, body: { session: sessionId, path: file, id } },20));
           if (kind === 'revert') flash('Reverted: the earlier text is back in the note.');
           return true;
         } catch (error) {
@@ -6476,6 +6833,120 @@ window.__ModuleLoader__.load({
         }));
     }
 
+    // ===== client/69-team-seat.js
+    // Native seat conversations share the shell's six-session retention budget. Never
+    // mount a Chat composer from a stored (possibly stale) name/id pair alone.
+    function atlasSeatBinding(team,seatName,sessionId,scope) {
+      if (!team || team.legacy || team.id!==tabTeamRecord(team.id,scope)?.id || !tabTeamMember({teamId:team.id,seatName,sessionId},scope)) return null;
+      const lead=rowOf(scope.rows,team.leadId), row=rowOf(scope.rows,sessionId);
+      if (!lead || parentOf(lead) || (seatName!=='lead' && parentOf(row) && parentOf(row)!==team.leadId)) return null;
+      const seat=seatName==='lead'?{name:'lead',role:'lead',model:team.leadModel}:team.seats.find(s=>s.name===seatName);
+      if (!seat) return null;
+      const state=seatName==='lead'?{state:lead.running===true?'running':lead.running===false?'idle':'unknown'}:atlasTeamSeatStatus(team,seat,lead,Date.now(),scope.rows);
+      if (seatName!=='lead' && state.id!==sessionId) return null;
+      const last=row?.projectionValues?.modelSelection?.lastUsed;
+      return { seat,state:state.state,error:state.error || '',model:last?.model || null,requestedModel:seat.model?.model || null };
+    }
+    function TeamMemberTab({team,seatName,sessionId,overview,scope,go,flash,visible,retained,onTeam,onOpenLink}) {
+      const back=()=>onTeam?onTeam(team.id):go?.({view:'team',teamId:team.id});
+      if (!team || team.legacy) return h(Empty,null,'Legacy team members are read-only. Inspect their state in the Team room.');
+      const current=overview?.root && tabRootKey(overview.root)===tabRootKey(scope?.root) && atlasSeatBinding(team,seatName,sessionId,scope);
+      if (!current) return h(Empty,null,'The current workspace and lead do not confirm this seat. No conversation is attached.');
+      const info=current.model || (current.requestedModel?`Requested: ${current.requestedModel}`:'Model not yet reported');
+      const openChat=()=>{const ui=svc('uiWorkspace');if(ui?.openSession)ui.openSession(sessionId);else flash?.('DSH chat navigation is unavailable.');};
+      const click=e=>{
+        if(e.button>0 || e.defaultPrevented) return;
+        const link=conversationLink(e.target,overview.root);if(!link)return;
+        if(link.url && !paperLink(link.url))return;
+        if(!onOpenLink && !go)return;
+        e.preventDefault();e.stopPropagation();if(onOpenLink)onOpenLink(link,e);else go(link.url?{view:'paper',url:link.url}:{view:'doc',path:link.path,anchor:link.anchor,link:true},e);
+      };
+      return h('aside',{className:'atlas-companion atlas-team-member-tab','aria-label':`Seat conversation: ${seatName}`},
+        h('header',{className:'atlas-team-member-head'},h(SeatGlyph,{name:seatName,slot:1+Math.max(0,team.seats.findIndex(s=>s.name===seatName))%8}),
+          h('div',null,h('h2',null,seatName),h('p',null,current.seat.role,' · ',info)),h('span',{className:'atlas-chip'},current.state),h(TextButton,{onClick:back,title:'Open Team room'},team.name)),
+        current.error && h(Banner,{tone:'error'},current.error),retained ? h('div',{className:'atlas-companion-body',onClickCapture:click,'data-session-id':sessionId},h(EmbeddedConversation,{key:sessionId,sessionId,onOpenChat:openChat})) : h('p',{role:'status'},'This hidden conversation was released. Show the tab to reopen it.'));
+    }
+    function atlasSeatLeadGuard(team,scope,root,services) {
+      if(!root || tabRootKey(root)!==tabRootKey(scope?.root) || !team || team.legacy || !team.leadId) return 'A native team with a lead in this workspace is required.';
+      const saved=tabTeamRecord(team.id,scope);
+      if(!saved || saved.legacy || saved.leadId!==team.leadId || !tabTeamMember({teamId:team.id,seatName:'lead',sessionId:team.leadId},scope))return 'The workspace no longer confirms this team and lead.';
+      if(saved.ending||saved.closing)return 'The team is ending or has a closing report.';
+      const lead=rowOf(scope.rows,team.leadId);
+      if(scope.rows?.phase!=='ready' || !lead || parentOf(lead) || !teamOf(lead))return 'DSH has not confirmed Agent Teams on this lead.';
+      if(!Array.isArray(lead.projectionValues?.subagentCatalog))return 'The live member catalog is unavailable; Atlas cannot check for a duplicate seat.';
+      if(!services.sessions?.retain || !services.teams?.setEnabled)return 'Native DSH Agent Teams or session access is unavailable.';
+      return '';
+    }
+    function atlasSeatNameError(team,scope,draft) {
+      const name=String(draft.name || '').trim();
+      if(!/^[a-z][a-z0-9-]{0,31}$/.test(name) || /^(?:lead|readme|con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name))return 'Use a non-reserved seat name: 1–32 lowercase letters, digits or hyphens.';
+      if(!atlasCrewRoles.includes(draft.role) || !['core','one-shot'].includes(draft.mode)) return 'Choose a role and a seat duration.';
+      if(!draft.description?.trim() || draft.description.trim().length>1000)return 'Describe the first task in 1–1000 characters.';
+      if((team.seats || []).some(s=>s.name===name) || rowOf(scope.rows,team.leadId)?.projectionValues?.subagentCatalog?.some(s=>s.name===name))return 'That name is already in the charter or the live team. Choose a different name.';
+      return '';
+    }
+    // Two separate durable operations. Once the first response is uncertain or the call
+    // was submitted, never blindly repeat either. Replayed records are for inspection.
+    async function atlasAddTeamSeat(team,root,draft,deps) {
+      let scope=deps.scope(); const denied=atlasSeatLeadGuard(team,scope,root,deps.services) || atlasSeatNameError(tabTeamRecord(team.id,scope),scope,draft);
+      if(denied)throw new Error(denied);
+      const seat={name:draft.name.trim(),role:draft.role,description:draft.description.trim(),mode:draft.mode,model:null};
+      let result,call,sent=false;
+      try {
+        result=await deps.post('teams/'+encodeURIComponent(team.id)+'/seats',seat,{expectedRoot:root});
+        if(result?.team?.id!==team.id || result.team.leadId!==team.leadId || !result.team.seats?.some(s=>s.name===seat.name))throw new Error('Atlas did not confirm the new seat on this team.');
+        call=result.seatCall || result.call;
+        if(call?.name!==seat.name || !call?.description?.trim() || !call?.prompt?.trim() || call.provider || call.model || call.reasoning_effort)throw new Error('The returned start call is missing, incomplete or has an unexpected model override.');
+        if(result.replayed)return {team:result.team,seat,call,replayed:true,delivered:false};
+        scope=deps.scope(); const changed=atlasSeatLeadGuard(team,scope,root,deps.services);
+        if(changed)throw new Error(changed);
+        if(rowOf(scope.rows,team.leadId).projectionValues.subagentCatalog.some(s=>s.name===seat.name))throw new Error('A member with this name has since appeared. The start call was not sent.');
+        sent=true;
+        await deps.send(team.leadId,`The researcher added a chartered seat. Check your current catalog first. If it is absent and your subagent tool is available, start it once using this exact call. Otherwise report why you did not start it.\nsubagent ${JSON.stringify(call)}`);
+        return {team:result.team,seat,call,replayed:false,delivered:true};
+      }catch(e){throw Object.assign(new Error(`${e.message} ${result?.team?.id===team.id ? 'The seat is recorded.' : 'The server outcome is unconfirmed; inspect the team before retrying.'} ${sent?'Delivery to the lead is unconfirmed.':'This attempt did not send the call to the lead.'}`),{attempted:true,team:result?.team?.id===team.id?result.team:null,call});}
+    }
+    function AddTeamSeatSheet({team,overview,scope,onClose,flash}) {
+      const [draft,setDraft]=useState({name:'',role:'theorist',description:'',mode:'core'}), [busy,setBusy]=useState(false), [result,setResult]=useState(null),[error,setError]=useState(null);
+      const lock=useRef(false),alive=useRef(true),latest=useRef(null), first=useRef(null);
+      latest.current={team,scope,root:overview?.root};
+      useEffect(()=>{alive.current=true;return ()=>{alive.current=false;};},[]);
+      const services=atlasCrewServices();
+      const gate=atlasSeatLeadGuard(team,scope,overview?.root,services);
+      const invalid=gate || atlasSeatNameError(team,scope,draft);
+      const update=(key,value)=>{setDraft(d=>({...d,[key]:value}));setError(null);};
+      const locked=busy || !!result || !!error?.attempted;
+      const submit=async e=>{
+        e?.preventDefault();if(lock.current || invalid || locked)return;lock.current=true;setBusy(true);setError(null);
+        const root=overview.root;
+        try {
+          const getScope=()=>alive.current&&latest.current.root===root&&latest.current.team?.id===team.id ? {...latest.current.scope,rows:services.sessions?.list?.getSnapshot?.() || latest.current.scope?.rows} : null;
+          const verify=teamRoomScopeGuard(team,root,getScope);
+          verify(team.leadId,'lead',services.sessions?.list?.getSnapshot?.());
+          const out=await atlasAddTeamSeat(team,root,draft,{services,scope:getScope,
+            post:(path,body,query)=>api(path,{method:'POST',body,query},20),send:(_leadId,text)=>teamRoomSend(team,'lead',text,services.sessions,verify)});
+          if(!alive.current)return;recordTeamInIndex(root,out.team);setResult(out);
+          if(out.delivered){flash?.('Seat recorded; the lead received its start request.');onClose?.(out);}
+        }catch(e){if(alive.current){if(e.team)recordTeamInIndex(root,e.team);setError(e);}}
+        finally{if(alive.current)setBusy(false);lock.current=false;}
+      };
+      const stop=()=>{if(!busy)onClose?.();};
+      return h(Dialog,{title:'Add a seat',onClose:stop,initialFocusRef:first},h('form',{className:'atlas-team-seat-sheet',onSubmit:submit},
+        h('p',null,'Atlas records the role card first. The lead, not Atlas, starts the member using its own available tools.'),
+        h('label',null,'Seat name',h(Input,{inputRef:first,label:'Seat name',value:draft.name,disabled:locked,onChange:e=>update('name',e.target.value)})),
+        h('label',null,'Role',h(Select,{label:'Seat role',value:draft.role,disabled:locked,options:atlasCrewRoles.map(value=>({value,label:value})),onChange:e=>update('role',e.target.value)})),
+        h('label',null,'First task and responsibility',h('textarea',{'aria-label':'First task and responsibility',className:'atlas-control-input',rows:3,maxLength:1000,value:draft.description,disabled:locked,onChange:e=>update('description',e.target.value)})),
+        h('label',null,'Duration',h(Select,{label:'Seat duration',value:draft.mode,disabled:locked,options:[{value:'core',label:'Core'},{value:'one-shot',label:'One-shot'}],onChange:e=>update('mode',e.target.value)})),
+        h('p',{className:'atlas-muted'},'Model: Same as the lead (no override).'),
+        gate && h(Banner,null,gate),!gate && draft.name && invalid && !locked && h('p',null,invalid),error && h(Banner,{tone:'error'},error.message),result?.replayed && h(Banner,null,'This seat was already recorded. No new message was sent. Inspect the lead before taking another action.'),
+        (error?.call || result?.replayed) && h('details',null,h('summary',null,'Recorded call'),h('pre',null,'subagent '+JSON.stringify(error?.call || result.call,null,2))),
+        h('div',{className:'atlas-actions'},h(Button,{type:'submit',primary:true,disabled:locked || !!invalid},busy?'Adding…':'Add seat'),h(Button,{type:'button',quiet:true,disabled:busy,onClick:stop},locked?'Close':'Cancel'))));
+    }
+    const ATLAS_TEAM_SEAT_CSS=`
+    .atlas-team-member-tab {display:flex;flex-direction:column;min-height:0;height:100%}.atlas-team-member-head {display:flex;gap:var(--s-12);align-items:center;padding:var(--s-8) var(--s-16);background:var(--surface);border-bottom:1px solid var(--border)}
+    .atlas-team-member-head h2,.atlas-team-member-head p {margin:0}.atlas-team-member-head h2{font:var(--t-h3)}.atlas-team-member-head p {color:var(--text-3);font:var(--t-meta)}.atlas-team-member-tab .atlas-companion-body{flex:1;min-height:0}.atlas-team-seat-sheet {display:grid;gap:var(--s-12)}.atlas-team-seat-sheet label {display:grid;gap:var(--s-4)}.atlas-team-seat-sheet pre {overflow:auto;max-height:25vh;white-space:pre-wrap}
+    `;
+
     // ===== client/70-shell.js
     // Compose the two strips and one stable plane of tab bodies. The durable v2
     // model never contains DOM, editor buffers, session bindings or transient Focus.
@@ -6484,16 +6955,16 @@ window.__ModuleLoader__.load({
       const overview = useApi('overview', version ? { fresh: 1 } : null, 'overview', version);
       const root=overview.data?.root;
       const registry=useDiscussionRegistry(root), rows=useSessionRows(), legacy=useThreadIndex();
-      const workspaces=useAtlasCatalog(svc('workspaces')?.list);
+      const workspaces=useAtlasCatalog(svc('workspaces')?.list), teams=useTeamIndex(root);
       // Key the entire body plane (including its focus, action callbacks and LRU).
       // No render under B may inherit a single retained SessionProvider from A.
-      return h(AtlasRootShell,{key:tabStorageKey(root) || 'setup',overview,version,setVersion,registry,rows,legacy,workspaces});
+      return h(AtlasRootShell,{key:tabStorageKey(root) || 'setup',overview,version,setVersion,registry,rows,legacy,workspaces,teams});
     }
 
-    function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,workspaces}) {
+    function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,workspaces,teams}) {
       const ov = overview.data, root=ov?.root;
       const places = useMemo(() => placeKeys(ov), [ov]);
-      const scope=useMemo(()=>({root,registry,rows,legacy,workspaces,places}),[root,registry.root,registry.records,registry.loading,registry.error,rows,legacy,workspaces,places]);
+      const scope=useMemo(()=>({root,registry,rows,legacy,workspaces,places,teams}),[root,registry.root,registry.records,registry.loading,registry.error,rows,legacy,workspaces,places,teams]);
       const [source,setSource]=useState(()=>readTabSource(root));
       // Keep unverified legacy storage OUT of React's rendered plane and closed
       // stack, even while a catalog lags the overview. Re-project on new evidence.
@@ -6520,7 +6991,7 @@ window.__ModuleLoader__.load({
 
       const [message, flash] = useFlash();
       const [quick, setQuick] = useState(null);
-      const [ask, setAsk] = useState(null);
+      const [ask, setAsk] = useState(null), [assembly,setAssembly]=useState(null), [seatTeam,setSeatTeam]=useState(null);
       const [deskRequest, setDeskRequest] = useState(0);
       const moveTopicRef = useRef(null); // The active discussion's own filing popover, not a second dialog.
       const [libFilter, setLibFilter] = useState('');
@@ -6623,7 +7094,8 @@ window.__ModuleLoader__.load({
         const routing = { narrow,ctrlKey:opts.ctrlKey, metaKey:opts.metaKey,shiftKey:opts.shiftKey, button:opts.button,permanent:opts.permanent, otherPane:opts.otherPane, samePane:opts.samePane };
         const spec = tabSpec(next,places);
         if (!spec) return;
-        if (spec.sessionId && !tabSessionInScope(spec.sessionId,{...scopeRef.current,registry:registryState.get()})) {
+        const currentScope={...scopeRef.current,registry:registryState.get()};
+        if ((spec.kind==='team' && spec.teamId && !tabTeamRecord(spec.teamId,currentScope)) || (spec.sessionId && !(spec.kind==='member' && spec.teamId ? tabTeamMember(spec,currentScope) : tabSessionInScope(spec.sessionId,currentScope)))) {
           flash('This session is not verified for the current research workspace.'); return;
         }
         if (spec.kind==='desk' && opts.focusComposer) setDeskRequest(n=>n+1);
@@ -6637,10 +7109,23 @@ window.__ModuleLoader__.load({
       };
       const openThread = (id,from = activeId(stateRef.current),opts={}) => {
         if (!id) return;
+        if (opts.teamId) {
+          const team=tabTeamRecord(opts.teamId,scopeRef.current);
+          const name=id===team?.leadId?'lead':rowOf(rows,team?.leadId)?.projectionValues?.subagentCatalog?.find(c=>c.id===id)?.name;
+          if (name) openSeat(opts.teamId,id,name,from); else flash('This seat has not been verified by DSH.');
+          return;
+        }
         const record=registryGet(id),row=rowOf(rows,id);
         const isMember=!record && Boolean(row?.parentId || row?.parentSessionId);
         nav.current(from,{view:isMember?'member':'discussion',sessionId:id,title:record?.title || row?.displayTitle || row?.title || 'Discussion'},opts);
       };
+      const openTeam=(id,from=activeId(stateRef.current),opts={})=>{
+        const team=tabTeamRecord(id,scopeRef.current);
+        if (!team) {flash('This team is not available in this workspace.');return;}
+        nav.current(from,{view:'team',teamId:id,title:team.name,section:opts.section,decisionId:opts.decisionId},opts);
+      };
+      const openSeat=(teamId,id,name,from)=>nav.current(from,{view:'member',teamId,sessionId:id,seatName:name,title:name});
+      const assemble=(from,preset={})=>{if(root)setAssembly({from,preset});};
       // Desk submission activates the real session only after DSH accepts its first
       // message; failure is returned to the Desk so the researcher can retry.
       const submitDesk = async ({question,topicId,attachments=[],model=null,filing='none',candidates=[]}) => {
@@ -6685,9 +7170,9 @@ window.__ModuleLoader__.load({
       const onQuick = (kind,from=activeId(stateRef.current)) => setQuick({tab:kind || 'paper',from,at:Date.now()});
       const onRefresh = () => {
         if (Object.keys(stateRef.current.tabs).some(id=>editorDirty[id])) { flash('Save or discard your edits before reading the files again.'); return; }
-        setVersion(Date.now()); registry.refresh();
+        setVersion(Date.now()); registry.refresh();teams.refresh();
       };
-      const chrome = useAtlasChrome({rootRef, overview:ov, mode, discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.needs?.decisions?.length || 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
+      const chrome = useAtlasChrome({rootRef, overview:ov, mode, teamRecords:teams.records, onAssemble:root?()=>assemble(activeId(stateRef.current)):null,openTeam:(id,opts)=>openTeam(id,activeId(stateRef.current),opts),discussionRecords:records.filter(r=>knownThread(rows,r)), unreadCount:records.filter(r=>knownThread(rows,r) && r.lastTurnAt > (r.seenAt || 0)).length,teamNeedsCount:registry.root===root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? (registry.needs?.decisions?.length || 0) : 0,themeModes:modes, onTheme:chooseMode,activePlace:tab.kind==='desk'?'desk':tab.kind==='place'?tab.view:null,
         onMoveDiscussion:tab.kind === 'discussion' && registryGet(tab.sessionId) && !rowOf(rows,tab.sessionId)?.parentId ? () => moveTopicRef.current?.() : null,
         activeTab:{id:active,title:tabV2Label(tab,ov),icon:tabV2Icon(tab)},recentFiles:[...state.order].reverse().map(id=>state.tabs[id]).filter(t=>t.kind==='file').map(t=>({path:t.path,title:sideLabel(ov,t.path)})),
         openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
@@ -6718,6 +7203,7 @@ window.__ModuleLoader__.load({
         focusStore.set({byTab,paneOf,active,visible:{left:visibleLeft,right:visibleRight}});
       }, [state.layout, active, narrow, visibleLeft, visibleRight]);
       const actionsFor = from => ({
+        assembleTeam:preset=>assemble(from,preset),openTeam:(id,opts)=>openTeam(id,from,opts),
         current:besideDiscussion(state.tabs,layout,visibleIds,from), targets, openDiscussionIds:state.order.map(id=>state.tabs[id]).filter(t=>t.kind==='discussion').map(t=>t.sessionId), keepTab:(id=from)=>promote(id),focusPane:(id=from)=>focus(id),
         ask:(...args)=>askFrom(from,...args),openThread:(id,opts)=>openThread(id,from,opts),startAsk:preset=>setAsk({from,preset:preset||{}}),
         addToThread(context) {
@@ -6747,7 +7233,7 @@ window.__ModuleLoader__.load({
         if (t.kind==='place') {
           if (t.view==='library') return h(React.Fragment,null,h('label',{className:'atlas-library-local-filter'},h('input',{className:'atlas-input',type:'search',value:libFilter,placeholder:'Filter papers and entries','aria-label':'Filter papers and entries',onChange:e=>setLibFilter(e.target.value)})),h(LibraryView,{...props,filter:libFilter,tab:t.tab,focusAdd:t.add}));
           if (t.view==='discussions') return h(DiscussionsPlace,{...props,filter:t.filter||''});
-          if (t.view==='teams') return h(LegacyTeamsPlace,{...props,filter:t.filter||''});
+          if (t.view==='teams') return h(TeamsPlace,{...props,filter:t.filter||'active',onAssemble:p=>assemble(t.id,p),onTeam:(id,opts)=>openTeam(id,t.id,opts)});
           if (t.view==='map') return h(UniverseView,{...props,filter:'',anchor:t.anchor});
           if (t.view==='learn') return h(LearnView,{...props,path:t.path});
           if (t.view==='search') return h(SearchView,{...props,q:t.q,at:t.at});
@@ -6756,6 +7242,12 @@ window.__ModuleLoader__.load({
         if (t.kind==='file' || t.kind==='topic') return h(DocView,{...props,key:t.path+(t.edit?':edit':''),path:t.path,edit:t.edit,created:t.created,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='paper') return h(PaperRefView,{...props,url:t.url,topic:t.topic,anchor:t.anchor,anchorAt:t.at});
         if (t.kind==='preview') return h(TexPreview,{tab:t,flash,go});
+        if (t.kind==='team') {
+          const team=tabTeamRecord(t.teamId,scope) || (t.sessionId && teams.records.find(r=>r.leadId===t.sessionId));
+          if (!team) return h(Empty,null,'This team is no longer available here.');
+          return h(TeamRoom,{...props,scope,teamId:team.id,team,visible:visibleIds.includes(t.id),section:t.section,decisionId:t.decisionId,onMember:(id,name)=>openSeat(team.id,id,name,t.id),onAddSeat:()=>setSeatTeam(team.id)});
+        }
+        if (t.kind==='member' && t.teamId) return h(TeamMemberTab,{...props,scope,team:tabTeamRecord(t.teamId,scope),seatName:t.seatName,sessionId:t.sessionId,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onTeam:()=>openTeam(t.teamId,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
         if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
         return h(Empty,null,'This team room is not available in this version.');
       };
@@ -6812,6 +7304,15 @@ window.__ModuleLoader__.load({
             drag && !focused && !narrow && shown.length===1 && h('div',{className:cx('atlas-drop-split is-right',drop?.where==='split'&&'is-over'),...dropHandlers('right','split')},h(Icon,{name:'panel'}),'Drop here to split'),
             visibleIds.filter(id=>!tabConversation(state.tabs[id])).map(id=>h(React.Fragment,{key:'select-'+id},wrap(id,h(SelectionTools,{container:bodyRef(id),host:panesRef})))),
             ask && state.tabs[ask.from] && wrap(ask.from,h(AskBar,{preset:ask.preset,onClose:()=>setAsk(null)})),
+            assembly && ov && h(AssembleTeamSheet,{overview:ov,preset:assembly.preset,flash,onClose:()=>setAssembly(null),onStarted:team=>{
+              if (!live.current || !team?.id) return;
+              const from=assembly.from;recordTeamInIndex(root,team);
+              const latest=lookupTeam(team.id,root);setAssembly(null);
+              if (!latest) {flash('Team no longer available in this workspace.');return;}
+              scopeRef.current={...scopeRef.current,teams:{...teams,records:[latest,...teams.records.filter(r=>r.id!==latest.id)]}};
+              openTeam(latest.id,stateRef.current.tabs[from]?from:'desk');
+            }}),
+            seatTeam && tabTeamRecord(seatTeam,scope) && h(AddTeamSeatSheet,{team:tabTeamRecord(seatTeam,scope),overview:ov,scope,flash,onClose:()=>setSeatTeam(null)}),
             quick && ov && wrap(quick.from,h(QuickAdd,{key:quick.at,tab:quick.tab,overview:ov,go:goOf(quick.from),flash,onClose:()=>setQuick(null)})),
             h(Toast,{message:message || (starting?'Starting the discussion…':null)}))),
         chrome.overlays);
@@ -7046,6 +7547,8 @@ window.__ModuleLoader__.load({
       if (view === 'doc' && route.path) return { ...route, kind: places?.has(pathKey(route.path)) ? 'topic' : 'file', key: 'file:' + pathKey(route.path) };
       if (view === 'paper' && route.url && /^https?:\/\//i.test(route.url)) return { ...route, kind: 'paper', key: 'url:' + route.url };
       if (view === 'preview' && route.main) return { ...route, kind: 'preview', key: 'preview:' + pathKey(route.main) };
+      // A team is a run, not a session: it exists before a lead is attached.
+      if (view==='team' && typeof route.teamId==='string' && route.teamId) return { kind:'team', view, teamId:route.teamId, key:'team:'+route.teamId, title:route.title, section:route.section, decisionId:route.decisionId };
       if (['discussion', 'member', 'team'].includes(view) && route.sessionId) return { ...route, kind: view, key: view + ':' + route.sessionId };
       if (view === 'team') return { ...route, view: 'teams', kind: 'place', key: 'place:teams' };
       return null;
@@ -7191,7 +7694,7 @@ window.__ModuleLoader__.load({
     // session object belongs in this key. Storage helpers handle denied access.
     function persistedTab(t) {
       const safe = {};
-      for (const k of ['id', 'kind', 'key', 'view', 'path', 'url', 'topic', 'anchor', 'main', 'pdf', 'tab', 'filter', 'thread', 'sessionId', 'title', 'q', 'temporary']) if (typeof t[k] === 'string' || typeof t[k] === 'boolean') safe[k] = t[k];
+      for (const k of ['id', 'kind', 'key', 'view', 'path', 'url', 'topic', 'anchor', 'main', 'pdf', 'tab', 'filter', 'thread', 'sessionId', 'teamId', 'seatName', 'title', 'q', 'temporary']) if (typeof t[k] === 'string' || typeof t[k] === 'boolean') safe[k] = t[k];
       return safe;
     }
     function tabRootKey(root) {
@@ -7413,11 +7916,32 @@ window.__ModuleLoader__.load({
       return Boolean(previous?.context?.topic?.path && tabInside(root,previous.context.topic.path));
     }
 
+    // A verified run can be opened before it has a lead. A stored member tab needs
+    // a second witness: the same named child in that lead's current DSH projection.
+    function tabTeamRecord(id,scope) {
+      const index=scope?.teams;
+      if (!id || !scope?.root || tabRootKey(index?.root)!==tabRootKey(scope.root) || index?.loading || index?.error) return null;
+      return index?.records?.find(t=>t.id===id) || null;
+    }
+    function tabTeamMember(t,scope) {
+      const team=tabTeamRecord(t.teamId,scope);
+      if (!team || team.legacy || !team.leadId || !tabSessionInScope(team.leadId,scope)) return false;
+      const lead=rowOf(scope.rows,team.leadId), child=rowOf(scope.rows,t.sessionId);
+      if (scope.rows?.phase!=='ready' || !lead?.projectionValues?.agentTeam?.enabled || lead.archived || lead.parentId || lead.parentSessionId) return false;
+      if (t.seatName==='lead') return t.sessionId===team.leadId;
+      const parent=child?.parentId || child?.parentSessionId;
+      if (t.sessionId===team.leadId || (parent && parent!==team.leadId)) return false;
+      const roster=lead.projectionValues.subagentCatalog;
+      const matches=Array.isArray(roster) ? roster.filter(c=>c.name===t.seatName) : [];
+      return team.seats?.some(s=>s.name===t.seatName) && matches.length===1 && matches[0].id===t.sessionId;
+    }
     function scopedTabState(source,scope) {
       if (!tabStorageKey(scope?.root)) return emptyTabState();
       const s=source.state,legacy=source.legacy;
       const admit=t=>{
         if (!t) return null;
+        if (t.kind==='team' && t.teamId) { const team=tabTeamRecord(t.teamId,scope); return team ? {...t,title:team.name} : null; }
+        if (t.kind==='member' && t.teamId) return tabTeamMember(t,scope) ? t : null;
         if (tabConversation(t) || t.kind==='team') return tabSessionInScope(t.sessionId,scope) ? t : null;
         if (t.kind==='file' || t.kind==='topic') {
           if (legacy && !tabInside(scope.root,t.path)) return null;
@@ -7671,7 +8195,7 @@ window.__ModuleLoader__.load({
       }
       cmd('newDiscussion', 'New discussion', 'chat', () => p.onNewDiscussion());
       if (typeof p.onMoveDiscussion === 'function') cmd('moveDiscussion', 'Move discussion to a topic…', 'topics', () => p.onMoveDiscussion());
-      cmd('team', 'New team', 'team', null, 'Native team setup is not available yet', true);
+      cmd('team', 'Assemble a team…', 'team', p.onAssemble, p.onAssemble ? '' : 'Choose a research workspace first', !p.onAssemble);
       cmd('search', 'Search', 'search', (opts) => p.openPlace('search', opts));
       cmd('paper', 'Add a paper', 'paper', () => p.onQuick('paper'));
       cmd('note', 'New note', 'note', () => p.onQuick('note'));
@@ -7691,7 +8215,8 @@ window.__ModuleLoader__.load({
       const records = new Map();
       // M2's registry is authoritative for discussions (even when empty). Legacy
       // teams keep their existing entry until M3; a registry title wins on overlap.
-      for (const t of threads) if (t?.id && (!registry || t.kind === 'team')) records.set(t.id, t);
+      const verifiedTeams=Array.isArray(p.teamRecords) ? p.teamRecords : null;
+      for (const t of threads) if (t?.id && (!registry || t.kind === 'team') && !(verifiedTeams && t.kind==='team')) records.set(t.id, t);
       for (const t of registry || []) if (t?.id) records.set(t.id, t);
       const index = [...records.values()].filter(t => knownThread(rows, t)).map((t) => {
         const row = rowOf(rows, t.id), team = t.kind === 'team' || !!teamOf(row);
@@ -7701,7 +8226,8 @@ window.__ModuleLoader__.load({
       });
       const files = (p.recentFiles || []).filter((f) => f.path).map((f) => ({ group: 'Recent files', id: 'file:' + f.path, label: f.title || baseName(f.path),
         icon: 'note', detail: f.path, run: (opts) => p.openFile(f.path, opts) }));
-      return [...commands, ...places, ...topics, ...index, ...files];
+      const teamItems=(verifiedTeams || []).map(t=>({group:'Teams',id:'team:'+t.id,label:t.name,detail:t.topic?.title || (t.legacy?'Legacy team':'Team room'),updated:t.updated || t.created,icon:'team',run:opts=>p.openTeam(t.id,opts)}));
+      return [...commands, ...places, ...topics, ...index, ...teamItems, ...files];
     }
 
     function AtlasCommandPalette({ items, recent, onClose, onRun }) {
@@ -8536,7 +9062,7 @@ window.__ModuleLoader__.load({
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
       style.textContent = [ATLAS_FONT_CSS, themeCss(), STYLES, ATLAS_CONTROL_CSS, ATLAS_RAIL_CSS, ATLAS_TAB_CSS,
-        ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS, ATLAS_DISCUSSION_CSS, registryViewStyles].join('\n');
+        ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS, ATLAS_DISCUSSION_CSS, registryViewStyles, ATLAS_CONSTELLATION_CSS, ATLAS_TEAM_ASSEMBLY_CSS, ATLAS_TEAM_ROOM_CSS, ATLAS_TEAM_SEAT_CSS].join('\n');
       document.head.appendChild(style);
     }
 

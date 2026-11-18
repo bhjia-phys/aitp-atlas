@@ -136,6 +136,8 @@ function tabSpec(route, places) {
   if (view === 'doc' && route.path) return { ...route, kind: places?.has(pathKey(route.path)) ? 'topic' : 'file', key: 'file:' + pathKey(route.path) };
   if (view === 'paper' && route.url && /^https?:\/\//i.test(route.url)) return { ...route, kind: 'paper', key: 'url:' + route.url };
   if (view === 'preview' && route.main) return { ...route, kind: 'preview', key: 'preview:' + pathKey(route.main) };
+  // A team is a run, not a session: it exists before a lead is attached.
+  if (view==='team' && typeof route.teamId==='string' && route.teamId) return { kind:'team', view, teamId:route.teamId, key:'team:'+route.teamId, title:route.title, section:route.section, decisionId:route.decisionId };
   if (['discussion', 'member', 'team'].includes(view) && route.sessionId) return { ...route, kind: view, key: view + ':' + route.sessionId };
   if (view === 'team') return { ...route, view: 'teams', kind: 'place', key: 'place:teams' };
   return null;
@@ -281,7 +283,7 @@ function tabV2Icon(t) {
 // session object belongs in this key. Storage helpers handle denied access.
 function persistedTab(t) {
   const safe = {};
-  for (const k of ['id', 'kind', 'key', 'view', 'path', 'url', 'topic', 'anchor', 'main', 'pdf', 'tab', 'filter', 'thread', 'sessionId', 'title', 'q', 'temporary']) if (typeof t[k] === 'string' || typeof t[k] === 'boolean') safe[k] = t[k];
+  for (const k of ['id', 'kind', 'key', 'view', 'path', 'url', 'topic', 'anchor', 'main', 'pdf', 'tab', 'filter', 'thread', 'sessionId', 'teamId', 'seatName', 'title', 'q', 'temporary']) if (typeof t[k] === 'string' || typeof t[k] === 'boolean') safe[k] = t[k];
   return safe;
 }
 function tabRootKey(root) {
@@ -503,11 +505,32 @@ function tabSessionInScope(id,scope,visited=new Set()) {
   return Boolean(previous?.context?.topic?.path && tabInside(root,previous.context.topic.path));
 }
 
+// A verified run can be opened before it has a lead. A stored member tab needs
+// a second witness: the same named child in that lead's current DSH projection.
+function tabTeamRecord(id,scope) {
+  const index=scope?.teams;
+  if (!id || !scope?.root || tabRootKey(index?.root)!==tabRootKey(scope.root) || index?.loading || index?.error) return null;
+  return index?.records?.find(t=>t.id===id) || null;
+}
+function tabTeamMember(t,scope) {
+  const team=tabTeamRecord(t.teamId,scope);
+  if (!team || team.legacy || !team.leadId || !tabSessionInScope(team.leadId,scope)) return false;
+  const lead=rowOf(scope.rows,team.leadId), child=rowOf(scope.rows,t.sessionId);
+  if (scope.rows?.phase!=='ready' || !lead?.projectionValues?.agentTeam?.enabled || lead.archived || lead.parentId || lead.parentSessionId) return false;
+  if (t.seatName==='lead') return t.sessionId===team.leadId;
+  const parent=child?.parentId || child?.parentSessionId;
+  if (t.sessionId===team.leadId || (parent && parent!==team.leadId)) return false;
+  const roster=lead.projectionValues.subagentCatalog;
+  const matches=Array.isArray(roster) ? roster.filter(c=>c.name===t.seatName) : [];
+  return team.seats?.some(s=>s.name===t.seatName) && matches.length===1 && matches[0].id===t.sessionId;
+}
 function scopedTabState(source,scope) {
   if (!tabStorageKey(scope?.root)) return emptyTabState();
   const s=source.state,legacy=source.legacy;
   const admit=t=>{
     if (!t) return null;
+    if (t.kind==='team' && t.teamId) { const team=tabTeamRecord(t.teamId,scope); return team ? {...t,title:team.name} : null; }
+    if (t.kind==='member' && t.teamId) return tabTeamMember(t,scope) ? t : null;
     if (tabConversation(t) || t.kind==='team') return tabSessionInScope(t.sessionId,scope) ? t : null;
     if (t.kind==='file' || t.kind==='topic') {
       if (legacy && !tabInside(scope.root,t.path)) return null;

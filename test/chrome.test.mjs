@@ -161,5 +161,8 @@ test('palette: real sources and callbacks, never deleted sessions; Shift+Enter i
   const sessions = [{id:'old',title:'Old entry'}, {id:'team',title:'Legacy team',kind:'team'}], rows={byId:{old:{},team:{},real:{}}};
   const registered = records => chrome.atlasPaletteItems({...p,discussionRecords:records},sessions,rows,keys,{focused:false},()=>{},()=>{}).filter(x=>x.id.startsWith('session:'));
   assert.deepEqual(registered([]).map(x=>x.id), ['session:team']);
+  const native=chrome.atlasPaletteItems({...p,discussionRecords:[],teamRecords:[{id:'run-id',name:'Worm team',topic:{title:'Monte Carlo'}}],onAssemble:cb('assemble'),openTeam:cb('room')},sessions,rows,keys,{focused:false},()=>{},()=>{});
+  assert.equal(native.filter(x=>x.group==='Teams').length,1,'a verified root registry supersedes raw legacy rows');
+  native.find(i=>i.id==='cmd:team').run();native.find(i=>i.id==='team:run-id').run({otherPane:true});assert.deepEqual(calls.slice(-2),[['assemble'],['room','run-id',{otherPane:true}]]);
   assert.deepEqual(registered([{id:'real',title:'Renamed',topic:{title:'Filed topic'}}]).map(x=>[x.label,x.detail]),[['Legacy team','Team discussion'],['Renamed','Filed topic']]);
 });

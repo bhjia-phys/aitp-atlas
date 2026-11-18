@@ -143,6 +143,18 @@ test('legacy migration demands matching path/owner evidence; DSH-confirmed hand-
   const recovered=c.scopedTabState({state:s,legacy:true},scope);assert.deepEqual(recovered.order,['desk','file:'+root+'/mine.md','place:search']);assert.ok(!JSON.stringify(recovered).includes('foreign query'));
 });
 
+test('M3: a room is keyed by run, a member by a verified lead and named seat, never just a cached title',()=>{
+  let s=c.emptyTabState(); const team={id:'run',name:'Renamed room',leadId:'real-lead',seats:[{name:'numerics'}]};
+  const room=spec('team',{teamId:'run',title:'Stale'}),member=spec('member',{teamId:'run',sessionId:'child',seatName:'numerics'});
+  s=open(s,room); s=open(s,member,room.key);
+  const root='/mine'; const scope={root,teams:{root,records:[team]},registry:{root,records:[]},rows:{phase:'ready',byId:{'real-lead':{cwd:root,projectionValues:{agentTeam:{enabled:true},subagentCatalog:[{name:'numerics',id:'child'}]}},child:{parentId:'real-lead'}}}};
+  const snapshot={state:s,legacy:false},restore=scope=>c.scopedTabState(snapshot,scope);
+  assert.deepEqual(restore(scope).layout.right,[member.key]);assert.equal(restore(scope).tabs[room.key].title,'Renamed room');
+  const changed={...scope,teams:{root,records:[{...team,leadId:null}]}};assert.ok(restore(changed).tabs[room.key]);assert.equal(restore(changed).tabs[member.key],undefined);
+  for(const teams of [{root:'/other',records:[team]},{root,loading:true,records:[team]},{root,records:[]}])assert.deepEqual(restore({...scope,teams}).order,['desk']);
+  assert.equal(restore({...scope,teams:{root,records:[{...team,legacy:true}]}}).tabs[member.key],undefined);
+});
+
 test('in-place anchors and LaTeX jumps guard the originating editor, including case-folded aliases and an already-open target', () => {
   const ask = [], dirty = {'file:/r/main.tex':true};
   let s = open(c.emptyTabState(),spec('doc',{path:'/r/main.tex',edit:true}));

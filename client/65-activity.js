@@ -61,38 +61,10 @@ function DecideButtons({ topic, thread, onDone }) {
       h('span', { className: 'atlas-decide-letter' }, o.letter), h('span', null, o.text))));
 }
 
-function sessionState(row, record) {
-  if (row && row.running) return { label: 'working', className: 'is-running' };
-  if (record && record.status === 'resolved') return { label: 'resolved', className: 'is-done' };
-  if (row && row.archived) return { label: 'archived', className: '' };
-  return { label: 'idle', className: '' };
-}
-
 function parentOf(row) {
   return row ? row.parentSessionId || row.parentId || '' : '';
 }
 
-/** Preserve topic groupings and historical labels; live child projections count
- * towards the Running filter. Ordinary discussions belong to the registry. */
-function legacyTeamGroups(index, rows, filter = '') {
-  const groups = new Map(), indexed = new Set();
-  const running = (id, row) => row?.running || membersOf(rows, id).some(m => m.row?.running);
-  for (const t of index) {
-    const row = rowOf(rows, t.id);
-    if (!knownThread(rows,t) || parentOf(row) || (t.kind !== 'team' && !teamOf(row))) continue;
-    indexed.add(t.id);
-    if (filter === 'running' && !running(t.id,row)) continue;
-    const topic = t.context?.topic || null, key = topic?.path || '';
-    if (!groups.has(key)) groups.set(key, { key, topic, latest: 0, items: [] });
-    const group = groups.get(key);
-    group.items.push(t);
-    group.latest = Math.max(group.latest, t.created || 0);
-  }
-  for (const group of groups.values()) group.items.sort((a,b) => (b.created || 0) - (a.created || 0));
-  const others = Object.entries(rows?.byId || {}).filter(([id,row]) => !indexed.has(id) && !parentOf(row) && !row.archived && !row.blank && teamOf(row) && (filter !== 'running' || running(id,row)))
-    .map(([id,row]) => ({id,row}));
-  return {groups: [...groups.values()].sort((a,b) => b.latest - a.latest), others};
-}
 /** What DSH's session list says about a session (its projection), or nothing. */
 function projectionOf(row) {
   return (row && row.projectionValues) || {};
@@ -137,53 +109,5 @@ function modelOf(row) {
   return selection && selection.lastUsed ? selection.lastUsed.model || '' : '';
 }
 
-function TeamMembers({ rows, leadId, onOpen }) {
-  const members = membersOf(rows, leadId);
-  const board = boardSummary(teamOf(rowOf(rows, leadId)));
-  return h('div', { className: 'atlas-activity-team' },
-    board ? h('p', { className: 'atlas-muted' }, board) : null,
-    h('ul', { className: 'atlas-activity-members' },
-      members.map((m) => h('li', { key: m.id },
-        h('span', { className: cx('atlas-light', m.row && m.row.running && 'is-running'), 'aria-hidden': true }),
-        h(TextButton, { onClick: () => onOpen(m.id), title: m.task }, m.name || m.role || 'Member'),
-        m.role && m.name ? h('span', { className: 'atlas-chip' }, m.role) : null,
-        h('span', { className: 'atlas-activity-task' }, m.task),
-        modelOf(m.row) ? h('span', { className: 'atlas-date' }, modelOf(m.row)) : null)),
-      members.length === 0 ? h('li', { className: 'atlas-muted' }, 'No members yet: the lead staffs the seats in its first turn.') : null));
-}
-
-function LegacyTeamRow({ id, kind, title, row, record, onOpen, children }) {
-  const state = sessionState(row, record);
-  const when = record && record.created ? new Date(record.created).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-  return h('li', { className: 'atlas-activity-row' },
-    h('span', { className: 'atlas-activity-kind' }, kind),
-    h('span', { className: 'atlas-activity-main' },
-      h(TextButton, { onClick: onOpen, title }, title),
-      children),
-    h('span', { className: 'atlas-activity-state' }, h('span', { className: cx('atlas-light', state.className), 'aria-hidden': true }), state.label),
-    when ? h('span', { className: 'atlas-date' }, when) : h('span', null));
-}
-
-function LegacyTeamsPlace({overview: ov, go, filter = ''}) {
-  const actions = React.useContext(AtlasActions), index = useThreadIndex(), rows = useSessionRows();
-  const {groups, others} = useMemo(() => legacyTeamGroups(index,rows,filter), [index,rows,filter]);
-  usePublishFocus({kind:'universe', topic:{id:'',title:ov.title || 'Root note',path:ov.rootFile}}, [ov.rootFile,ov.title]);
-  const teamRow = (id, record, row) => h(LegacyTeamRow, {
-    key:id, id, row, record, kind:'Team', title:(record && threadLabel(record)) || row?.displayTitle || row?.title || 'Untitled team',
-    onOpen:() => actions.openThread(id),
-  }, h(TeamMembers,{rows,leadId:id,onOpen:actions.openThread}));
-  return h('div',{className:'atlas-page is-wide atlas-activity'},
-    h('p',{className:'atlas-kicker'},'Research desk'), h('h1',null,'Teams'),
-    h('p',{className:'atlas-lede'},'Inspect existing team leads, members and task counts from DSH.'),
-    h('div',{className:'atlas-actions',role:'group','aria-label':'Filter teams'},
-      [['','All'],['running','Running']].map(([value,label])=>h('button',{type:'button',key:value,'aria-pressed':filter===value,className:cx('atlas-button is-small',filter===value && 'is-primary'),onClick:()=>go({view:'teams',filter:value})},label))),
-    groups.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'By topic'),groups.map(g =>
-      h('div',{className:'atlas-activity-group',key:g.key},h('h3',null,g.topic ? h(TextButton,{'data-atlas-open':true,onClick:()=>go({view:'doc',path:g.topic.path})},g.topic.title) : 'The research programme'),
-        h('ul',null,g.items.map(t=>teamRow(t.id,t,rowOf(rows,t.id))))))),
-    others.length > 0 && h('section',{className:'atlas-section'},h('h2',null,'Other teams in DSH'),h('ul',{className:'atlas-activity-others'},others.map(({id,row})=>teamRow(id,null,row)))),
-    !groups.length && !others.length && h(Empty,null,filter==='running' ? 'No teams are running.' : 'No existing teams to show.'));
-}
-
-// Optional DSH Agent Teams capability installed by 90-register. No M2
-// launcher calls it. Team mutations and new rooms belong to M3.
+// Optional DSH Agent Teams capability registered in 90-register.
 let teamScope = null;

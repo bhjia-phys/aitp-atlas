@@ -116,13 +116,19 @@ test('Running groups use accessible topic headings, keep matching rows sorted an
   assert.equal(render('','','title').type,'ul','other filters remain flat and keep their existing row actions');
 });
 
+test('a remounted host cannot show another root’s decisions, discussion records or stale totals in a still-open window',async()=>{
+  const c=ui(async(name,opts)=>{assert.equal(opts.query.expectedRoot,root);if(name==='needs')return {root:'/other',decisions:[{teamId:'foreign',id:'secret'}]};throw Object.assign(Error('root changed'),{status:409});});
+  c.registryState.set({...c.registryState.get(),root,records:[old('old')],needs:{waiting:[],reviews:[],decisions:[{id:'old'}]}});await c.registryRefresh();const s=c.registryState.get();assert.deepEqual(s.records,[]);assert.deepEqual(s.needs.decisions,[]);assert.match(s.needsError,/Refresh/);assert.match(s.error,/Refresh/);
+});
+
 test('GET/POST/PATCH share one canonical store; network failures do not optimistically corrupt it',async()=>{
-  let saved=null;const needs={reviews:[],decisions:[],waiting:[]};const calls=[];
-  const c=ui(async (path,opts)=>{calls.push([path,opts]); if(path==='needs')return needs;if(!opts.method)return{discussions:saved?[saved]:[]};
+  let saved=null;const needs={root,reviews:[],decisions:[],waiting:[]};const calls=[];
+  const c=ui(async (path,opts)=>{calls.push([path,opts]); if(path==='needs')return needs;if(!opts.method)return{root,discussions:saved?[saved]:[]};
     if(opts.method==='POST'){saved=opts.body;return {discussion:saved};}if(opts.body.bad)throw Error('forbidden');saved={...saved,...opts.body};return {discussion:saved};});
   c.registryState.set({...c.registryState.get(),root});await c.registryCreate(old('x/key'));
   await Promise.all([c.registryRefresh(),c.registryPatch('x/key',{title:'renamed'})]);
   assert.equal(c.registryGet('x/key').title,'renamed');assert.equal(c.registryState.get().needs,needs);
   assert.ok(calls.some(([path,opts])=>path==='discussions/x%2Fkey'&&opts.method==='PATCH'));
+  assert.ok(calls.every(([,opts])=>opts.query.expectedRoot===root));
   await assert.rejects(c.registryPatch('x/key',{bad:true}),/forbidden/);assert.equal(c.registryGet('x/key').bad,undefined);
 });

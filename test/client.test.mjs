@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, legacyTeamGroups, membersOf, tabSpec, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, tabV2Label, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, membersOf, tabSpec, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, tabV2Label, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -182,7 +182,7 @@ test('activity: what waits on you comes from every topic and the root note, newe
   assert.deepEqual(items.map((i) => [i.topic.id, i.thread.name]), [['topics/qc', 'Kicking sweep'], ['topics/kr', 'Pointer to a quiet owner'], ['', 'Root choice']]);
 });
 
-test('activity: sessions group by topic, team members nest under their lead, deleted ones drop out', () => {
+test('legacy room: read member labels, model, live rows and the actual DSH board', () => {
   const qc = { id: 'topics/qc', title: 'Kicked top', path: '/r/topics/qc/research.md' };
   const index = [
     { id: 'a', kind: 'team', title: 'Atlas team · Kicked top · Settle the sweep', question: 'Settle the sweep', created: 3, context: { topic: qc } },
@@ -198,10 +198,6 @@ test('activity: sessions group by topic, team members nest under their lead, del
     x: { title: 'Something else' },
     y: { title: 'Archived', archived: true },
   } };
-  const { groups, others } = client.legacyTeamGroups(index, rows);
-  assert.deepEqual(groups.map((g) => g.key), ['/r/topics/qc/research.md']);
-  assert.deepEqual(groups[0].items.map((t) => t.id), ['a']);
-  assert.deepEqual(others, []);
   assert.deepEqual(client.membersOf(rows, 'a').map((m) => m.id), ['m1', 'm2']);
   const lead = { title: 'Lead', projectionValues: { agentTeam: { enabled: true, tasks: [{ status: 'completed' }, { status: 'in_progress' }, { status: 'pending' }] }, subagentCatalog: [
     { id: 'k1', name: 'derivation-checker', label: '[fixer] Runs the derivation checks.' },

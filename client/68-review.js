@@ -55,11 +55,11 @@ function EditCard({ file, edit, busy, shared, onKeep, onRevert }) {
         : h(Button, { small: true, quiet: true, disabled: Boolean(busy), onClick: onRevert, title: 'Put the earlier text back' }, 'Revert')));
 }
 
-function ReviewPanel({ sessionId, running, flash }) {
+function ReviewPanel({ sessionId, running, flash, expectedRoot, verifyOwner }) {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState('');
-  const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
+  const load = useCallback(() => api('review/changes', { query: { session: sessionId, expectedRoot } }).then(setData, () => {}), [sessionId, expectedRoot]);
   // Poll more frequently while running; a change can also come from outside this session.
   useEffect(() => {
     load();
@@ -72,7 +72,8 @@ function ReviewPanel({ sessionId, running, flash }) {
   const act = async (kind, file, id) => {
     setBusy(`${kind}:${id}`);
     try {
-      setData(await api(`review/${kind}`, { method: 'POST', body: { session: sessionId, path: file, id } }));
+      if(expectedRoot) { if(typeof verifyOwner!=='function') throw new Error('Cannot verify this review’s research workspace.'); verifyOwner(); }
+      setData(await api(`review/${kind}`, { method: 'POST', query:{expectedRoot}, body: { session: sessionId, path: file, id } },20));
       if (kind === 'revert') flash('Reverted: the earlier text is back in the note.');
       return true;
     } catch (error) {

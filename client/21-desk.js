@@ -55,7 +55,7 @@ function deskFiling(ov, choice, result) {
   return { topicId, filing: topicId ? (choice === null ? 'auto' : 'user') : 'none', candidates };
 }
 
-function deskAlmanacData(ov, index, rows, needs = null) {
+function deskAlmanacData(ov, index, rows, needs = null, teams = []) {
   const items = [];
   for (const t of index) {
     const row = rowOf(rows, t.id);
@@ -77,25 +77,37 @@ function deskAlmanacData(ov, index, rows, needs = null) {
       running.push({ id: m.id, title: `${team.title} · ${m.role || m.name || m.row.displayTitle || m.row.title || 'Member'}`, running: true, progress: 'working' }); seen.add(m.id);
     }
   }
+  for (const team of teams) {
+    const v=teamIndexSummary(team,rows,needs);
+    if (v.isDone) continue;
+    const item={id:team.id,title:team.name,at:v.at,running:v.working,team:true,openTeam:true,progress:v.total===null?'working':`${v.done} of ${v.total}`};
+    items.push(item);
+    if (v.working) running.push(item);
+    for (const m of v.members) if (m.row?.running && !seen.has(m.id)) {
+      running.push({id:m.id,teamId:team.id,legacy:!!team.legacy,title:`${m.name || m.row.displayTitle || 'Member'} · ${team.name}`,running:true,progress:'working'}); seen.add(m.id);
+    }
+  }
+  for (const d of needs?.decisions || []) if (d.teamId && d.id) waiting.push({kind:'decision',teamId:d.teamId,id:d.id,title:d.question || d.id,teamName:d.teamName});
+  items.sort((a,b)=>b.at-a.at || a.id.localeCompare(b.id));
   return { items, waiting, running };
 }
 
 function DeskAlmanac({ ov, go, onOpenThread, registry }) {
-  const rows = useSessionRows(), legacy = useThreadIndex(), actions = React.useContext(AtlasActions);
+  const rows = useSessionRows(), teams=useTeamIndexSnapshot(ov.root), actions = React.useContext(AtlasActions);
   const { items, waiting, running } = useMemo(() => {
-    const sameRoot = registry.root === ov.root, records = sameRoot ? registry.records || [] : [], listed = new Set(records.map((r) => r.id));
-    const index = [...records, ...legacy.filter((t) => t.kind === 'team' && !listed.has(t.id) && registryInRoot(ov.root, t.context?.topic?.path || rowOf(rows, t.id)?.cwd))];
-    return deskAlmanacData(ov, index, rows, sameRoot && !registry.needsError && !registry.loading ? registry.needs : null);
-  }, [ov, legacy, registry.root, registry.records, registry.needs, registry.needsError, registry.loading, rows]);
-  const row = (t, active) => h('button', { type: 'button', className: 'atlas-almanac-row', key: t.id, title: `${t.running ? 'Working' : 'Open'} · ${t.title}${t.at ? ` · Last active ${dateOf(t.at)}` : ''}`, onClick: () => onOpenThread(t.id) },
+    const sameRoot = registry.root === ov.root, records = sameRoot ? registry.records || [] : [];
+    const leadIds=new Set(teams.records.map(t=>t.leadId));
+    return deskAlmanacData(ov, records.filter(r=>!leadIds.has(r.id)), rows, sameRoot && !registry.needsError && !registry.loading ? registry.needs : null,teams.records);
+  }, [ov, teams.records, registry.root, registry.records, registry.needs, registry.needsError, registry.loading, rows]);
+  const row = (t, active) => h('button', { type: 'button', className: 'atlas-almanac-row', key: t.id, title: `${t.running ? 'Working' : 'Open'} · ${t.title}${t.at ? ` · Last active ${dateOf(t.at)}` : ''}`, onClick: () => t.openTeam ? actions.openTeam(t.id) : t.teamId ? (t.legacy ? actions.openTeam(t.teamId) : actions.openThread(t.id,{kind:'member',teamId:t.teamId})) : onOpenThread(t.id) },
     h('span', { className: cx('atlas-almanac-mark', t.running && 'is-working'), 'aria-label': t.running ? 'Working' : 'Open' }), h('span', { className: 'atlas-almanac-title' }, t.team ? 'Team · ' : '', t.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h('em', null, active ? (t.progress || (t.team ? 'working' : 'replying')) : ago(t.at)));
   const decide = ({ topic, thread }) => actions.ask(focusContext({ topic: { id: topic.id, title: topic.title, path: topic.path || topic.file } }, { section: 'Current work › ' + thread.name }), 'ask', `Help me decide “${thread.name}”: lay out the options my note records, what each would settle, and what you recommend.`, `Decide ${thread.name}`);
   const group = (name, n, link, filter, children, empty) => h('section', { className: 'atlas-almanac-group', 'aria-label': name },
     h('header', null, h('h2', null, name), n ? h('em', null, n) : null, h(TextButton, { onClick: () => go({ view: 'discussions', filter }), title: filter ? `All · ${name}` : 'All discussions' }, link)),
     children.length ? children : h('p', { className: 'atlas-almanac-empty' }, empty));
-  return h(React.Fragment, null, registry.error || registry.needsError ? h('p', { className: 'atlas-desk-message', role: 'status' }, registry.error ? 'Discussion records are unavailable. ' : '', registry.needsError ? 'Review requests could not be read. ' : '', h(TextButton, { onClick: registry.refresh }, 'Retry')) : null, h('div', { className: 'atlas-desk-almanac' },
+  return h(React.Fragment, null, !!registry.needs?.teamErrors?.length && h('p',{className:'atlas-desk-message',role:'status'},'Some team decisions could not be read. Showing verified requests only. ',h(TextButton,{onClick:registry.refresh},'Retry')), registry.error || registry.needsError ? h('p', { className: 'atlas-desk-message', role: 'status' }, registry.error ? 'Discussion records are unavailable. ' : '', registry.needsError ? 'Review requests could not be read. ' : '', h(TextButton, { onClick: registry.refresh }, 'Retry')) : null, h('div', { className: 'atlas-desk-almanac' },
     group('Continue', 0, 'All discussions', '', items.slice(0, 5).map((t) => row(t, false)), registry.loading ? 'Reading discussions…' : registry.error ? 'Discussion records could not be read.' : 'Your open discussions will appear here.'),
-    group('Needs you', waiting.length, 'All', 'needs', waiting.slice(0, 5).map((w, i) => w.kind === 'review' ? h('div', { className: 'atlas-almanac-row', key: 'review:' + w.id }, h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Unreviewed edits' }), h('span', { className: 'atlas-almanac-title', title: w.title }, w.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => onOpenThread(w.id) }, 'Review')) : h('div', { className: 'atlas-almanac-row', key: w.topic.id + ':' + i },
+    group('Needs you', registry.needsError || registry.needs?.teamErrors?.length ? 0 : waiting.length, 'All', 'needs', waiting.slice(0, 5).map((w, i) => w.kind === 'decision' ? h('div',{className:'atlas-almanac-row',key:'decision:'+w.teamId+':'+w.id},h('span',{className:'atlas-almanac-mark is-waiting','aria-label':'Team decision'}),h('span',{className:'atlas-almanac-title',title:w.teamName},w.title),h('i',{className:'atlas-almanac-leader','aria-hidden':true}),h(Button,{small:true,onClick:()=>actions.openTeam(w.teamId,{decisionId:w.id})},'Answer')) : w.kind === 'review' ? h('div', { className: 'atlas-almanac-row', key: 'review:' + w.id }, h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Unreviewed edits' }), h('span', { className: 'atlas-almanac-title', title: w.title }, w.title), h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => onOpenThread(w.id) }, 'Review')) : h('div', { className: 'atlas-almanac-row', key: w.topic.id + ':' + i },
       h('span', { className: 'atlas-almanac-mark is-waiting', 'aria-label': 'Waiting' }), h('button', { type: 'button', 'data-atlas-open': true, className: 'atlas-almanac-title', title: `${w.topic.title} · ${w.thread.name}`, onClick: (e) => go({ view: 'doc', path: w.topic.path || w.topic.file, anchor: 'current-work' }, e) }, w.thread.name),
       h('i', { className: 'atlas-almanac-leader', 'aria-hidden': true }), h(Button, { small: true, onClick: () => decide(w), title: 'Discuss this decision' }, 'Decide'))), 'Nothing in your notes waits on a decision.'),
     group('Running', running.length, 'All', 'running', running.slice(0, 5).map((t) => row(t, true)), rows?.phase === 'ready' ? 'Nothing is in motion.' : 'Live session state is unavailable.')));
@@ -156,6 +168,8 @@ function DeskView(props) {
 
 function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStartDiscussion, onOpenThread }) {
   const [draft, setDraft] = useState(() => deskDraft(ov?.root));
+  const actions=React.useContext(AtlasActions), [mode,setMode]=useState('discuss');
+  const teamMode=mode==='team';
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [popup, setPopup] = useState(null);
   const input = useRef(null), topicButton = useRef(null), attachButton = useRef(null), latch = useRef(false);
   const otherPane = useFocus().beside, registry = useRegistrySnapshot();
@@ -169,9 +183,9 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
   const topic = selection.topicId ? ov?.topics[selection.topicId] : null;
   const topicLabel = draft.topicId === null ? 'Auto' : topic?.title || 'No topic';
   const sessions = svc('sessions');
-  const disabledReason = setup || !ov ? 'Set up a research workspace before starting a discussion.' : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
+  const disabledReason = setup || !ov ? 'Set up a research workspace before starting work.' : teamMode ? (!actions.assembleTeam?'Team setup is unavailable.':'') : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
   const disabled = !!disabledReason || busy;
-  const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
+  const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0) + (registry.needs?.decisions?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
   const patch = (change) => { setDraft((prev) => ({ ...prev, ...change })); setError(''); };
   usePublishFocus({ kind: 'universe', topic: ov ? { id: '', title: ov.title, path: ov.rootFile } : null }, [ov?.rootFile, ov?.title]);
   useEffect(() => { if (focusRequest && !disabledReason) input.current?.focus(); }, [focusRequest, disabledReason]);
@@ -193,7 +207,9 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
     try {
       const latest = key ? await router.flush(key) : null;
       if (key && !latest) return; // This draft/root was replaced before lookup finished.
-      await onStartDiscussion({ question: draft.question.trim(), ...deskFiling(ov, draft.topicId, latest), model, attachments: draft.attachments });
+      const filing=deskFiling(ov,draft.topicId,latest);
+      if(teamMode){ actions.assembleTeam({goal:draft.question.trim(),topicId:filing.topicId,leadModel:model,attachments:draft.attachments}); return; }
+      await onStartDiscussion({ question: draft.question.trim(), ...filing, model, attachments: draft.attachments });
       setDraft({ topicId: null, question: '', attachments: [] });
     } catch (cause) { setError(cause?.message || 'The discussion could not start.'); }
     finally { latch.current = false; setBusy(false); }
@@ -209,8 +225,9 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
       h('div', { className: 'atlas-desk-controls' }, h(IconButton, { label: 'Attach a reference', icon: 'plus', buttonRef: attachButton, disabled, 'aria-expanded': popup === 'attach', onClick: () => setPopup(popup === 'attach' ? null : 'attach') }),
         h('button', { type: 'button', className: 'atlas-desk-topic', ref: topicButton, disabled, 'aria-label': `Choose topic: ${topicLabel}`, 'aria-expanded': popup === 'topic', onClick: () => setPopup(popup === 'topic' ? null : 'topic') }, topic ? h('i', { className: 'atlas-dot', style: { background: directionColor(ov, topicDirection(ov, topic.id)) } }) : null, h('span', null, topicLabel), h('span', { 'aria-hidden': true }, '⌄')),
         h(AtlasModelPicker, { value: model, disabled, onChange: (next) => { setModel(next); storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), model: next }); } }),
+        h(Segmented,{label:'Composer mode',value:mode,options:[{value:'discuss',label:'Discuss',disabled:busy},{value:'team',label:'Team',disabled:busy}],onChange:setMode}),
         h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
-        h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+        teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
       popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: draft.topicId, onChoose: choose, onClose: () => setPopup(null) }) : null,
       popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
     disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
@@ -221,6 +238,16 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
 }
 
 const ATLAS_DESK_CSS = `
+.atlas-teams-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:var(--s-16); margin-bottom:var(--s-24); }
+.atlas-team-index { list-style:none; padding:0; margin:var(--s-24) 0; }
+.atlas-team-index-row { width:100%; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-12); text-align:left; color:var(--text-2); font:var(--t-meta); padding:var(--s-12) var(--s-8); border:0; border-top:1px solid var(--border); background:none; cursor:pointer; }
+.atlas-team-index-row:hover { background:var(--hover); }
+.atlas-team-index-name { flex:1 1 11ch; color:var(--text-1); font:var(--t-body); overflow-wrap:anywhere; }
+.atlas-team-index-topic,.atlas-team-index-chip { font:var(--t-meta); padding:var(--s-4) var(--s-8); border:1px solid var(--border); border-radius:var(--r-full); }
+.atlas-team-index-chip.is-waiting { color:var(--gold); } .atlas-team-index-chip.is-working { color:var(--accent); }
+.atlas-team-index-row em { color:var(--text-3); }
+@container (max-width:820px) { .atlas-desk-controls {flex-wrap:wrap;} .atlas-desk-hint {display:none;} }
+
 .atlas-desk { box-sizing:border-box; max-width:1120px; margin:0 auto; padding:0 var(--s-32) var(--s-56); background:var(--surface); }
 .atlas-desk-sky { position:relative; margin:0 calc(-1 * var(--s-32)); }
 .atlas-desk-sky > svg { position:absolute; bottom:0; width:100%; }
