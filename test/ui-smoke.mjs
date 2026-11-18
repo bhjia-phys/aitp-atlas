@@ -49,7 +49,7 @@ export async function runBrowserSmoke(flow = smokeM1) {
     '--proxy-server=http://127.0.0.1:9',`--proxy-bypass-list=${new URL(url).hostname};127.0.0.1`,
     '--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${browserDir}`,'--window-size=1600,1000','about:blank'],{env:browserEnv,windowsHide:true,stdio:'ignore',detached:process.platform!=='win32'});
   const closed=new Promise((ok,no)=>{browser.once('close',ok);browser.once('error',no);});
-  let c, ev; const errors=[], httpErrors=[];
+  let c, ev; const errors=[], httpErrors=[], atlasFailures=[];
   try {
     const port=await until(()=>fs.readFile(path.join(browserDir,'DevToolsActivePort'),'utf8').then(s=>Number(s.split('\n')[0]),()=>false),'private Chromium port');
     const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
@@ -58,7 +58,10 @@ export async function runBrowserSmoke(flow = smokeM1) {
       if(method==='Runtime.exceptionThrown') errors.push(p.exceptionDetails.exception?.description || p.exceptionDetails.text);
       if(method==='Runtime.consoleAPICalled' && p.type==='error') errors.push(p.args.map(a=>a.value||a.description).join(' '));
       if(method==='Log.entryAdded' && p.entry.level==='error') errors.push(p.entry.text);
-      if(method==='Network.responseReceived' && p.response.status>=400) httpErrors.push([p.response.status,new URL(p.response.url).pathname]);
+      if(method==='Network.responseReceived' && p.response.status>=400) {
+        const pathname=new URL(p.response.url).pathname;httpErrors.push([p.response.status,pathname]);
+        if(pathname.startsWith('/aitp-atlas/api/')) atlasFailures.push({id:p.requestId,status:p.response.status,pathname});
+      }
     });
     for(const k of ['Page','Runtime','Network','Log']) await c.call(k+'.enable');
     ev=async expression=>{const v=await c.call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}); if(v.exceptionDetails)throw Error(v.exceptionDetails.exception?.description || v.exceptionDetails.text);return v.result.value;};
@@ -89,6 +92,11 @@ export async function runBrowserSmoke(flow = smokeM1) {
     assert.deepEqual(problems,[]);
     console.log('PASS',flow.name,'— browser console, page and HTTP errors: 0');
   } catch(error) {
+    // Error-only, from our disposable Atlas fixture. Never print credentials,
+    // requests, transcripts, full response bodies or unrelated DSH traffic.
+    for (const {id,status,pathname} of atlasFailures.slice(-5)) {
+      try { const result=await c.call('Network.getResponseBody',{requestId:id});const {error:problem}=JSON.parse(result.body);if(problem)console.error('Atlas API failure:',status,pathname, String(problem.code || '').slice(0,80),String(problem.message || '').slice(0,500)); } catch {}
+    }
     console.error('Browser diagnostics:',JSON.stringify({errors,httpErrors,visible:await ev?.(`document.body.innerText.slice(-3500)`).catch(()=>null),buttons:await ev?.(`Array.from(document.querySelectorAll('button')).filter(x=>x.checkVisibility()).slice(0,65).map(x=>[x.ariaLabel,x.title,x.textContent.trim().slice(0,60)])`).catch(()=>null)}));
     throw error;
   } finally {

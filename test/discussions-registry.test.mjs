@@ -54,6 +54,24 @@ test('move, undo and delayed delivery use latest-move compare-and-set, not a bro
   assert.equal((await store.patch(atlas,'a',{movedTo:'dst-a'})).discussion.movedTo,'dst-a');
 });
 
+test('concurrent list windows wait for Undo publication instead of holding the destination file open', async (t) => {
+  const {store,atlas,stateDir,root}=await fixture(t);
+  await store.create(atlas,{id:'fixture',topic:'worm',filing:'auto'});
+  await store.patch(atlas,'fixture',{topic:{to:'edge',token:'first'}});
+  let release, notify;const held=new Promise(ok=>release=ok), staged=new Promise(ok=>notify=ok);
+  const writer=createDiscussions({stateDir,root},{beforeRename(){notify();return held;}});
+  const undo=writer.patch(atlas,'fixture',{undoMove:'first'});
+  await staged;const views=Array.from({length:8},()=>store.list());release();await undo;
+  for(const [record] of await Promise.all(views)) assert.equal(record.topic.id,'worm');
+  // Exercise actual filesystem overlap on Windows with multiple owners. Every
+  // GET must remain readable; an undo failure may never be hidden by retry.
+  let running=true,reads=0;
+  const readers=Array.from({length:8},async()=>{while(running){await store.list();reads++;}});
+  try { for(let i=0;i<20;i++){const token=`m${i}`;await store.patch(atlas,'fixture',{topic:{to:'edge',token}});await store.patch(atlas,'fixture',{undoMove:token});} }
+  finally{running=false;await Promise.all(readers);}
+  assert.ok(reads>0);assert.equal((await store.list())[0].topic.id,'worm');
+});
+
 test('failure between temporary write and rename leaves last published state readable and write queue usable', async (t) => {
   const {store,atlas,stateDir,root} = await fixture(t);
   await store.create(atlas,{id:'survives',title:'original'});

@@ -6,6 +6,11 @@ const {target,send,answer,address,data,state,snapshot,diff} = new Function(modul
 const team={id:'run-a',leadId:'L',created:10,startedAt:10,seats:[{name:'theorist',role:'theorist'},{name:'referee',role:'referee'},{name:'missing'}]};
 const rows={phase:'ready',byId:{L:{id:'L',running:false,projectionValues:{agentTeam:{enabled:true,tasks:[{id:'task-1',subject:'Check signs',status:'completed',owner:'theorist'},{id:'task-2',subject:'Review R01',status:'in_progress',owner:'referee'}]},subagentCatalog:[{id:'T',name:'theorist'},{id:'R',name:'referee'}]}},T:{id:'T',parentId:'L',running:false},R:{id:'R',parentId:'L',running:true}}};
 const decision={id:'D01',status:'open',formatted:true,revision:'fingerprint',options:{A:'Submit job',B:'Reduce scope'}};
+test('Logbook combines 2 open decisions, 3 pending edits and 1 missing member; idle and starting seats do not count',()=>{
+  const count=new Function(modules+'\nreturn teamRoomNeedsCount;')();
+  assert.equal(count([decision,{...decision,id:'D02'}],3,[{state:'idle'},{state:'not-started'},{state:'starting'}]),6);
+  assert.equal(count([],0,[{state:'unknown'}]),0);
+});
 test('leading mention addresses one declared seat; bare text goes to lead, malformed addressing never silently reroutes',()=>{
   assert.deepEqual(address(' @theorist  Check the sign.\nExplain why.'),{name:'theorist',text:'Check the sign.\nExplain why.'});
   assert.deepEqual(address('Compare with @referee'),{name:'lead',text:'Compare with @referee'});

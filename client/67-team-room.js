@@ -95,6 +95,9 @@ function teamRoomData(team, rows, artifacts, now) {
   }
   return {tasks,boardKnown:Array.isArray(board?.tasks),lead,seats,flow,paths};
 }
+function teamRoomNeedsCount(decisions, edits, seats) {
+  return decisions.length + edits + seats.filter(s=>s.state==='not-started').length;
+}
 function teamRoomState(team, people, decisions, editCount, closing) {
   if (team.legacy) return 'Legacy · read-only';
   if (closing && people[0]?.state === 'idle') return 'Done';
@@ -139,7 +142,7 @@ function TeamRoomLog({team, artifacts, decisions, send, reload, flash, openFile,
 }
 
 function TeamRoomWork({view, data, artifacts, events, openFile}) {
-  const artifact=(r)=>r && h('button',{type:'button',key:r.path,className:'atlas-room-cell',onClick:()=>openFile(r.path),title:r.title},h('code',null,r.id || 'File'),h('span',null,r.title),h('small',null,r.formatted ? r.verdict || r.status || 'No verdict' : 'Unformatted'));
+  const artifact=(r)=>r && h('button',{type:'button',key:r.path,className:'atlas-room-cell',onClick:()=>openFile(r.path),title:r.title},h('code',null,r.id || 'File'),h('span',null,r.title),h('small',{className:r.formatted && (r.verdict==='holds' || r.status==='accepted') ? 'atlas-room-success' : undefined},r.formatted ? r.verdict || r.status || 'No verdict' : 'Unformatted'));
   const table = (label,heads,rows) => h('table',{className:'atlas-room-table','aria-label':label},h('thead',null,h('tr',null,heads.map(k=>h('th',{key:k,scope:'col'},k)))),h('tbody',null,rows));
   if(view==='timeline') {
     const fileEvents=[...(artifacts?.reports||[]),...(artifacts?.reviews||[]),...(artifacts?.decisions||[])].filter(r=>r.mtimeMs).map(r=>({key:r.path,at:r.mtimeMs,seat:r.seat||r.from,text:`${r.id||r.title} · file updated`,path:r.path}));
@@ -158,7 +161,7 @@ function TeamRoomWork({view, data, artifacts, events, openFile}) {
   return table('Work pipeline',['Work','Report','Review','Integrated'].map((s,i)=>`${s} · ${counts[i]}`),data.flow.map(line=>h('tr',{key:line.key},
     h('td',null,line.task?h('div',{className:'atlas-room-task'},h(SeatGlyph,{name:line.task.owner}),h('span',null,line.task.subject,h('small',null,line.task.id+' · '+line.task.status))):empty('(no task)')),
     h('td',null,artifact(line.report)||empty('Not yet')),h('td',null,line.reviews?.length?line.reviews.map(artifact):line.reviewTasks?.length?line.reviewTasks.map(t=>h('span',{key:t.id},t.id+' · '+t.status)):empty(line.leadRouting?'Lead routing':'—')),
-    h('td',null,line.integrated?h('span',{className:'atlas-room-cell'},'Accepted',!!line.noteRefs?.length && h('small',null,line.noteRefs.length+' linked edits')):empty('—')))));
+    h('td',null,line.integrated?h('span',{className:'atlas-room-cell atlas-room-success'},'Accepted',!!line.noteRefs?.length && h('small',null,line.noteRefs.length+' linked edits')):empty('—')))));
 }
 
 function TeamRoom({teamId, team:provided, scope, overview, visible=true, section, decisionId, go, flash, onMember, onAddSeat}) {
@@ -229,12 +232,12 @@ function TeamRoomSurface({team,scope,rows,root,visible,section,decisionId,go,fla
     {id:'end',label:'End the team',disabled:!canLead || team.ending,onSelect:()=>show('end')}];
   const mention=/^@([a-z0-9-]*)$/i.exec(message), mentions=mention?[data.lead,...data.seats].filter(s=>s.name.startsWith(mention[1])):[];
   let destination='lead';try{destination=teamRoomAddress(message).name;}catch{if(message.startsWith('@'))destination='choose a seat';}
-  const needsCount=decisions.length+edits+data.seats.filter(s=>s.state==='not-started').length;
+  const needsCount=teamRoomNeedsCount(decisions,edits,data.seats);
   const completed=data.tasks.filter(t=>t.status==='completed').length;
   return h('div',{ref,className:'atlas-team-room','aria-label':'Team room'},h('div',{className:'atlas-room-main'},
     h('div',{className:'atlas-room-band'},h(TeamConstellation,{lead:data.lead,seats:data.seats,paths:data.paths,onOpen:team.legacy?undefined:openSeat,onMessage:writable?s=>compose(s.name):undefined,onAskStart:canLead?retry:undefined}),
       h('section',{className:'atlas-room-mission'},h('span',{className:'atlas-room-cap'},(team.topic?.title||'Workspace')+' · Team'),h('h2',null,team.name),h('p',null,team.goal||artifacts?.charter?.goal),
-        h('div',{className:'atlas-room-line'},h(Chip,null,state),team.created && h('time',{dateTime:new Date(team.created).toISOString()},'Started '+ago(team.created))),
+        h('div',{className:'atlas-room-line'},h(Chip,{className:state==='Waiting on you'?'atlas-room-waiting':undefined},state),team.created && h('time',{dateTime:new Date(team.created).toISOString()},'Started '+ago(team.created))),
         h('div',{className:'atlas-room-line'},data.boardKnown && data.tasks.length>0 && h('progress',{max:data.tasks.length,value:completed,'aria-label':'Board task completion'}),h('small',null,data.boardKnown?`${completed} of ${data.tasks.length} tasks done`:'Board unavailable')),
         h('div',{className:'atlas-room-line'},!team.legacy && h(Button,{small:true,primary:true,disabled:!canLead,onClick:()=>compose('lead')},'Message team'),
           !team.legacy && h(Button,{small:true,disabled:busy||!canLead||team.ending,onClick:()=>team.paused?leadRequest('Resume work from state.md Next.',{paused:false},'Asked the team to resume.'):leadRequest('Please finish current steps, start nothing new, and report the state in state.md.',{paused:true},'Asked the team to pause.')},team.paused?'Resume':'Ask to pause'),
@@ -260,5 +263,6 @@ const ATLAS_TEAM_ROOM_CSS = `
 .atlas-room-views{padding:var(--s-8) var(--s-20)}.atlas-room-center{overflow:auto;min-height:0;flex:1;padding:0 var(--s-20) var(--s-8)}.atlas-room-table{width:100%;border-collapse:collapse;font:var(--t-ui)}.atlas-room-table th,.atlas-room-table td{text-align:start;padding:var(--s-8) var(--s-4);border-bottom:1px solid var(--border);vertical-align:middle}.atlas-room-table th{font:var(--t-cap);font-variant-caps:all-small-caps;letter-spacing:.08em}.atlas-room-table td:first-child{min-width:120px}.atlas-room-table thead th{position:sticky;top:0;background:var(--surface);z-index:1}.atlas-room-table small{display:block}.atlas-room-task{display:flex;gap:var(--s-8)}.atlas-room-cell,.atlas-room-empty-cell{min-width:72px;display:flex;flex-direction:column;gap:var(--s-4);padding:var(--s-8);border:1px solid var(--border);border-radius:var(--r-sm);background:var(--raised);color:var(--text-1);font:var(--t-ui);text-align:start}.atlas-room-empty-cell{border-style:dashed;background:transparent;color:var(--text-3);font:var(--t-count)}button.atlas-room-cell{cursor:pointer}.atlas-room-events{list-style:none;padding:0}.atlas-room-events li{display:flex;align-items:baseline;gap:var(--s-8);padding:var(--s-8) 0;border-bottom:1px solid var(--border)}.atlas-room-events time,.atlas-team-room small{font:var(--t-meta);color:var(--text-3)}
 .atlas-room-log{width:300px;box-sizing:border-box;flex:none;overflow:auto;padding:var(--s-20);border-left:1px solid var(--border)}.atlas-room-log-content{display:flex;flex-direction:column;gap:var(--s-20)}.atlas-room-log-content h3{font-weight:600;margin:0 0 var(--s-8)}.atlas-room-fold summary{cursor:pointer;padding:var(--s-4) 0;border-bottom:1px solid var(--border);font:var(--t-ui)}.atlas-room-fold summary i{float:right;color:var(--text-3);font:var(--t-count)}.atlas-room-fold ul{list-style:none;padding:0;margin:var(--s-4) 0}.atlas-room-fold li{padding:var(--s-4) 0;font:14px/20px var(--font-serif)}.atlas-room-fold li button{margin-inline-start:var(--s-4)}.atlas-room-need{padding:var(--s-8);margin:var(--s-4) 0;background:var(--gold-soft);border-radius:var(--r-md);font:var(--t-ui)}.atlas-room-need fieldset{border:0;padding:0}.atlas-room-option{display:block;margin:var(--s-8) 0}.atlas-room-option code{display:block;overflow-wrap:anywhere}.atlas-room-need textarea,.atlas-room-composer textarea{width:100%;box-sizing:border-box;background:var(--raised);color:var(--text-1);border:1px solid var(--border-control);font:var(--t-ui);border-radius:var(--r-sm);padding:var(--s-8)}
 .atlas-room-composer{margin:var(--s-8) var(--s-20) var(--s-16);padding:var(--s-8) var(--s-12);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-1);background:var(--raised)}.atlas-room-composer textarea{border:0;resize:vertical;max-height:80px}.atlas-room-composer>.atlas-room-line:last-child{justify-content:space-between}.atlas-room-log-dialog{margin-inline-start:auto}
+.atlas-room-table .atlas-room-success{color:var(--success-text);background:var(--success-soft)}.atlas-room-mission .atlas-room-waiting{color:var(--gold);background:var(--gold-soft)}
 @container (max-width:759px){.atlas-room-band{grid-template-columns:minmax(0,1fr)}.atlas-room-mission{padding:0 var(--s-8) var(--s-8)}.atlas-room-main{overflow:auto}.atlas-room-center{min-height:180px;flex:auto}.atlas-room-band,.atlas-room-composer{flex:none}}
 `;

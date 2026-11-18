@@ -14,6 +14,15 @@ function atlasCrewFromTemplate(id) {
   const roles=(atlasCrewTemplates.find(t=>t[0]===id) || []).slice(2);
   return roles.reduce((seats,role)=>[...seats,atlasCrewSeat(role,seats)],[]);
 }
+function atlasCrewTemplateNote(draft) {
+  const template=atlasCrewTemplates.find(t=>t[0]===draft.template);
+  if (!template) return '';
+  const base=atlasCrewFromTemplate(draft.template), seats=draft.seats;
+  const exact=base.length===seats.length && base.every((b,i)=>{
+    const s=seats[i];return s.name===b.name && s.role===b.role && s.mode===b.mode && !s.model && !s.task && !s.roleCard && !s.inputs?.length;
+  });
+  return exact ? '' : `${template[1]} · Modified`;
+}
 function atlasCrewErrors(draft) {
   const errors={};
   if (!draft.goal?.trim()) errors.goal='Write the question this team should answer.';
@@ -153,7 +162,7 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
     s.role==='custom' && h('textarea',{'aria-label':`Role card for ${s.name}`,placeholder:'Responsibilities and write scope',value:s.roleCard || '',disabled:locked,onChange:e=>modifySeat(i,{roleCard:e.target.value})}),
     h('select',{'aria-label':`Model for ${s.name}`,disabled:true,title:'DSH verifies explicit child routes inside the lead session, not in the global model catalog.'},h('option',null,atlasInheritedRoute)),
     errors['seat'+i] && h('small',{className:'atlas-crew-error',role:'alert'},errors['seat'+i]));
-  const count=draft.seats.length, currentPreview=preview?.key===saved ? preview : null;
+  const count=draft.seats.length, templateNote=atlasCrewTemplateNote(draft), currentPreview=preview?.key===saved ? preview : null;
   const labelTopic=draft.topic?.title || 'Choose a topic';
   return h(Dialog,{title:'Assemble a team',wide:true,initialFocusRef:goalRef,className:'atlas-crew-sheet',onClose:close,footer:h(React.Fragment,null,
     h('span',{className:'atlas-crew-summary'},`The lead starts ${count} ${count===1?'member':'members'} and puts the work on the task board.`),h(Button,{quiet:true,disabled:busy,onClick:close},locked&&!busy?'Close':'Cancel'),
@@ -173,7 +182,8 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
       h('p',{className:'atlas-crew-path'},'Run folder: ',draft.topic ? dirOf(draft.topic.path)+'/runs/team-…' : labelTopic),
       problem && h(Banner,{tone:'error'},problem.message)),
     h('div',{className:'atlas-crew-side'},h('h3',null,'The crew'),h(TeamConstellation,{mode:'assembly',lead:{name:'lead',role:'Lead',model:draft.leadModel},seats:draft.seats,onSelect:seat=>seatRefs.current[draft.seats.findIndex(s=>s.name===seat.name)]?.focus()}),
-      h('div',{className:'atlas-crew-presets',role:'group','aria-label':'Team template'},atlasCrewTemplates.map(([id,label])=>h('button',{key:id,type:'button','aria-pressed':draft.template===id,disabled:locked,onClick:()=>update({template:id,seats:atlasCrewFromTemplate(id)})},label))),
+      h('div',{className:'atlas-crew-presets',role:'group','aria-label':'Team template'},atlasCrewTemplates.map(([id,label])=>h('button',{key:id,type:'button','aria-pressed':draft.template===id && !templateNote,disabled:locked,onClick:()=>update({template:id,seats:atlasCrewFromTemplate(id)})},label))),
+      templateNote && h('span',{className:'atlas-crew-hint',role:'status'},templateNote),
       draft.seats.map(seatCard),h(Button,{small:true,icon:'plus',disabled:locked || count>=16,onClick:()=>update({seats:[...draft.seats,atlasCrewSeat('theorist',draft.seats)]})},'Add a member'),
       h('p',{className:'atlas-crew-hint'},'Explicit seat models need authorization from this lead’s delegation policy. The DSH catalog only verifies lead routes; seats request no override.'),
       draft.seats.some(s=>s.role==='referee') && catalog?.groups?.length>1 && h('p',{className:'atlas-crew-hint'},'A referee on another provider can reduce shared blind spots, if the lead can verify permission.'),

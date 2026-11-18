@@ -8,7 +8,7 @@ const txt=(n)=>readFileSync(new URL(`../client/${n}.js`,import.meta.url),'utf8')
 const src=txt('62-models')+'\n'+txt('66-teams');
 function kit(){
   const calls=[],rows={phase:'ready',byId:{}};
-  const k=new Function('externalStore','shortTitle','svc','atlasSendToSession',src+'\nreturn {atlasStartNativeTeam,atlasCrewCapabilities,atlasCrewErrors,atlasCrewDraft,atlasCrewFromTemplate,atlasTeamSeatStatus,atlasTeamRetrySeat};')(()=>({}),x=>x,()=>({list:{getSnapshot:()=>rows}}),async(id,text)=>calls.push(['send',id,text]));
+  const k=new Function('externalStore','shortTitle','svc','atlasSendToSession',src+'\nreturn {atlasStartNativeTeam,atlasCrewCapabilities,atlasCrewErrors,atlasCrewDraft,atlasCrewFromTemplate,atlasCrewTemplateNote,atlasTeamSeatStatus,atlasTeamRetrySeat};')(()=>({}),x=>x,()=>({list:{getSnapshot:()=>rows}}),async(id,text)=>calls.push(['send',id,text]));
   const topic={id:'fixture',title:'Fixture',file:'/fixture/research.md'}, overview={root:'/fixture',topics:{fixture:topic}};
   const draft=k.atlasCrewDraft(overview,{goal:'Check the fixture',topicId:'fixture',attachments:[{path:'/fixture/input.pdf'}]});draft.doneWhen='Both checks pass.';
   const route={provider:'demo',model:'fixture',effort:'deep'}, model={id:'fixture',name:'Test',reasoning:{efforts:[{id:'deep',name:'Deep'}]}};
@@ -55,6 +55,14 @@ test('a missing, partial, wrong-case or rejected topic baseline blocks the first
 test('recording a receipt can fail after DSH has accepted: never resend and do not report it as an unsent prompt',async()=>{
   const s=kit(),request=s.deps.request;s.deps.request=async(p,b,m)=>{if(b.startedAt)throw Error('workspace changed');return request(p,b,m);};
   await assert.rejects(s.launch(),e=>e.accepted && e.team.leadId==='lead-a' && /DSH accepted the brief; do not resend/.test(e.message));assert.equal(s.calls.filter(c=>c[0]==='prompt').length,1);
+});
+test('crew edits mark the base template Modified; restoring the original seats clears the indicator',()=>{
+  const {k,draft}=kit(),base=k.atlasCrewFromTemplate(draft.template);
+  assert.equal(k.atlasCrewTemplateNote({...draft,goal:'Different question'}),'');
+  for(const seats of [base.slice(1),[...base,base[0]],[...base].reverse(),[{...base[0],name:'other'},base[1]],[{...base[0],mode:'one-shot'},base[1]],[base[0],{...base[1],role:'writer'}]]) {
+    assert.equal(k.atlasCrewTemplateNote({...draft,seats}),'Derive and check · Modified');
+  }
+  assert.equal(k.atlasCrewTemplateNote({...draft,seats:k.atlasCrewFromTemplate(draft.template)}),'');
 });
 test('template seats keep unique immutable meanings; invalid names, absent charter or forged custom role fail before submission',()=>{
   const {k,draft}=kit();assert.deepEqual(k.atlasCrewFromTemplate('literature-survey').map(s=>s.name),['literature','literature-2','referee']);
