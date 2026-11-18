@@ -1,6 +1,6 @@
 {
   "name": "aitp-atlas",
-  "version": "0.8.0",
+  "version": "0.9.1",
   "description": "AITP Atlas for DeepSeek Harness: one workspace to learn, explore and research physics over AITP notes — the research universe, what waits on you and what is running (agent teams with Oh-My-BBFF), papers and lectures from arXiv and INSPIRE into the library, PDFs with selectable text, LaTeX built beside its PDF with SyncTeX and citations, review of what a discussion changed, search and learning views.",
   "type": "module",
   "license": "MIT",
@@ -22,7 +22,8 @@
     "physics"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": "^0.2.2-rc.1"
   },
   "exports": {
     ".": "./index.js",
@@ -42,6 +43,7 @@
   ],
   "scripts": {
     "build": "node build-client.mjs",
+    "prepack": "node build-client.mjs --check",
     "test": "node build-client.mjs --check && node --test test/atlas.test.mjs test/host.test.mjs test/client.test.mjs test/web.test.mjs test/latex.test.mjs test/review.test.mjs",
     "test:dsh": "node test/dsh-e2e.mjs"
   },

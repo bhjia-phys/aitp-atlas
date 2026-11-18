@@ -237,7 +237,9 @@ function UniverseView({ overview: ov, go, filter, flash }) {
         ov.lead ? h('p', { className: 'atlas-lede' }, ov.lead) : null,
         h('dl', { className: 'atlas-stats' }, stats.map(([n, label]) => h('div', { key: label }, h('dt', null, label), h('dd', null, n))))),
       h('div', { className: 'atlas-hero-actions' },
-        h(AskMenu, { asks: [
+        h(AskMenu, { asks: total.topics === 0 ? [
+          { key: 'first-topic', label: 'Start a research topic', hint: 'Use AITP Skills if installed', prompt: 'Help me start my first research topic in this workspace. Use aitp-memory if available. Ask me what question the topic should answer, then create its research.md and link it from the root note once we agree.' },
+        ] : [
           { key: 'next', label: 'What should I work on next?', hint: 'Across all directions', prompt: 'Look across my research programme and tell me which topic most deserves the next session, and why.' },
           { key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' },
           { key: 'idea', label: 'Develop a new idea', hint: 'From a seed to a concrete project', prompt: "I have a research idea I'd like to develop into a concrete project. Let's brainstorm it: I'll describe it next." },

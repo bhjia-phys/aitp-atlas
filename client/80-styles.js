@@ -56,6 +56,8 @@ const STYLES = `
 .atlas-muted { color: var(--ink-3); }
 .atlas-count { margin-left: 8px; font: 500 12px var(--sans); color: var(--ink-3); }
 .atlas-empty { color: var(--ink-3); margin: 8px 0; }
+.atlas-setup { max-width: 680px; padding: 24px; margin: 0 auto; overflow-wrap: anywhere; }
+.atlas-setup pre { background: var(--sky-1); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
 .atlas-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 14px; }
 .atlas-section { margin-top: 30px; }
 .atlas-section > h2, .atlas-root-sections > h2, .atlas-side-block > h2, .atlas-pulse > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font: 600 13px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }

@@ -44,10 +44,6 @@ export function normalizeConfig(raw = {}) {
 
 export function apply(ctx, rawConfig) {
   const settings = normalizeConfig(rawConfig);
-  if (!settings.root) {
-    console.warn('[aitp-atlas] no research root configured; set `root` in the aitp-atlas config.');
-    return;
-  }
   const store = createStore(settings);
   const routes = routeTable(store);
   const register = (web) => {
@@ -68,7 +64,9 @@ export function apply(ctx, rawConfig) {
       }
     }
     // Read the tree in the background so the first view opens quickly.
-    void store.get().catch((error) => console.error('[aitp-atlas] could not read the research root:', error.message));
+    if (settings.root) void store.get().catch((error) => {
+      if (!error.setup) console.error('[aitp-atlas] could not read the research root:', error.message);
+    });
   };
   if (typeof ctx.inject === 'function') ctx.inject(['webServer'], register);
 }

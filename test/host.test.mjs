@@ -69,6 +69,47 @@ async function call(routes, method, name, { query = '', body, headers, cookie = 
 
 const q = (path) => 'path=' + encodeURIComponent(path);
 
+test('host: first use initializes the configured folder without overwriting a root note', async () => {
+  const fx = await makeFixture();
+  try {
+    const unconfigured = fakeContext();
+    apply(unconfigured.ctx, {});
+    assert.equal((await call(unconfigured.routes, 'GET', 'overview')).json.error.code, 'unconfigured');
+    assert.deepEqual([...unconfigured.routes.keys()], ['/aitp-atlas/api/overview']);
+
+    const root = fx.file('new workspace');
+    const file = path.join(root, 'research.md');
+    const { ctx, routes } = fakeContext();
+    apply(ctx, { root });
+    assert.equal((await call(routes, 'GET', 'overview')).json.error.code, 'missing-folder');
+    assert.equal((await call(routes, 'POST', 'workspace/init', { body: {} })).status, 404);
+    await fsp.mkdir(root);
+    assert.equal((await call(routes, 'GET', 'overview')).json.error.code, 'missing-note');
+    assert.equal((await call(routes, 'POST', 'workspace/init', { body: {}, cookie: false })).status, 401);
+    assert.equal((await call(routes, 'POST', 'workspace/init', { body: { path: fx.root } })).status, 400);
+    assert.deepEqual(await fsp.readdir(root), []);
+
+    const initialize = () => call(routes, 'POST', 'workspace/init', { body: {} });
+    const responses = await Promise.all([initialize(), initialize()]);
+    assert.deepEqual(responses.map(({ status }) => status).sort(), [201, 409]);
+    assert.equal(responses.find(({ status }) => status === 201).json.path, file);
+    const saved = await fsp.readFile(file, 'utf8');
+    assert.match(saved, /^# Research programme\n/);
+    const opened = await call(routes, 'GET', 'overview', { query: 'fresh=1' });
+    assert.equal(opened.status, 200);
+    assert.equal(opened.json.rootFile, file);
+    assert.equal(await fsp.readFile(file, 'utf8'), saved);
+
+    const existing = fakeContext();
+    apply(existing.ctx, { root: fx.root });
+    const before = await fsp.readFile(fx.file('topics/research.md'), 'utf8');
+    assert.equal((await call(existing.routes, 'POST', 'workspace/init', { body: {} })).status, 409);
+    assert.equal(await fsp.readFile(fx.file('topics/research.md'), 'utf8'), before);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
 test('host: authenticated routes, sorted contents, in-app documents and folders', async () => {
   const fx = await makeFixture();
   try {
@@ -76,7 +117,7 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'write']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'save', 'search', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
     for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
@@ -176,7 +217,7 @@ test('host: the editor creates and saves notes, and never overwrites a changed f
   }
 });
 
-test('host: without DSH authentication only this computer is answered; no root, no routes', async () => {
+test('host: without DSH authentication only this computer is answered', async () => {
   const fx = await makeFixture();
   try {
     // While DSH may still be mounting its sign-in service, nothing is answered.
@@ -188,9 +229,6 @@ test('host: without DSH authentication only this computer is answered; no root, 
     apply(h.ctx, { root: fx.root, authGraceMs: 0 });
     assert.equal((await call(h.routes, 'GET', 'overview', { cookie: false })).status, 200);
     assert.equal((await call(h.routes, 'GET', 'overview', { cookie: false, headers: { host: 'atlas.attacker.example:3000' } })).status, 403);
-    const none = fakeContext();
-    apply(none.ctx, { root: '' });
-    assert.equal(none.routes.size, 0);
     const settings = normalizeConfig({ root: '/r', writeIndex: true, guard: true, maxAgeSeconds: 2 });
     assert.deepEqual(Object.keys(settings).sort(), ['authGraceMs', 'exclude', 'excludePaths', 'knowledge', 'library', 'maxAgeSeconds', 'proxy', 'request', 'root', 'stateDir', 'theme', 'themes', 'web']);
     assert.deepEqual([settings.theme, settings.themes], ['auto', {}], 'auto follows DSH unless the config names a theme');

@@ -500,6 +500,37 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'atlas-page' }, h('div', { className: 'atlas-loading', role: 'status' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), label || 'Reading the research…'));
     }
 
+    function WorkspaceSetup({ setup, onRetry }) {
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const initialize = async () => {
+        setBusy(true);
+        setError('');
+        try {
+          await api('workspace/init', { method: 'POST', body: {} });
+          onRetry();
+        } catch (cause) {
+          setError(cause.message);
+        } finally {
+          setBusy(false);
+        }
+      };
+      return h('section', { className: 'atlas-setup' },
+        h('h2', null, 'Set up your research workspace'),
+        setup.code === 'unconfigured' ? h(React.Fragment, null,
+          h('p', null, 'Choose an existing folder on the machine running DSH. Set its absolute path in the profile’s ', h('code', null, 'cordis.patch.yml'), ' and restart DSH.'),
+          h('pre', null, '- id: aitp-atlas\n  name: aitp-atlas\n  config:\n    root: /absolute/path/to/workspace'))
+          : h(React.Fragment, null,
+            h('p', null, 'Configured folder: ', h('code', null, setup.root)),
+            setup.code === 'missing-note'
+              ? h('p', null, 'Open an existing AITP workspace by restoring its ', h('code', null, 'research.md'), ' here, or initialize this folder with a starter note.')
+              : h('p', null, setup.code === 'missing-folder' ? 'This folder is unavailable. Create it or update the profile’s root path and restart DSH.' : 'Atlas needs a readable research.md file at this path. Repair the existing entry and try again.')),
+        h('div', { className: 'atlas-actions' },
+          setup.code === 'missing-note' ? h(Button, { primary: true, disabled: busy, onClick: initialize }, busy ? 'Initializing…' : 'Initialize workspace') : null,
+          h(Button, { quiet: true, disabled: busy, onClick: onRetry }, 'Read workspace again')),
+        error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null);
+    }
+
     function ErrorNote({ error, onRetry }) {
       if (!error) return null;
       return h('div', { className: 'atlas-page' },
@@ -1105,7 +1136,9 @@ window.__ModuleLoader__.load({
             ov.lead ? h('p', { className: 'atlas-lede' }, ov.lead) : null,
             h('dl', { className: 'atlas-stats' }, stats.map(([n, label]) => h('div', { key: label }, h('dt', null, label), h('dd', null, n))))),
           h('div', { className: 'atlas-hero-actions' },
-            h(AskMenu, { asks: [
+            h(AskMenu, { asks: total.topics === 0 ? [
+              { key: 'first-topic', label: 'Start a research topic', hint: 'Use AITP Skills if installed', prompt: 'Help me start my first research topic in this workspace. Use aitp-memory if available. Ask me what question the topic should answer, then create its research.md and link it from the root note once we agree.' },
+            ] : [
               { key: 'next', label: 'What should I work on next?', hint: 'Across all directions', prompt: 'Look across my research programme and tell me which topic most deserves the next session, and why.' },
               { key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' },
               { key: 'idea', label: 'Develop a new idea', hint: 'From a seed to a concrete project', prompt: "I have a research idea I'd like to develop into a concrete project. Let's brainstorm it: I'll describe it next." },
@@ -5393,8 +5426,11 @@ window.__ModuleLoader__.load({
       // ---- what each tab shows ----
       let body;
       if (overview.loading && !overview.data) body = h(Loading);
-      else if (overview.error) body = h(ErrorNote, { error: overview.error, onRetry: () => setVersion(Date.now()) });
-      else {
+      else if (overview.error) {
+        const setup = overview.error.body && overview.error.body.error;
+        const onRetry = () => setVersion(Date.now());
+        body = setup && setup.code ? h(WorkspaceSetup, { setup, onRetry }) : h(ErrorNote, { error: overview.error, onRetry });
+      } else {
         const props = { overview: overview.data, go, flash, filter, version };
         if (route.view === 'doc' && route.path) body = h(DocView, { ...props, key: route.path + (route.edit ? ':edit' : ''), path: route.path, edit: route.edit, created: route.created, anchor: route.anchor, anchorAt: route.at });
         else if (route.view === 'library') body = h(LibraryView, { ...props, tab: route.tab, focusAdd: route.add });
@@ -5587,6 +5623,8 @@ window.__ModuleLoader__.load({
     .atlas-muted { color: var(--ink-3); }
     .atlas-count { margin-left: 8px; font: 500 12px var(--sans); color: var(--ink-3); }
     .atlas-empty { color: var(--ink-3); margin: 8px 0; }
+    .atlas-setup { max-width: 680px; padding: 24px; margin: 0 auto; overflow-wrap: anywhere; }
+    .atlas-setup pre { background: var(--sky-1); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
     .atlas-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 14px; }
     .atlas-section { margin-top: 30px; }
     .atlas-section > h2, .atlas-root-sections > h2, .atlas-side-block > h2, .atlas-pulse > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font: 600 13px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }

@@ -133,18 +133,21 @@ words, never your files. Requests go through the proxy in `HTTPS_PROXY`/`HTTP_PR
 
 ## Install
 
-Atlas needs DeepSeek Harness 0.2.2 or later, and research kept the AITP way
-([AITP-Research-Protocol](https://github.com/bhjia-phys/AITP-Research-Protocol)). Clone it, quit DSH
-completely, then link the folder into your profile:
+1. Use a compatible DeepSeek Harness release (0.2.2 or a later compatible 0.2.x release).
+   In DSH, open **Plugins → Add plugin** and enter the absolute path to the Atlas `.tgz` file.
+   From a shell with DSH on the path, use `dsh plugin --profile desktop add /path/to/aitp-atlas-0.9.1.tgz`.
+   Use `--profile web` for a web installation. The package includes the compiled client and PDF reader.
+2. Choose an existing research folder on the host running DSH. In that profile's `cordis.patch.yml`
+   (normally under `~/.dsh/profiles/<profile>/`), add the entry below and restart DSH. On Windows,
+   use a drive path such as `C:/Research/topics` or a Windows-accessible WSL path as in the example.
+3. Open **Atlas** in the sidebar. If the folder already contains its AITP `research.md`, Atlas
+   opens it directly. For a fresh workspace, click **Initialize workspace** to create a starter
+   `research.md` in that folder. Choose **Start a research topic** to open a discussion about the first
+   topic. With the [AITP Skills](https://github.com/bhjia-phys/AITP-Research-Protocol) in the same
+   profile, the discussion can use `aitp-memory` to set up the topic and link it to the root note.
 
-```powershell
-git clone https://github.com/bhjia-phys/aitp-atlas C:/path/to/aitp-atlas
-$dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
-& $dsh plugin --profile desktop add link:C:/path/to/aitp-atlas
-```
-
-Then set the research root in the profile's `cordis.patch.yml` (an id-targeted patch replaces the
-whole config, so restate every field you change):
+An id-targeted patch replaces the whole config. If `id: aitp-atlas` is already present, update
+that entry and retain any settings you want to keep.
 
 ```yaml
 - id: aitp-atlas
@@ -168,16 +171,20 @@ the `status-*` dots and the `*-rgb` tints); a value must be a color (`#hex`, `rg
 `r, g, b` for an `-rgb` token. Anything else is ignored. The top bar's theme button walks Auto, Day,
 Night and then your own themes, and remembers the choice per window.
 
-`knowledge` defaults to the folder of the `index.md` that the root note links to, then
-`../knowledge`; `library` defaults to `<knowledge>/library`. Agent teams need DSH's Agent Teams;
-their roles and model tiers come from [Oh-My-BBFF](https://github.com/BB-84C/Oh-My-BBFF) Team.
+With an explicit `knowledge` path, Atlas uses that collection. Otherwise it checks the external
+`index.md` linked from the root note, then an existing sibling `../knowledge`. In a fresh workspace
+with neither, Atlas uses `knowledge/` inside the research root and creates directories as needed
+when you add material. Added papers default to `<knowledge>/library`. Agent teams need DSH's
+Agent Teams, with roles and model tiers supplied by
+[Oh-My-BBFF](https://github.com/BB-84C/Oh-My-BBFF) Team.
 
 ## Develop
 
 ```sh
 node build-client.mjs   # client.js from client/*.js
 npm test                # reader, host, client, web, LaTeX and review tests (a real WSL build when TeX is there)
-npm run test:dsh        # inside a throwaway DSH: headless, web with sign-in, the editor
+npm pack                # installable .tgz, with a check that the compiled client is current
+npm run test:dsh -- ./aitp-atlas-0.9.1.tgz  # test the package in isolated DSH profiles
 ```
 
 `client/*.js` are concatenated, in file-name order, into one factory scope inside DSH's module

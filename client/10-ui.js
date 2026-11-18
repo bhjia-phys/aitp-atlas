@@ -76,6 +76,37 @@ function Loading({ label }) {
   return h('div', { className: 'atlas-page' }, h('div', { className: 'atlas-loading', role: 'status' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), label || 'Reading the research…'));
 }
 
+function WorkspaceSetup({ setup, onRetry }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const initialize = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api('workspace/init', { method: 'POST', body: {} });
+      onRetry();
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return h('section', { className: 'atlas-setup' },
+    h('h2', null, 'Set up your research workspace'),
+    setup.code === 'unconfigured' ? h(React.Fragment, null,
+      h('p', null, 'Choose an existing folder on the machine running DSH. Set its absolute path in the profile’s ', h('code', null, 'cordis.patch.yml'), ' and restart DSH.'),
+      h('pre', null, '- id: aitp-atlas\n  name: aitp-atlas\n  config:\n    root: /absolute/path/to/workspace'))
+      : h(React.Fragment, null,
+        h('p', null, 'Configured folder: ', h('code', null, setup.root)),
+        setup.code === 'missing-note'
+          ? h('p', null, 'Open an existing AITP workspace by restoring its ', h('code', null, 'research.md'), ' here, or initialize this folder with a starter note.')
+          : h('p', null, setup.code === 'missing-folder' ? 'This folder is unavailable. Create it or update the profile’s root path and restart DSH.' : 'Atlas needs a readable research.md file at this path. Repair the existing entry and try again.')),
+    h('div', { className: 'atlas-actions' },
+      setup.code === 'missing-note' ? h(Button, { primary: true, disabled: busy, onClick: initialize }, busy ? 'Initializing…' : 'Initialize workspace') : null,
+      h(Button, { quiet: true, disabled: busy, onClick: onRetry }, 'Read workspace again')),
+    error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null);
+}
+
 function ErrorNote({ error, onRetry }) {
   if (!error) return null;
   return h('div', { className: 'atlas-page' },

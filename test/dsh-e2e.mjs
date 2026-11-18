@@ -9,17 +9,19 @@
  *   3. the research tree is byte-for-byte unchanged.
  *
  * Needs an installed DSH desktop (set DSH_EXE and DSH_CLI otherwise); without
- * one it reports SKIP. Run: `node test/dsh-e2e.mjs`.
+ * one it reports SKIP. Run: `node test/dsh-e2e.mjs [path-to-package.tgz]`.
  */
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, promises as fsp } from 'node:fs';
+import { once } from 'node:events';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, snapshot } from './fixture.mjs';
 
 const here = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const installTarget = process.argv[2] ? path.resolve(process.argv[2]) : here;
 const appDir = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness');
 const dshExe = process.env.DSH_EXE || path.join(appDir, 'DeepSeek Harness.exe');
 const dshCli = process.env.DSH_CLI || path.join(appDir, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
@@ -99,7 +101,7 @@ const request = (port, name, { query = '', cookie, method = 'GET', body, headers
     });
   });
   req.on('error', reject);
-  if (body) req.write(JSON.stringify(body));
+  if (body) req.write(Buffer.isBuffer(body) ? body : JSON.stringify(body));
   req.end();
 });
 /** Open DSH's launch link the way a browser does, keeping the signed cookie it sets. */
@@ -112,33 +114,11 @@ const signIn = (url) => new Promise((resolve, reject) => {
 });
 
 let web = null;
-try {
-  const tree = async () => ({ ...(await snapshot(fx.root)), ...(await snapshot(fx.knowledge)) });
-  const research = await tree();
+let nextPort = 47000 + Math.floor(Math.random() * 900);
 
-  const overlay = path.join(fx.base, 'overlay.yml');
-  await fsp.writeFile(overlay, ['- id: aitp-atlas', '  config:', `    root: ${JSON.stringify(fx.root)}`, ''].join('\n'), 'utf8');
-
-  // 1. headless
-  const installed = await dsh(['plugin', '--profile', 'headless', 'add', here], fx.base);
-  assert.equal(installed.code, 0, `dsh plugin add failed:\n${installed.stderr}\n${installed.stdout}`);
-  ok('installs into a throwaway headless profile');
-  const run = await dsh(['--profile', 'headless', '--patch', overlay, '--json', 'Where does the worm topic stand?'], fx.root);
-  assert.equal(run.code, 0, `headless run failed:\n${run.stderr}`);
-  assert.doesNotMatch(run.stderr, /did not activate|aitp-atlas.*(failed|error)/i, run.stderr);
-  ok('activates in the headless profile, which has no web server');
-  const turns = requests.filter((body) => Array.isArray(body.messages));
-  assert.ok(turns.length > 0, 'the mock model was called');
-  const text = JSON.stringify(turns);
-  assert.ok(turns.every((body) => (body.tools || []).every((tool) => !String(tool.name).startsWith('aitp_'))), 'no Atlas tools are offered');
-  assert.doesNotMatch(text, /AITP research memory|# Research memory|aitp_(bearings|recall|card|remember|paper|check|dream)/, 'no Atlas prompt section or injected memory');
-  ok('gives the model nothing: no tools, no prompt section, no injected memory');
-
-  // 2. web
-  const webInstalled = await dsh(['plugin', '--profile', 'web', 'add', here], fx.base);
-  assert.equal(webInstalled.code, 0, `dsh plugin add (web) failed:\n${webInstalled.stderr}`);
-  const port = 47000 + Math.floor(Math.random() * 900);
-  web = spawn(dshExe, ['--expose-internals', dshCli, '--profile', 'web', '--patch', overlay, '--no-open', '--port', String(port)], { cwd: fx.base, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+async function startWeb(patch) {
+  const port = nextPort++;
+  web = spawn(dshExe, ['--expose-internals', dshCli, '--profile', 'web', '--patch', patch, '--no-open', '--port', String(port)], { cwd: fx.base, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   web.stdout.on('data', (c) => { log += c; });
   web.stderr.on('data', (c) => { log += c; });
@@ -155,8 +135,58 @@ try {
   assert.ok(launch, 'dsh printed its launch link');
   const cookie = await signIn(launch[1]);
   assert.ok(cookie, 'the launch link sets the browser cookie');
+  return { port, cookie, call: (name, options) => request(port, name, { cookie, ...options }) };
+}
+
+async function stopWeb() {
+  const host = web;
+  web = null;
+  if (!host || host.exitCode !== null || host.signalCode !== null) return;
+  const exited = once(host, 'exit');
+  host.kill();
+  await exited;
+}
+
+try {
+  const tree = async () => ({ ...(await snapshot(fx.root)), ...(await snapshot(fx.knowledge)) });
+  const beforeHeadless = await tree();
+
+  const overlay = path.join(fx.base, 'overlay.yml');
+  await fsp.writeFile(overlay, ['- id: aitp-atlas', '  config:', `    root: ${JSON.stringify(fx.root)}`, ''].join('\n'), 'utf8');
+
+  // 1. headless
+  const installed = await dsh(['plugin', '--profile', 'headless', 'add', installTarget], fx.base);
+  assert.equal(installed.code, 0, `dsh plugin add failed:\n${installed.stderr}\n${installed.stdout}`);
+  ok('installs into a throwaway headless profile');
+  const run = await dsh(['--profile', 'headless', '--patch', overlay, '--json', 'Where does the worm topic stand?'], fx.root);
+  assert.equal(run.code, 0, `headless run failed:\n${run.stderr}`);
+  assert.doesNotMatch(run.stderr, /did not activate|aitp-atlas.*(failed|error)/i, run.stderr);
+  ok('activates in the headless profile, which has no web server');
+  const turns = requests.filter((body) => Array.isArray(body.messages));
+  assert.ok(turns.length > 0, 'the mock model was called');
+  const text = JSON.stringify(turns);
+  assert.ok(turns.every((body) => (body.tools || []).every((tool) => !String(tool.name).startsWith('aitp_'))), 'no Atlas tools are offered');
+  assert.doesNotMatch(text, /AITP research memory|# Research memory|aitp_(bearings|recall|card|remember|paper|check|dream)/, 'no Atlas prompt section or injected memory');
+  assert.deepEqual(await tree(), beforeHeadless);
+  ok('gives the model nothing: no tools, no prompt section, no injected memory');
+
+  // 2. web
+  const webInstalled = await dsh(['plugin', '--profile', 'web', 'add', installTarget], fx.base);
+  assert.equal(webInstalled.code, 0, `dsh plugin add (web) failed:\n${webInstalled.stderr}`);
+  const rootNote = fx.file('topics/research.md');
+  const rootNoteContents = await fsp.readFile(rootNote);
+  await fsp.unlink(rootNote);
+  const { port, cookie } = await startWeb(overlay);
   ok('DSH guards the Atlas API: 401 without sign-in, open after the launch link');
-  const overview = await request(port, 'overview', { cookie });
+  const setup = await request(port, 'overview', { cookie });
+  assert.equal(setup.json?.error?.code, 'missing-note', setup.text);
+  const init = await request(port, 'workspace/init', { cookie, method: 'POST', body: {} });
+  assert.equal(init.status, 201, init.text);
+  assert.match(await fsp.readFile(rootNote, 'utf8'), /^# Research programme\n/);
+  ok('the installed web bundle initializes a configured workspace on request');
+  await fsp.writeFile(rootNote, rootNoteContents);
+  const research = await tree();
+  const overview = await request(port, 'overview', { cookie, query: 'fresh=1' });
   assert.equal(overview.status, 200);
   assert.equal(overview.json.title, 'Research programme');
   assert.deepEqual(overview.json.directions.map((d) => d.topics), [['mc/worm', 'mc/continuation'], ['topology'], []]);
@@ -189,9 +219,52 @@ try {
   const foreign = await request(port, 'save', { method: 'POST', cookie, body: { path: fresh, text: 'x', overwrite: true }, headers: { origin: 'http://attacker.example' } });
   assert.equal(foreign.status, 403);
   ok('the editor creates a note, refuses a stale save and a foreign origin');
+
+  // 4. Begin with an empty tree, create the first topic, use its library, and restart DSH.
+  await stopWeb();
+  const newRoot = fx.file('fresh-workspace/topics');
+  await fsp.mkdir(newRoot, { recursive: true });
+  const newOverlay = fx.file('fresh-workspace.yml');
+  await fsp.writeFile(newOverlay, `- id: aitp-atlas\n  config:\n    root: ${JSON.stringify(newRoot)}\n    web: false\n`);
+  const freshHost = await startWeb(newOverlay);
+  const post = (name, body, options) => freshHost.call(name, { method: 'POST', body, ...options });
+  assert.equal((await post('workspace/init', {})).status, 201);
+  const newRootNote = path.join(newRoot, 'research.md');
+  assert.deepEqual(await fsp.readdir(newRoot), ['research.md']);
+  const firstTopic = path.join(newRoot, 'edge-modes', 'research.md');
+  const reading = path.join(newRoot, 'edge-modes', 'notes', 'symmetry.md');
+  const readingText = '# Boundary symmetry\n\nThe boundary conditions determine the allowed symmetry.\n';
+  assert.equal((await post('save', { path: firstTopic, create: true, text: '# Edge modes\n\n[Programme](../research.md)\n\n[Boundary symmetry](notes/symmetry.md)\n' })).status, 200);
+  assert.equal((await post('save', { path: reading, create: true, text: readingText })).status, 200);
+  const newRootDoc = await freshHost.call('note', { query: `path=${encodeURIComponent(newRootNote)}` });
+  const programme = newRootDoc.json.raw.replace('## Research directions', '## Topological phases\n\n- [Edge modes](edge-modes/research.md)');
+  assert.equal((await post('save', { path: newRootNote, text: programme, mtimeMs: newRootDoc.json.mtimeMs })).status, 200);
+  const freshOverview = await freshHost.call('overview', { query: 'fresh=1' });
+  assert.deepEqual(freshOverview.json.directions[0].topics, ['edge-modes']);
+  assert.equal((await freshHost.call('note', { query: `path=${encodeURIComponent(reading)}` })).json.raw, readingText);
+  ok('a truly empty workspace can begin and link a topic and save its supporting note');
+
+  const savedSearch = await post('discover/save', { searches: [{ query: 'edge modes' }] });
+  assert.equal(savedSearch.status, 200, savedSearch.text);
+  const library = path.join(newRoot, 'knowledge', 'library');
+  const files = path.join(library, 'files');
+  const attachment = await fsp.readFile(fx.file('topics/topology/readings/thouless.pdf'));
+  const upload = await post('upload', attachment, { query: new URLSearchParams({ dir: files, name: 'reading.pdf' }).toString(), headers: { 'content-type': 'application/octet-stream' } });
+  assert.equal(upload.status, 200, upload.text);
+  const attachmentPath = path.join(files, 'reading.pdf');
+  assert.deepEqual(await fsp.readFile(attachmentPath), attachment);
+  ok('the fresh workspace creates its library on demand and can import a local file');
+
+  await stopWeb();
+  const restarted = await startWeb(newOverlay);
+  assert.deepEqual((await restarted.call('overview')).json.directions[0].topics, ['edge-modes']);
+  assert.equal((await restarted.call('note', { query: `path=${encodeURIComponent(reading)}` })).json.raw, readingText);
+  assert.equal((await restarted.call('discover')).json.searches[0].query, 'edge modes');
+  assert.equal((await restarted.call('raw', { query: `path=${encodeURIComponent(attachmentPath)}`, headers: { range: 'bytes=0-3' } })).text, '%PDF');
+  ok('restarting DSH restores the new topic, note, saved search and PDF');
   console.log(`ATLAS DSH E2E OK (${checks} checks)`);
 } finally {
-  if (web) web.kill();
+  await stopWeb();
   model.close();
   await new Promise((resolve) => setTimeout(resolve, 500));
   await fx.cleanup().catch(() => {});

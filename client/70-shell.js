@@ -565,8 +565,11 @@ function AtlasApp() {
   // ---- what each tab shows ----
   let body;
   if (overview.loading && !overview.data) body = h(Loading);
-  else if (overview.error) body = h(ErrorNote, { error: overview.error, onRetry: () => setVersion(Date.now()) });
-  else {
+  else if (overview.error) {
+    const setup = overview.error.body && overview.error.body.error;
+    const onRetry = () => setVersion(Date.now());
+    body = setup && setup.code ? h(WorkspaceSetup, { setup, onRetry }) : h(ErrorNote, { error: overview.error, onRetry });
+  } else {
     const props = { overview: overview.data, go, flash, filter, version };
     if (route.view === 'doc' && route.path) body = h(DocView, { ...props, key: route.path + (route.edit ? ':edit' : ''), path: route.path, edit: route.edit, created: route.created, anchor: route.anchor, anchorAt: route.at });
     else if (route.view === 'library') body = h(LibraryView, { ...props, tab: route.tab, focusAdd: route.add });
