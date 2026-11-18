@@ -198,6 +198,11 @@ function contextBlock(c) {
   if (c.page) lines.push(`- Page: ${c.page}`);
   if (c.beside) lines.push(`- Open beside it: ${c.beside.label}: ${c.beside.title} — ${c.beside.path}`);
   for (const a of threadAttachments(c.attachments)) lines.push(`- Attached: ${a.label} — ${a.path}`);
+  if (c.routing && ['auto', 'none'].includes(c.routing.filing)) {
+    const names = (c.routing.candidates || []).slice(0, 3).map(v => v.topic?.title).filter(Boolean);
+    lines.push(`- Candidate topics: ${names.join(', ') || 'None'}.`);
+    lines.push(`${c.routing.filing === 'auto' && c.topic ? `Atlas filed this under ${c.topic.title}` : 'Atlas left it unfiled'}. If another topic fits better, say so in your first sentence.`);
+  }
   if (c.selection) {
     lines.push('- Selected passage:');
     for (const line of String(c.selection).split('\n').slice(0, 80)) lines.push(`  > ${line}`);

@@ -25,7 +25,26 @@ function layoutDeskSky(ov, { paneWidth = 1120, hasDraft = false } = {}) {
   return { ...g, dust, bandHeight, skyHeight, skyBottom, scale, stacked, greetingWidth, greetingY: bandHeight - skyBottom - (330 - 188) * scale, showNames: paneWidth >= 900 };
 }
 
-function DeskSky({ ov, go, hasDraft, onDiscuss }) {
+// Radial LED trail is data, not decoration: no resolved target, no path.
+function deskRouteSky(g, routedId, candidates = []) {
+  const selected = g.stars.find((s) => s.id === routedId);
+  const ids = new Set(candidates.map((c) => c.topic.id));
+  const others = g.stars.filter((s) => s !== selected && ids.has(s.id));
+  if (!selected) return { others, selected: null, path: '', label: null };
+  const { x, y } = selected, dx = x - g.cx, dy = y - g.cy;
+  const path = `M${g.cx} ${g.cy} C${g.cx + dx * 0.35} ${g.cy + dy * 0.05},${x - dx * 0.12} ${y - dy * 0.32},${x} ${y}`;
+  const text = shortTitle(selected.t.title, 28), length = Math.min(220, [...text].length * 7.2);
+  const labelX = Math.max(8 + length / 2, Math.min(g.width - 8 - length / 2, x));
+  const overlaps = (a, b) => a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
+  const blockers = [g.keepOut, ...g.labels.map((l) => l.bounds), ...g.stars.map((s) => ({ left: s.x - 10, right: s.x + 10, top: s.y - 10, bottom: s.y + 10 }))];
+  for (const labelY of [y - 18, y + 18, y - 34]) {
+    const box = { left: labelX - length / 2, right: labelX + length / 2, top: labelY - 10, bottom: labelY + 10 };
+    if (box.top >= 0 && box.bottom < g.cy && !blockers.some((b) => overlaps(box, b))) return { others, selected, path, label: { x: labelX, y: labelY, text, length } };
+  }
+  return { others, selected, path, label: null };
+}
+
+function DeskSky({ ov, go, hasDraft, routedId, candidates, onDiscuss }) {
   const host = useRef(null), card = useAtlasStarCard(host), id = React.useId();
   const [width, setWidth] = useState(1120);
   useLayoutEffect(() => {
@@ -37,6 +56,7 @@ function DeskSky({ ov, go, hasDraft, onDiscuss }) {
     const ro = new ResizeObserver(readWidth); ro.observe(el); return () => ro.disconnect();
   }, []);
   const g = useMemo(() => layoutDeskSky(ov, { paneWidth: width, hasDraft }), [ov, width, hasDraft]);
+  const routed = deskRouteSky(g, routedId, candidates);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(timer); }, []);
   const hour = now.getHours(), greeting = hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
@@ -48,7 +68,13 @@ function DeskSky({ ov, go, hasDraft, onDiscuss }) {
       h('rect', { width: 1000, height: 330, fill: `url(#${id}-sun)` }),
       h('g', { 'aria-hidden': true, fill: 'var(--star)', opacity: 0.35 }, g.dust.map((d, i) => h('circle', { key: i, cx: d.x, cy: d.y, r: d.r }))),
       h('g', { 'aria-hidden': true, stroke: 'var(--sky-line-2)' }, h('line', { x1: 20, y1: 312, x2: 980, y2: 312 }), Array.from({ length: 9 }, (_, i) => h('line', { key: i, x1: 60 + i * 110, x2: 60 + i * 110, y1: 312, y2: i === 4 ? 303 : 306 }))),
-      h(ChartMarks, { g, ov, onOpen: open, onPoint: card.point, onLeave: card.leave, onInspect: card.inspect, hoverSector: card.tip?.star.sector })),
+      h(ChartMarks, { g, ov, onOpen: open, onPoint: card.point, onLeave: card.leave, onInspect: card.inspect, hoverSector: card.tip?.star.sector }),
+      h('g', { 'aria-hidden': true, pointerEvents: 'none' },
+        routed.others.map((s) => h('circle', { key: s.id, cx: s.x, cy: s.y, r: 7, fill: 'var(--accent-soft)' })),
+        routed.selected ? h(React.Fragment, null,
+          h('defs', null, h('radialGradient', { id: id + '-halo' }, h('stop', { offset: 0, stopColor: 'var(--accent)', stopOpacity: 0.55 }), h('stop', { offset: 1, stopColor: 'var(--accent)', stopOpacity: 0 }))),
+          h('path', { d: routed.path, className: 'atlas-desk-route-path' }), h('circle', { cx: routed.selected.x, cy: routed.selected.y, r: 16, fill: `url(#${id}-halo)` }), h('circle', { cx: routed.selected.x, cy: routed.selected.y, r: 3.6, fill: 'var(--accent)' }),
+          routed.label && g.showNames ? h('text', { className: 'atlas-desk-route-name', x: routed.label.x, y: routed.label.y, textLength: routed.label.length, lengthAdjust: 'spacingAndGlyphs', textAnchor: 'middle', dominantBaseline: 'central' }, routed.label.text) : null) : null)),
     h('header', { className: 'atlas-desk-greeting', style: g.stacked ? undefined : { top: g.greetingY, width: g.greetingWidth } }, h('p', { title: `${ov.title} · ${date}` }, `${ov.title} · ${date}`), h('h1', null, greeting)),
     h(ChartCard, { state: card, onOpen: open, onDiscuss }));
 }

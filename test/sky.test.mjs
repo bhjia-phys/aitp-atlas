@@ -11,7 +11,7 @@ import { makeFixture } from './fixture.mjs';
 const modules = ['00-runtime', '10-ui', '20-universe', '21-desk', '22-sky', '30-topic', '47-paper', '60-threads', '65-activity'];
 const body = modules.map((name) => readFileSync(new URL(`../client/${name}.js`, import.meta.url), 'utf8')).join('\n');
 const data = new Map();
-const c = new Function('require', 'window', `${body}\nreturn {layoutDeskSky, layoutUniverse, deskAlmanacData, deskDraft, deskAttachment, storageSet};`)(
+const c = new Function('require', 'window', `${body}\nreturn {layoutDeskSky, layoutUniverse, deskAlmanacData, deskDraft, deskAttachment, deskRouteKey, createDeskRouting, deskFiling, deskRouteSky, contextBlock, storageSet};`)(
   (name) => name === 'react' ? { createContext: () => ({}), Component: class {} } : {},
   { localStorage: { getItem: (k) => data.get(k), setItem: (k, v) => data.set(k, v) } },
 );
@@ -131,6 +131,69 @@ test('almanac: only actual open records, no resolved/archived/missing/foreign se
   assert.deepEqual(c.deskAlmanacData({ topics: {} }, records, null).running, []);
 });
 
+test('routing identity: send flushes one exact draft; stale success/failure cannot overwrite manual choice', async () => {
+  const requests = [], painted = [];
+  const router = c.createDeskRouting((q, signal) => new Promise((ok, fail) => requests.push({ q, signal, ok, fail })), (v) => painted.push(v));
+  try {
+    const old = 'question about a worm', next = 'subsequent analytic continuation';
+    assert.equal(c.deskRouteKey('too short', null), '');
+    assert.equal(c.deskRouteKey(old, 'pinned'), '');
+    assert.equal(c.deskRouteKey(old, ''), '');
+    assert.equal(c.deskRouteKey(old, null), old);
+    router.select(old);
+    assert.equal(requests.length, 0, 'keystrokes debounce by default');
+    const first = router.flush(old), again = router.flush(old);
+    assert.equal(first, again, 'send shares pending request'); await Promise.resolve();
+    router.select(next); const current = router.flush(next); await Promise.resolve();
+    assert.ok(requests[0].signal.aborted);
+    requests[1].ok({ candidates: [], confident: false }); await current;
+    requests[0].ok({ candidates: [{ topic: { id: 'old' } }], confident: true });
+    assert.equal(await first, null); assert.deepEqual(painted.map((r) => r.key), [next]);
+    const failed = router.flush(old); await Promise.resolve(); router.select('');
+    requests[2].fail(Error('old request failed')); assert.equal(await failed, null);
+    assert.equal(painted.length, 1, 'pinning cancels both successful and failed stale attempts');
+    const down = router.flush(old); await Promise.resolve(); requests[3].fail(Error('offline'));
+    assert.deepEqual(await down, { key: old, candidates: [], confident: false, unavailable: true });
+  } finally { router.clear(); }
+});
+
+test('Auto, pinned and explicitly unfiled instructions use matching topic IDs; only a real target draws a route', async () => {
+  const ov = await readFixtureOverview(), g = c.layoutDeskSky(ov);
+  const result = { confident: true, candidates: ['mc/worm', 'mc/worm/stability'].map((id) => ({ topic: { id }, score: 4, reasons: ['worm'] })) };
+  const yes = c.deskFiling(ov, null, result), uncertain = c.deskFiling(ov, null, { ...result, confident: false });
+  assert.deepEqual([yes.topicId, yes.filing], ['mc/worm', 'auto']);
+  assert.deepEqual([uncertain.topicId, uncertain.filing], [null, 'none']);
+  assert.equal(uncertain.candidates.length, 2, 'DK-13 keeps alternatives even when nothing is filed');
+  assert.deepEqual(c.deskFiling(ov, '', result), { topicId: null, filing: 'none', candidates: [] });
+  assert.deepEqual(c.deskFiling(ov, 'topology', result), { topicId: 'topology', filing: 'user', candidates: [] });
+  const routed = c.deskRouteSky(g, yes.topicId, yes.candidates);
+  assert.equal(routed.selected.id, yes.topicId); assert.ok(routed.path.endsWith(`${routed.selected.x} ${routed.selected.y}`));
+  assert.deepEqual(routed.others.map((s) => s.id), ['mc/worm/stability']);
+  assert.equal(c.deskRouteSky(g, null, result.candidates).path, '');
+  assert.equal(c.deskFiling(ov, null, { confident: true, candidates: [{ topic: { id: 'deleted' } }] }).topicId, null);
+});
+
+test('DK-13: actual first-message context includes candidates and explicit advice when auto-filed or unfiled', () => {
+  const candidates = [{ topic: { id: 'a', title: 'Worm' } }, { topic: { id: 'b', title: 'Sampling' } }];
+  const ov = { topics: { a: { id: 'a', path: '/a', title: 'Worm' }, b: { id: 'b', path: '/b', title: 'Sampling' } } };
+  for (const confident of [true, false]) {
+    const filing = c.deskFiling(ov, null, { candidates, confident });
+    const block = c.contextBlock({ topic: ov.topics[filing.topicId], routing: filing });
+    assert.match(block, /Worm.*Sampling/);
+    assert.ok(block.includes(`Atlas ${confident ? 'filed this under Worm' : 'left it unfiled'}. If another topic fits better, say so in your first sentence.`));
+  }
+  assert.match(c.contextBlock({ routing: c.deskFiling(ov, '', null) }), /Atlas left it unfiled\./);
+});
+
+test('almanac: registry recency, normalized review requests and live legacy team activity', () => {
+  const index = [{ id: 'updated', title: 'Renamed title', created: 1, updated: 8 }, { id: 'newer', title: 'Newer', created: 3 }, { id: 'team', kind: 'team', label: 'Legacy', created: 2 }];
+  const rows = { phase: 'ready', byId: { updated: {}, newer: {}, team: { running: true, projectionValues: { agentTeam: { enabled: true, tasks: [{ status: 'completed' }, { status: 'in_progress' }] } } }, m: { parentId: 'team', running: true, displayTitle: 'Referee' } } };
+  const d = c.deskAlmanacData({ topics: {} }, index, rows, { waiting: [], reviews: [{ session: 'updated', edits: 2 }] });
+  assert.deepEqual(d.items.map((i) => i.id), ['updated', 'newer', 'team']);
+  assert.deepEqual(d.waiting.map((n) => [n.kind, n.title]), [['review', '2 edits · Renamed title']]);
+  assert.deepEqual(d.running.map((i) => [i.id, i.progress]), [['team', '1 of 2'], ['m', 'working']]);
+});
+
 test('draft and attachments: per-root, plain pointers, DOI/arXiv, no upload or local file URL', () => {
   const attachment = c.deskAttachment('C:\\fixture\\mc\\research.md', 'file');
   assert.deepEqual(attachment, { path: 'C:\\fixture\\mc\\research.md', label: 'research.md' });
@@ -140,5 +203,7 @@ test('draft and attachments: per-root, plain pointers, DOI/arXiv, no upload or l
   assert.equal(c.deskAttachment('notes/x.md', 'file'), null);
   c.storageSet('prefs.v1', { deskDraft: { root: '/fixture', question: 'What about this?', topicId: 'mc', attachments: [attachment] } });
   assert.deepEqual(c.deskDraft('/fixture'), { question: 'What about this?', topicId: 'mc', attachments: [attachment] });
-  assert.deepEqual(c.deskDraft('/different'), { question: '', topicId: '', attachments: [] });
+  assert.deepEqual(c.deskDraft('/different'), { question: '', topicId: null, attachments: [] });
+  c.storageSet('prefs.v1', { deskDraft: { root: '/fixture', topicId: '', mode: 'none' } });
+  assert.equal(c.deskDraft('/fixture').topicId, '', 'explicit No topic survives restoration');
 });
