@@ -12,9 +12,13 @@
 
 Atlas is built to serve research and the search for truth in physics. A derivation should lead back to its assumptions, and a numerical result to the calculation that produced it. A failed check or an unresolved objection belongs in the record when it changes what we can claim. Atlas keeps the question, its evidence and the discussion within reach as the work develops.
 
-![Atlas Universe in DeepSeek Harness, showing the example research programme, topic map and recent activity](docs/assets/atlas-workspace.png)
+## Preview the redesigned Desk (0.10.0 review branch)
 
-*An example research workspace in the DeepSeek Harness Web profile.*
+From this source checkout with a compatible local DSH runtime, run `node build-client.mjs` then `npm run preview`. Open the **exact private URL** printed by the launcher and select **Atlas** in the DSH sidebar. This opens a disposable research programme and a local streaming mock model, not your profile or research. Press `q` then Enter in the terminal to discard it. Rebuild and restart the preview after editing the plugin.
+
+Start on **Desk** to draft a question and optionally choose a topic; try **Map** to open a topic beside it. Use the Atlas mark for commands or **More → Keyboard shortcuts** for the bindings available in your DSH. Discussions and Teams show existing records; a new team launcher and automatic topic routing are not part of this review. See the [M1 review notes](design/1.0/reports/M1.md).
+
+The installation instructions and [user guide](docs/guide.md) below describe the released 0.9.2 baseline; this review build does not require installing it.
 
 ## A research session in Atlas
 

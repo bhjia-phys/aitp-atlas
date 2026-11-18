@@ -125,7 +125,14 @@ function useAtlasDialogFocus(ref, onClose, { initialFocusRef, returnFocusRef } =
         event.preventDefault(); atlasFocusNode((event.shiftKey ? stops.at(-1) : stops[0]) || node);
       }
     };
-    const focus = event => { if (atlasOwnsLayer(node) && !node.contains(event.target)) initial(); };
+    const focus = event => {
+      if (node.contains(event.target)) return;
+      // A child menu manages arrows, not modal containment. Keep outside focus
+      // out of the dialog even while that menu is mounted. A newer modal, on
+      // the other hand, takes sole ownership until it closes.
+      const above = ATLAS_OPEN_LAYERS.slice(ATLAS_OPEN_LAYERS.indexOf(node) + 1);
+      if (!above.some(layer => layer.contains(event.target) || layer.getAttribute?.('aria-modal') === 'true')) initial();
+    };
     doc.addEventListener('keydown', keyboard);
     doc.addEventListener('focusin', focus);
     return () => {

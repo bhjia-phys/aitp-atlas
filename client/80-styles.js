@@ -716,7 +716,8 @@ function injectStyles() {
   if (typeof document === 'undefined' || document.getElementById('aitp-atlas-styles')) return;
   const style = document.createElement('style');
   style.id = 'aitp-atlas-styles';
-  style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS + '\n' + ATLAS_MAP_CSS + '\n' + ATLAS_DESK_CSS;
+  style.textContent = [ATLAS_FONT_CSS, themeCss(), STYLES, ATLAS_CONTROL_CSS, ATLAS_RAIL_CSS, ATLAS_TAB_CSS,
+    ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS].join('\n');
   document.head.appendChild(style);
 }
 

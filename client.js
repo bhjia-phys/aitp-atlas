@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   id: 'aitp-atlas',
   factory(require) {
     'use strict';
-    const ATLAS_VERSION = "0.9.2";
+    const ATLAS_VERSION = "0.10.0";
     // ===== client/00-runtime.js
     // ---------------------------------------------------------------- runtime ---
     // React, DSH primitives, the API client, colors, PDF.js and the AI hand-offs.
@@ -1104,7 +1104,14 @@ window.__ModuleLoader__.load({
             event.preventDefault(); atlasFocusNode((event.shiftKey ? stops.at(-1) : stops[0]) || node);
           }
         };
-        const focus = event => { if (atlasOwnsLayer(node) && !node.contains(event.target)) initial(); };
+        const focus = event => {
+          if (node.contains(event.target)) return;
+          // A child menu manages arrows, not modal containment. Keep outside focus
+          // out of the dialog even while that menu is mounted. A newer modal, on
+          // the other hand, takes sole ownership until it closes.
+          const above = ATLAS_OPEN_LAYERS.slice(ATLAS_OPEN_LAYERS.indexOf(node) + 1);
+          if (!above.some(layer => layer.contains(event.target) || layer.getAttribute?.('aria-modal') === 'true')) initial();
+        };
         doc.addEventListener('keydown', keyboard);
         doc.addEventListener('focusin', focus);
         return () => {
@@ -1860,6 +1867,30 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // Limit each group independently; collapsing one does not throw away the remaining records.
+    function TopicShelf({ id, title, icon, items, renderItem, defaultOpen = true, empty, footer, hint }) {
+      const [all, setAll] = useState(false);
+      return h(Fold, { id, title, icon, count: items.length, defaultOpen }, () => h(React.Fragment, null,
+        hint ? h('p', { className: 'atlas-shelf-hint' }, hint) : null,
+        items.length ? h('ul', { className: 'atlas-items' }, (all ? items : items.slice(0, 5)).map((item, i) => h('li', { key: item.id || item.key || `${i}:${item.path || item.url || ''}` }, renderItem(item)))) : empty,
+        items.length > 5 ? h('button', { type: 'button', className: 'atlas-shelf-more', 'aria-expanded': all, 'aria-label': all ? `Show fewer: ${title}` : `Show all ${items.length}: ${title}`, onClick: () => setAll(!all) }, all ? 'Show fewer' : `Show all (${items.length})`) : null,
+        footer));
+    }
+
+    // M1 keeps the local, session-checked 0.9 index; do not count other browsers' discussions.
+    function TopicDiscussionShelf({ file }) {
+      const actions = React.useContext(AtlasActions);
+      const threads = useThreadIndex();
+      const rows = useSessionRows();
+      const list = threads.filter((t) => t.context?.topic?.path && pathKey(t.context.topic.path) === pathKey(file) && knownThread(rows, t))
+        .sort((a, b) => Number(a.status === 'resolved') - Number(b.status === 'resolved') || b.created - a.created);
+      return h(TopicShelf, { id: `${file}#discussions`, title: 'Discussions', icon: 'spark', items: list,
+        hint: 'From the Atlas index in this browser.',
+        empty: h(Empty, null, 'No discussions about this topic yet.'),
+        renderItem: (t) => h(React.Fragment, null, h(ThreadRow, { t, row: rowOf(rows, t.id), current: actions.current === t.id, onOpen: () => actions.openThread(t.id) }), t.status === 'resolved' ? h('span', { className: 'atlas-shelf-hint' }, 'Resolved') : null),
+        footer: h(Button, { small: true, icon: 'spark', onClick: () => actions.startAsk({}) }, 'Ask about this topic') });
+    }
+
     function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
       const t = data.topic;
       const parts = useMemo(() => splitNote(data.body), [data.body]);
@@ -1888,8 +1919,8 @@ window.__ModuleLoader__.load({
       const color = t.isRoot ? 'var(--gold)' : directionColor(ov, dirSlug);
       const [creating, setCreating] = useState(false);
       usePublishFocus({ kind: 'topic', topic: { id: t.id, title: t.title || 'Root note', path: data.path } }, [data.path, t.title]);
-      const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
-      if (t.directionHeading) crumbs.push({ label: t.directionHeading.replace(/^\d+\.\s*/, ''), dot: color, go: { view: 'home', anchor: dirSlug } });
+      const crumbs = [{ label: 'Desk', go: { view: 'home' } }];
+      if (t.directionHeading) crumbs.push({ label: t.directionHeading.replace(/^\d+\.\s*/, ''), dot: color, go: { view: 'map', anchor: dirSlug } });
       for (const a of t.ancestors.filter((a) => a.id !== '')) crumbs.push({ label: shortTitle(a.title, 34), go: { view: 'doc', path: a.file } });
       crumbs.push({ label: t.isRoot ? 'Root note' : shortTitle(t.title, 40) });
       const counts = t.counts || {};
@@ -1900,6 +1931,7 @@ window.__ModuleLoader__.load({
         counts.papers ? plural(counts.papers, 'paper or source', 'papers and sources') : null,
       ].filter(Boolean);
       const groups = (t.contents || []).filter((g) => g.key !== 'branches');
+      const incoming = data.linkedFrom.filter((r) => !t.children.some((c) => c.id === r.id));
       return h('div', { className: 'atlas-page is-wide atlas-topic', style: { '--dir': color } },
         h(Crumbs, { items: crumbs, go }),
         h('header', { className: 'atlas-topic-head' },
@@ -1914,7 +1946,7 @@ window.__ModuleLoader__.load({
             h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
             data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
             h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
-            h(Button, { icon: 'folder', quiet: true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
+            h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
           creating ? h(NewNote, { dir: dirOf(data.path), go, flash, onClose: () => setCreating(false) }) : null),
         t.context ? h('blockquote', { className: 'atlas-context' }, h('span', { className: 'atlas-label' }, 'The root says'), h('span', null, t.context)) : null,
         h(PendingEdits, { path: data.path, at: data.mtimeMs }),
@@ -1928,21 +1960,18 @@ window.__ModuleLoader__.load({
                 account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: sec + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
               : null),
           h('aside', { className: 'atlas-topic-side', 'aria-label': 'What this topic holds' },
-            h(Discussions, { match: (d) => Boolean(d.context.topic && d.context.topic.path === data.path) }),
-            t.children.length > 0
-              ? h('section', { className: 'atlas-side-block' },
-                h('h2', null, h(Icon, { name: 'branch' }), 'Branches', h('span', { className: 'atlas-count' }, t.children.length)),
-                t.children.map((c) => h('button', { key: c.id, type: 'button', className: 'atlas-branch', onClick: () => go({ view: 'doc', path: c.file }) },
-                  h('span', { className: 'atlas-branch-title' }, c.title),
-                  c.latest ? h('span', { className: 'atlas-branch-latest' }, c.latest.status ? h(StatusTag, { status: c.latest.status }) : null, h('span', null, c.latest.name)) : c.lead ? h('span', { className: 'atlas-branch-latest' }, c.lead) : null,
-                  h('span', { className: 'atlas-date' }, c.date))))
-              : null,
-            h('section', { className: 'atlas-side-block' },
-              h('h2', null, h(Icon, { name: 'library' }), 'Contents'),
-              groups.length === 0 ? h(Empty, null, 'This note links no files yet.') : null,
-              groups.map((g) => h(Fold, { key: g.key, id: data.path + '#contents:' + g.key, title: g.title, count: g.items.length, icon: GROUP_ICON[g.key], defaultOpen: g.items.length <= 8 && ['notes', 'papers', 'writing'].includes(g.key) },
-                () => h('ul', { className: 'atlas-items' }, g.items.map((item, i) => h('li', { key: i }, h(ContentItem, { item, go, navigate }))))))),
-            h(LinkedFrom, { refs: data.linkedFrom.filter((r) => !t.children.some((c) => c.id === r.id)), go }))));
+            h(TopicDiscussionShelf, { key: data.path, file: data.path }),
+            t.children.length ? h(TopicShelf, { key: `${data.path}#branches`, id: `${data.path}#branches`, title: 'Branches', icon: 'branch', items: t.children,
+              renderItem: (c) => h('button', { type: 'button', className: 'atlas-branch', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: c.file }) },
+                h('span', { className: 'atlas-branch-title' }, c.title),
+                c.latest ? h('span', { className: 'atlas-branch-latest' }, c.latest.status ? h(StatusTag, { status: c.latest.status }) : null, h('span', null, c.latest.name)) : c.lead ? h('span', { className: 'atlas-branch-latest' }, c.lead) : null,
+                h('span', { className: 'atlas-date' }, c.date)) }) : null,
+            h(TopicShelf, { key: `${data.path}#contents`, id: `${data.path}#contents`, title: 'Contents', icon: 'library', items: groups,
+              empty: h(Empty, null, 'This note links no files yet.'),
+              renderItem: (g) => h(TopicShelf, { id: `${data.path}#contents:${g.key}`, title: g.title, items: g.items, icon: GROUP_ICON[g.key],
+                defaultOpen: g.items.length <= 8 && ['notes', 'papers', 'writing'].includes(g.key), renderItem: (item) => h(ContentItem, { item, navigate }) }) }),
+            incoming.length ? h(TopicShelf, { key: `${data.path}#incoming`, id: `${data.path}#incoming`, title: 'Linked from', icon: 'note', items: incoming,
+              renderItem: (r) => h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: r.file }) }, r.title) }) : null)));
     }
 
     function ContentItem({ item, navigate }) {
@@ -1954,7 +1983,7 @@ window.__ModuleLoader__.load({
         }
         else if (!missing) navigate({ path: item.path, anchor: item.anchor });
       };
-      return h('button', { type: 'button', className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
+      return h('button', { type: 'button', 'data-atlas-open': !missing && (item.url ? paperLink(item.url) : READ_HERE.has(typeOf(item.path))) || undefined, className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
         h(Icon, { name: TYPE_ICON[item.type] || 'note', size: 15 }),
         h('span', { className: 'atlas-item-text' },
           h('span', { className: 'atlas-item-label' }, item.label),
@@ -2011,14 +2040,13 @@ window.__ModuleLoader__.load({
         }
       };
       return h('form', { className: 'atlas-newnote', onSubmit: create },
-        h('label', null, h('span', null, 'Title'), h('input', { className: 'atlas-input', value: title, onChange: (e) => setTitle(e.target.value), placeholder: 'e.g. Spectral flow and the edge anomaly', autoFocus: true })),
-        h('label', null, h('span', null, 'Folder'), h('input', { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value) })),
-        h('div', { className: 'atlas-seg', role: 'radiogroup', 'aria-label': 'Kind' },
-          [['md', 'Markdown note'], ['tex', 'LaTeX']].map(([k, label]) => h('button', { key: k, type: 'button', role: 'radio', 'aria-checked': kind === k, className: cx('atlas-seg-item', kind === k && 'is-on'), onClick: () => setKind(k) }, label))),
+        h('label', null, h('span', null, 'Title'), h(Input, { className: 'atlas-input', value: title, onChange: (e) => setTitle(e.target.value), placeholder: 'e.g. Spectral flow and the edge anomaly', autoFocus: true })),
+        h('label', null, h('span', null, 'Folder'), h(Input, { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value) })),
+        h(Segmented, { label: 'Kind', value: kind, onChange: setKind, options: [{ value: 'md', label: 'Markdown note' }, { value: 'tex', label: 'LaTeX' }] }),
         h('div', { className: 'atlas-newnote-foot' },
           h('span', { className: 'atlas-path' }, target ? target.slice(dir.length + 1) : 'Name the note to see its path'),
           h(Button, { quiet: true, onClick: onClose }, 'Cancel'),
-          h('button', { type: 'submit', className: 'atlas-button is-primary', disabled: busy || !target }, busy ? 'Creating…' : 'Create and edit')));
+          h(Button, { type: 'submit', primary: true, disabled: busy || !target }, busy ? 'Creating…' : 'Create and edit')));
     }
 
     // ===== client/40-reader.js
@@ -2076,7 +2104,7 @@ window.__ModuleLoader__.load({
       const owner = (data && data.owner) || (info && info.owner) || fileOwner || null;
       const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--accent)';
       const title = (data && data.title) || baseName(path) || path;
-      const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
+      const crumbs = [{ label: 'Desk', go: { view: 'home' } }];
       if (owner) crumbs.push({ label: shortTitle(owner.title, 34), dot: color, go: { view: 'doc', path: owner.file } });
       crumbs.push({ label: baseName(path) || path });
       const editable = data && data.editable && !editing;
@@ -2101,7 +2129,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'atlas-actions' },
             type === 'folder' ? null : h(AskMenu, { asks }),
             editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, with its PDF in a Preview tab beside it' : undefined }, 'Edit') : null,
-            type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
+            type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
             h(Button, { quiet: true, icon: 'external', title: 'Open with the system app', onClick: () => openFile(path).then(() => flash('Opened with the system app.')).catch((e) => flash(e.message)) }, 'System app'))),
         data ? h(LinkedFrom, { refs: data.linkedFrom, go, label: 'Cited by' }) : null,
         h(DocThreads, { path }),
@@ -2224,6 +2252,8 @@ window.__ModuleLoader__.load({
       const [aspect, setAspect] = useState(1.294);
       const [error, setError] = useState(null);
       const [zoom, setZoom] = useState(1);
+      const [currentPage, setCurrentPage] = useState(1);
+      const actions = React.useContext(AtlasActions);
       const [width, setWidth] = useState(760);
       const box = useRef(null);
       const pane = usePaneName();
@@ -2231,6 +2261,7 @@ window.__ModuleLoader__.load({
         let cancelled = false;
         let task = null;
         setDoc(null);
+        setCurrentPage(1);
         setError(null);
         loadPdfjs()
           .then((lib) => {
@@ -2257,7 +2288,7 @@ window.__ModuleLoader__.load({
       useLayoutEffect(() => {
         const el = box.current;
         if (!el || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => setWidth(Math.min(980, Math.max(320, el.clientWidth - 8))));
+        const ro = new ResizeObserver(() => { if (el.clientWidth > 0) setWidth(Math.max(1, el.clientWidth - 8)); });
         ro.observe(el);
         return () => ro.disconnect();
       }, []);
@@ -2276,6 +2307,7 @@ window.__ModuleLoader__.load({
               page = n;
             }
           }
+          if (page) setCurrentPage(page);
           if (page && onPageRef.current) onPageRef.current(page);
           const all = focusStore.get();
           const focus = all.byTab[pane];
@@ -2338,13 +2370,14 @@ window.__ModuleLoader__.load({
             : h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
       }
       return h('div', { className: cx('atlas-pdf', onPageClick && 'is-synced'), ref: box, onClick: onBoxClick },
-        h('div', { className: 'atlas-pdf-bar' },
-          h('span', { className: 'atlas-muted' }, doc ? plural(doc.numPages, 'page') : 'Loading…'),
+        h('div', { className: 'atlas-pdf-bar', role: 'group', 'aria-label': 'PDF controls' },
+          h('span', { className: 'atlas-pdf-place' }, doc ? `Page ${currentPage} / ${doc.numPages}` : 'Opening…'),
           h('span', { className: 'atlas-pdf-zoom' },
-            h(Button, { small: true, quiet: true, onClick: () => setZoom(Math.max(0.5, zoom - 0.15)), title: 'Smaller' }, '−'),
+            h(Button, { small: true, quiet: true, disabled: zoom <= 0.5, onClick: () => setZoom((z) => Math.max(0.5, z - 0.15)), 'aria-label': 'Zoom out', title: 'Zoom out' }, '−'),
             h('span', { className: 'atlas-muted' }, Math.round(zoom * 100) + '%'),
-            h(Button, { small: true, quiet: true, onClick: () => setZoom(Math.min(2.5, zoom + 0.15)), title: 'Larger' }, '+'),
-            h(Button, { small: true, quiet: true, onClick: () => setZoom(1), title: 'Fit the width' }, 'Fit'))),
+            h(Button, { small: true, quiet: true, disabled: zoom >= 2.5, onClick: () => setZoom((z) => Math.min(2.5, z + 0.15)), 'aria-label': 'Zoom in', title: 'Zoom in' }, '+'),
+            h(Button, { small: true, quiet: true, onClick: () => setZoom(1), title: 'Fit to pane width' }, 'Fit'),
+            h(Button, { small: true, quiet: true, disabled: !actions?.focusPane, onClick: () => actions.focusPane?.(pane), title: 'Focus this pane' }, 'Focus'))),
         doc ? Array.from({ length: doc.numPages }, (_, i) => h(PdfPage, { key: i, doc, number: i + 1, width: width * zoom, aspect })) : h(Loading, { label: 'Opening the PDF…' }));
     }
 
@@ -2488,9 +2521,9 @@ window.__ModuleLoader__.load({
         map ? h(PaperNote, { map, path, navigate, go, at: reading.at })
           : h('form', { className: 'atlas-paper-start', onSubmit: start },
             h('p', { className: 'atlas-muted' }, 'No paper map yet. Start one from the collection’s template; passages you keep from the PDF go into its “Your reading”.'),
-            h('label', { className: 'atlas-field' }, h('span', null, "Why I'm reading it"), h('input', { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value) })),
-            h('label', { className: 'atlas-field' }, h('span', null, 'For'), h('select', { className: 'atlas-input', value: topic, onChange: (e) => setTopic(e.target.value) }, h('option', { value: '' }, 'No topic'), (topics || []).map((t) => h('option', { key: t.file, value: t.file }, t.title)))),
-            h('button', { type: 'submit', className: 'atlas-button is-small is-primary', disabled: busy }, busy ? 'Starting…' : 'Start a reading note')),
+            h('label', { className: 'atlas-field' }, h('span', null, "Why I'm reading it"), h(Input, { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value) })),
+            h('label', { className: 'atlas-field' }, h('span', null, 'For'), h(Select, { className: 'atlas-input', value: topic, onChange: (e) => setTopic(e.target.value) }, h('option', { value: '' }, 'No topic'), (topics || []).map((t) => h('option', { key: t.file, value: t.file }, t.title)))),
+            h(Button, { type: 'submit', small: true, primary: true, disabled: busy }, busy ? 'Starting…' : 'Start a reading note')),
         h('div', { className: 'atlas-actions' },
           h(Button, { small: true, icon: 'spark', onClick: discuss }, 'Discuss this paper'),
           /^\d{4}\.\d{4,5}$|^[a-z-]+\/\d{7}$/.test(paper.key) ? h('a', { className: 'atlas-button is-small is-quiet', href: `https://arxiv.org/abs/${edition}`, target: '_blank', rel: 'noreferrer' }, h(Icon, { name: 'external', size: 14 }), h('span', null, 'arXiv')) : null),
@@ -2504,7 +2537,7 @@ window.__ModuleLoader__.load({
       if (error) return h('p', { className: 'atlas-muted' }, error.message);
       const yours = readingSection(data.body);
       return h('div', { className: 'atlas-paper-note' },
-        h(TextButton, { className: 'atlas-paper-note-title', onClick: () => go({ view: 'doc', path: map }) }, data.title || baseName(map)),
+        h(TextButton, { className: 'atlas-paper-note-title', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: map }) }, data.title || baseName(map)),
         yours ? h('div', { className: 'atlas-paper-yours' }, h(Markdown, { text: yours, baseFile: map, onNavigate: navigate, compact: true }))
           : h('p', { className: 'atlas-muted' }, 'Nothing under “Your reading” yet.'));
     }
@@ -2519,7 +2552,7 @@ window.__ModuleLoader__.load({
       const readme = data.entries.find((e) => /^readme\.md$/i.test(e.name));
       const folders = data.entries.filter((e) => e.folder);
       const files = data.entries.filter((e) => !e.folder);
-      const row = (e) => h('li', { key: e.path }, h('button', { type: 'button', className: 'atlas-item', onClick: () => navigate({ path: e.path }) },
+      const row = (e) => h('li', { key: e.path }, h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': READ_HERE.has(typeOf(e.path)) || undefined, onClick: () => navigate({ path: e.path }) },
         h(Icon, { name: TYPE_ICON[e.type] || (e.folder ? 'folder' : 'note'), size: 15 }),
         h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, e.name), h('span', { className: 'atlas-item-sub' }, e.folder ? 'folder' : `${TYPE_LABEL[e.type] || 'File'} · ${sizeOf(e.size)}`)),
         h('span', { className: 'atlas-date' }, dateOf(e.mtimeMs))));
@@ -3205,6 +3238,10 @@ window.__ModuleLoader__.load({
       }
       // Already in the library: the library's copy, with its reading note.
       if (data.inLibrary && data.inLibrary.pdf) return h(DocView, { path: data.inLibrary.pdf, overview: ov, go, flash, anchor, anchorAt });
+      if (data.offline && data.inLibrary?.map) return h('div', { className: 'atlas-page atlas-ref' },
+        h('p', { className: 'atlas-kicker' }, 'Local library'), h('h1', null, data.title || ref.label),
+        h('p', null, `No local PDF is available for arXiv:${data.id}${data.version}. Outside requests are off. You can read the paper map instead.`),
+        h(Button, { onClick: () => go({ view: 'doc', path: data.inLibrary.map }) }, 'Open paper map'));
       const readable = data.kind === 'arxiv';
       const cited = data.mentionedBy || [];
       const authors = data.authors || [];
@@ -3293,32 +3330,21 @@ window.__ModuleLoader__.load({
 
     function QuickAdd({ tab: initial, overview: ov, go, flash, onClose }) {
       const [tab, setTab] = useState(initial || 'paper');
-      const box = useRef(null);
+      const trigger = useRef(typeof document === 'undefined' ? null : document.activeElement);
+      const entry = useRef(null);
       const topic = useMemo(() => topicInView(ov), [ov]);
-      useEffect(() => {
-        const close = (event) => {
-          if (event.type === 'keydown' ? event.key === 'Escape' : !(box.current && box.current.contains(event.target))) onClose();
-        };
-        document.addEventListener('mousedown', close);
-        document.addEventListener('keydown', close);
-        return () => {
-          document.removeEventListener('mousedown', close);
-          document.removeEventListener('keydown', close);
-        };
-      }, [onClose]);
       const done = (next) => {
         onClose();
         go(next);
       };
-      return h('div', { className: 'atlas-quick', role: 'dialog', 'aria-label': 'Add a paper, or write a note or a LaTeX document', ref: box },
-        h('div', { className: 'atlas-seg', role: 'tablist', 'aria-label': 'What to add' },
-          QUICK_TABS.map(([key, label, icon]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on'), onClick: () => setTab(key) }, h(Icon, { name: icon, size: 14 }), ' ', label))),
-        tab === 'paper' ? h(QuickPaper, { ov, topic, done, flash }) : h(QuickNote, { key: tab, kind: tab === 'tex' ? 'tex' : 'md', ov, topic, done, flash }),
+      return h(Dialog, { className: 'atlas-add-write-dialog', title: 'Add or write', onClose, returnFocusRef: trigger, initialFocusRef: entry },
+        h(Segmented, { label: 'What to add', value: tab, options: QUICK_TABS.map(([value, label]) => ({ value, label })), onChange: setTab }),
+        tab === 'paper' ? h(QuickPaper, { ov, topic, done, flash, entry }) : h(QuickNote, { key: tab, kind: tab === 'tex' ? 'tex' : 'md', ov, topic, done, flash, entry }),
         h('p', { className: 'atlas-quick-more' }, 'A lecture or files: ', h(TextButton, { onClick: () => done({ view: 'library', tab: 'discover', add: Date.now() }) }, 'Library › Discover and add'), ' · ', h('kbd', null, 'Esc'), ' closes'));
     }
 
     /** A paper by its identifier: looked up, then added for a topic (or read first, in a tab). */
-    function QuickPaper({ ov, topic, done, flash }) {
+    function QuickPaper({ ov, topic, done, flash, entry }) {
       const [q, setQ] = useState('');
       const [found, setFound] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -3352,8 +3378,8 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'atlas-quick-body' },
         h('form', { className: 'atlas-quick-row', onSubmit: look },
-          h('input', { className: 'atlas-input', autoFocus: true, value: q, onChange: (e) => setQ(e.target.value), placeholder: 'arXiv ID or link, DOI, or INSPIRE link', 'aria-label': 'The paper' }),
-          h('button', { type: 'submit', className: 'atlas-button is-small', disabled: busy || !q.trim() }, busy ? 'Looking…' : 'Look up')),
+          h(Input, { className: 'atlas-input', inputRef: entry, value: q, onChange: (e) => setQ(e.target.value), placeholder: 'arXiv ID or link, DOI, or INSPIRE link', 'aria-label': 'The paper' }),
+          h(Button, { type: 'submit', small: true, primary: true, disabled: busy || !q.trim() }, busy ? 'Looking…' : 'Look up')),
         error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null,
         found ? h('div', { className: 'atlas-quick-found' },
           h('p', { className: 'atlas-quick-title' }, found.title || q),
@@ -3362,7 +3388,7 @@ window.__ModuleLoader__.load({
     }
 
     /** A note or a LaTeX document in a topic's folder, made from the template and opened for writing. */
-    function QuickNote({ kind, ov, topic, done, flash }) {
+    function QuickNote({ kind, ov, topic, done, flash, entry }) {
       const choices = useMemo(() => topicChoices(ov), [ov]);
       const [title, setTitle] = useState('');
       const [forTopic, setForTopic] = useState(topic || '');
@@ -3384,18 +3410,18 @@ window.__ModuleLoader__.load({
         }
       };
       return h('form', { className: 'atlas-quick-body', onSubmit: create },
-        h('input', { className: 'atlas-input', autoFocus: true, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === 'tex' ? 'Title of the document' : 'Title of the note', 'aria-label': 'Title' }),
+        h(Input, { className: 'atlas-input', inputRef: entry, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === 'tex' ? 'Title of the document' : 'Title of the note', 'aria-label': 'Title' }),
         h('div', { className: 'atlas-quick-row' },
           h('label', { className: 'atlas-ref-for' }, h('span', null, 'For'),
-            h('select', { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic it belongs to' },
+            h(Select, { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic it belongs to' },
               h('option', { value: '' }, 'Choose a topic…'),
               choices.map((c) => h('option', { key: c.file, value: c.file }, c.label)))),
           h('label', { className: 'atlas-ref-for atlas-quick-folder' }, h('span', null, 'In'),
-            h('input', { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value), 'aria-label': 'The folder inside the topic' }))),
+            h(Input, { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value), 'aria-label': 'The folder inside the topic' }))),
         h('div', { className: 'atlas-quick-row' },
           h('span', { className: 'atlas-path' }, target ? target.slice(dirOf(forTopic).length + 1) : forTopic ? 'Name it to see where it goes' : 'Choose the topic it belongs to'),
           h('span', { className: 'atlas-spacer' }),
-          h('button', { type: 'submit', className: 'atlas-button is-primary is-small', disabled: busy || !target }, busy ? 'Creating…' : kind === 'tex' ? 'Create and open' : 'Create and write')));
+          h(Button, { type: 'submit', primary: true, small: true, disabled: busy || !target }, busy ? 'Creating…' : kind === 'tex' ? 'Create and open' : 'Create and write')));
     }
 
     /** The Write page: the LaTeX documents the notes link, by topic, newest first, each with its build state. */
@@ -3424,7 +3450,7 @@ window.__ModuleLoader__.load({
         error ? h(ErrorNote, { error }) : null,
         data && groups.length === 0 ? h(Empty, null, 'No topic note links a LaTeX document yet. Link one from its topic’s note, or start one with New LaTeX document.') : null,
         groups.map((g) => h('section', { key: g.key, className: 'atlas-section' },
-          h('h2', null, g.topic ? h(TextButton, { onClick: () => go({ view: 'doc', path: g.topic.file }) }, g.topic.title) : 'Outside the topics', h('span', { className: 'atlas-count' }, g.docs.length)),
+          h('h2', null, g.topic ? h(TextButton, { 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: g.topic.file }) }, g.topic.title) : 'Outside the topics', h('span', { className: 'atlas-count' }, g.docs.length)),
           h('ul', { className: 'atlas-items' }, g.docs.map((d) => h('li', { key: d.file }, h(WriteRow, { d, go })))))));
     }
 
@@ -3432,11 +3458,11 @@ window.__ModuleLoader__.load({
       const built = Boolean(d.pdf && d.pdf.mtimeMs >= d.mtimeMs - 1000);
       const state = !d.pdf ? 'not built yet' : built ? `PDF ${dateOf(d.pdf.mtimeMs)}` : 'PDF older than the source';
       return h('div', { className: 'atlas-write-row' },
-        h('button', { type: 'button', className: 'atlas-item', title: d.file, onClick: () => go({ view: 'doc', path: d.file, edit: true, full: true }) },
+        h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': true, title: d.file, onClick: () => go({ view: 'doc', path: d.file, edit: true, full: true }) },
           h(Icon, { name: 'writing', size: 15 }),
           h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, d.title), h('span', { className: 'atlas-item-sub' }, `${baseName(d.file)} · changed ${dateOf(d.mtimeMs)}`)),
           h(Chip, { dot: !d.pdf ? 'var(--status-other)' : built ? 'var(--status-done)' : 'var(--status-waiting)' }, state)),
-        d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
+        d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', 'data-atlas-open': true, title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
     }
 
     // ===== client/50-library.js
@@ -5362,7 +5388,7 @@ window.__ModuleLoader__.load({
 
     // ===== client/68-review.js
     // ------------------------------------------------------------------ review ---
-    // What a discussion changed in the notes, beside the discussion: each edit with
+    // What changed since this discussion's saved copies (not who made it): each edit with
     // the section it sits in, the removed and added words marked, and Keep or
     // Revert. Atlas kept a copy of the notes when it started the discussion; the
     // server compares against it and only reverts where the note still shows the
@@ -5422,10 +5448,7 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(true);
       const [busy, setBusy] = useState('');
       const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
-      useEffect(() => {
-        load();
-      }, [load]);
-      // While the discussion works its edits appear as they land; when it is idle, now and then (members of a team may still write).
+      // Poll more frequently while running; a change can also come from outside this session.
       useEffect(() => {
         load();
         const timer = setInterval(load, running ? 4000 : 15000);
@@ -5439,15 +5462,17 @@ window.__ModuleLoader__.load({
         try {
           setData(await api(`review/${kind}`, { method: 'POST', body: { session: sessionId, path: file, id } }));
           if (kind === 'revert') flash('Reverted: the earlier text is back in the note.');
+          return true;
         } catch (error) {
           flash(error.message);
           load();
+          return false;
         } finally {
           setBusy('');
         }
       };
       const keepAll = async () => {
-        for (const f of files) await act('keep', f.path, 'all');
+        for (const f of files) if (!await act('keep', f.path, 'all')) return;
         flash('Kept: the edits stay in the notes.');
       };
       const draft = (text) => {
@@ -5455,21 +5480,21 @@ window.__ModuleLoader__.load({
         else flash('Atlas could not put it into the discussion.');
       };
       const names = files.map((f) => baseName(f.path)).join(', ');
-      return h('section', { className: 'atlas-review', 'aria-label': 'What this discussion changed' },
+      return h('section', { className: 'atlas-review', 'aria-label': 'Changes since this discussion’s baseline' },
         h('button', { type: 'button', className: 'atlas-review-head', 'aria-expanded': open, onClick: () => setOpen(!open) },
-          h('span', null, 'What this discussion changed'),
+          h('span', null, 'Changes since the baseline'),
           h('span', { className: 'atlas-chip is-new' }, plural(count, 'edit')),
           h('span', { className: 'atlas-review-toggle' }, open ? 'Hide' : 'Show')),
         open ? h('div', { className: 'atlas-review-body' },
-          h('p', { className: 'atlas-muted' }, `${files.map((f) => `${baseName(f.path)} · ${plural(f.edits.length, 'edit')}`).join('; ')}. Keep or revert each; a revert puts the earlier text back.`),
+          h('p', { className: 'atlas-muted' }, 'Compared with the copies saved for this discussion. These changes are already in the notes; the comparison does not identify who made them. Keep accepts the current text. Revert restores the earlier text.'),
           files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
           h('div', { className: 'atlas-review-actions' },
             h(Button, { small: true, primary: true, disabled: Boolean(busy), onClick: keepAll }, count > 1 ? 'Keep all' : 'Keep it'),
-            h(Button, { small: true, quiet: true, onClick: () => draft(`Run an independent AITP review of the edits you made to ${names} before I keep them: check each against the work it reports.`) }, 'Run an independent review'),
+            h(Button, { small: true, quiet: true, onClick: () => draft(`Independently review the changes observed in ${names} since this discussion’s baseline. Check each against the work it reports; do not assume who wrote it.`) }, 'Run an independent review'),
             h(Button, { small: true, quiet: true, onClick: () => draft('File the settled result where AITP says it belongs; your edits will appear in Atlas for my review.') }, 'File the settled result'))) : null);
     }
 
-    /** On a topic page: unreviewed edits that discussions made to this note. */
+    /** On a topic page: sessions whose baseline differs from the note. Baselines can overlap. */
     function PendingEdits({ path, at }) {
       const actions = React.useContext(AtlasActions);
       const threads = useThreadIndex();
@@ -5478,10 +5503,10 @@ window.__ModuleLoader__.load({
       if (!list.length) return null;
       return h('div', { className: 'atlas-banner atlas-pending', role: 'status' },
         h(Icon, { name: 'edit' }),
-        h('span', null, 'Unreviewed edits in this note:'),
+        h('span', null, 'Changes compared with saved baselines:'),
         list.map((s) => {
           const t = threads.find((x) => x.id === s.session);
-          return h(TextButton, { key: s.session, onClick: () => actions.openThread(s.session), title: 'Open the discussion and review its edits' }, `${plural(s.edits, 'edit')} from ${t ? shortTitle(threadLabel(t), 48) : 'a discussion'}`);
+          return h(TextButton, { key: s.session, onClick: () => actions.openThread(s.session), title: 'Review the comparison in this discussion' }, `${t ? shortTitle(threadLabel(t), 48) : 'Discussion'} · ${plural(s.edits, 'edit')}`);
         }));
     }
 
@@ -6551,7 +6576,7 @@ window.__ModuleLoader__.load({
         h('section', { ref: box, tabIndex: -1, role: 'dialog', 'aria-label': 'Command palette', 'aria-modal': true, 'data-atlas-overlay': true, className: 'atlas-palette' },
           h('div', { className: 'atlas-palette-query' }, h(Icon, { name: 'search', size: 20 }), h('input', {
             ref: input, role: 'combobox', 'aria-label': 'Find a command, place, topic or discussion', 'aria-controls': prefix + '-list', 'aria-expanded': true,
-            'aria-autocomplete': 'list', 'aria-activedescendant': found.length ? prefix + '-' + at : undefined,
+            'aria-autocomplete': 'list', 'aria-describedby': prefix + '-scope-hint', 'aria-activedescendant': found.length ? prefix + '-' + at : undefined,
             autoComplete: 'off', value: query, placeholder: 'Type a command, a place, a topic or a discussion…',
             onChange: (e) => { setQuery(e.target.value); setCursor(0); }, onKeyDown: key })),
           h('div', { className: 'atlas-palette-list', role: 'listbox', id: prefix + '-list', 'aria-label': 'Results' },
@@ -6568,7 +6593,9 @@ window.__ModuleLoader__.load({
                     r.detail && h('span', { className: 'atlas-palette-detail' }, r.detail), r.shortcut && h(Kbd, null, r.shortcut));
                 })) : null;
             })),
-          h('div', { className: 'atlas-palette-foot' }, h('span', null, '↑ ↓  Move'), h('span', null, 'Enter  Run'), h('span', null, 'Shift+Enter  Open beside'), h('span', null, 'Esc  Close'))));
+          h('footer', { className: 'atlas-palette-foot' },
+            h('div', { className: 'atlas-palette-hints', id: prefix + '-scope-hint' }, h('span', null, '# topics'), h('span', null, '@ discussions & teams'), h('span', null, '> commands')),
+            h('div', { className: 'atlas-palette-hints' }, h('span', null, '↑ ↓  Move'), h('span', null, 'Enter  Run'), h('span', null, 'Shift+Enter  Open beside'), h('span', null, 'Esc  Close')))));
     }
 
     function useAtlasChrome(p) {
@@ -6637,7 +6664,7 @@ window.__ModuleLoader__.load({
     .atlas-palette-list{padding:6px;overflow:auto}.atlas-palette-group{padding:10px var(--s-12) var(--s-4);font:var(--t-cap);font-size:11px;font-variant-caps:all-small-caps;letter-spacing:.09em;color:var(--text-3)}
     .atlas-palette-row{height:36px;display:flex;align-items:center;gap:10px;padding:0 var(--s-12);border-radius:var(--r-sm);font:var(--t-ui);cursor:pointer}.atlas-palette-row .atlas-icon{flex:none;color:var(--text-3)}.atlas-palette-row[aria-selected=true]{background:var(--selected)}.atlas-palette-row[aria-disabled=true]{cursor:default;color:var(--text-3)}
     .atlas-palette-label,.atlas-palette-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atlas-palette-detail{min-width:0;color:var(--text-3);font:var(--t-meta)}.atlas-palette-row kbd{margin-left:auto;flex:none}
-    .atlas-palette-foot{min-height:36px;flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:var(--s-12);padding:0 18px;border-top:1px solid var(--border);font:var(--t-meta);color:var(--text-3)}.atlas-palette-empty{padding:var(--s-12);font:var(--t-count);color:var(--text-3)}
+    .atlas-palette-foot{min-height:36px;flex:none;display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:var(--s-4) var(--s-16);padding:var(--s-4) 18px;border-top:1px solid var(--border);font:var(--t-meta);color:var(--text-3)}.atlas-palette-hints{display:flex;flex-wrap:wrap;gap:var(--s-4) var(--s-12);min-width:0}.atlas-palette-hints span{white-space:nowrap}.atlas-palette-empty{padding:var(--s-12);font:var(--t-count);color:var(--text-3)}
     .atlas-shortcut-list{margin:0}.atlas-shortcut-list>div{display:flex;align-items:center;justify-content:space-between;gap:var(--s-16);min-height:var(--s-32);border-top:1px solid var(--border);font:var(--t-ui)}.atlas-shortcut-list dd{margin:0;color:var(--text-2)}
     `;
 
@@ -7360,7 +7387,8 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || document.getElementById('aitp-atlas-styles')) return;
       const style = document.createElement('style');
       style.id = 'aitp-atlas-styles';
-      style.textContent = ATLAS_FONT_CSS + '\n' + themeCss() + '\n' + STYLES + '\n' + ATLAS_CONTROL_CSS + '\n' + ATLAS_RAIL_CSS + '\n' + ATLAS_TAB_CSS + '\n' + ATLAS_FOCUS_CSS + '\n' + ATLAS_PALETTE_CSS + '\n' + ATLAS_MAP_CSS + '\n' + ATLAS_DESK_CSS;
+      style.textContent = [ATLAS_FONT_CSS, themeCss(), STYLES, ATLAS_CONTROL_CSS, ATLAS_RAIL_CSS, ATLAS_TAB_CSS,
+        ATLAS_FOCUS_CSS, ATLAS_PALETTE_CSS, ATLAS_MAP_CSS, ATLAS_DESK_CSS, ATLAS_SURFACE_CSS].join('\n');
       document.head.appendChild(style);
     }
 
@@ -7370,6 +7398,53 @@ window.__ModuleLoader__.load({
         h('ellipse', { cx: 12, cy: 12, rx: 9.5, ry: 4.2, transform: 'rotate(-28 12 12)' }),
         h('circle', { cx: 19.6, cy: 8, r: 1.3, fill: 'currentColor', stroke: 'none' }));
     }
+
+    // ===== client/81-surfaces.js
+    // Working surfaces stay flat: the document, not the chrome, is the focal point.
+    // Appended after the legacy layouts so PDF selection layers and editors retain their geometry.
+    const ATLAS_SURFACE_CSS = `
+    .atlas-root :is(.atlas-topic,.atlas-doc,.atlas-library,.atlas-learn,.atlas-write-page,.atlas-search,.atlas-setup) { color: var(--text-1); }
+    .atlas-root :is(.atlas-topic,.atlas-doc,.atlas-library,.atlas-learn,.atlas-write-page,.atlas-search,.atlas-setup) h1 { font: var(--t-h1); }
+    .atlas-root :is(.atlas-kicker,.atlas-label,.atlas-section > h2,.atlas-learn-h,.atlas-topic-side > .atlas-fold > .atlas-fold-head,.atlas-paper-aside > h2) { font: var(--t-cap); font-variant-caps: var(--cap-variant); letter-spacing: var(--cap-tracking); text-transform: none; }
+    .atlas-root :is(.atlas-topic,.atlas-doc,.atlas-library,.atlas-learn,.atlas-write-page,.atlas-search,.atlas-setup) .atlas-kicker::before { content: none; }
+    .atlas-root :is(.atlas-count,.atlas-date) { font: var(--t-count); letter-spacing: normal; font-variant-numeric: tabular-nums; }
+    .atlas-root .atlas-path { font: var(--t-mono); }
+    .atlas-root :is(.atlas-topic-main,.atlas-reading,.atlas-notebook,.atlas-paper-aside) .atlas-markdown,
+    .atlas-root :is(.atlas-lede,.atlas-learn-question,.atlas-setup p,.atlas-ref-abstract) { font: var(--t-read); max-width: 72ch; }
+    .atlas-root .atlas-reading { max-width: none; }
+    .atlas-topic .atlas-context { gap: var(--s-12); padding: var(--s-12) var(--s-16); border-block: 0; border-inline-end: 0; border-radius: 0; }
+    .atlas-topic .atlas-context > :last-child { font: var(--t-read); max-width: 72ch; }
+    .atlas-topic .atlas-topic-side { align-self: start; gap: 0; padding-inline-start: var(--s-16); border-inline-start: 1px solid var(--border); }
+    .atlas-topic-side .atlas-fold-body { padding: var(--s-4) 0 var(--s-12); }
+    .atlas-topic-side .atlas-fold .atlas-fold { margin-inline-start: var(--s-8); }
+    .atlas-topic-side .atlas-fold-head { width: 100%; }
+    .atlas-shelf-more { display: block; margin-block: var(--s-4); padding: var(--s-4) var(--s-8); border: 0; border-radius: var(--r-sm); background: transparent; font: var(--t-ui); color: var(--accent); cursor: pointer; }
+    .atlas-shelf-more:hover { background: var(--hover); }
+    .atlas-shelf-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .atlas-shelf-hint { margin: 0 0 var(--s-4); font: var(--t-meta); color: var(--text-3); }
+    .atlas-root .atlas-pdf { min-width: 0; align-items: safe center; background: var(--table); gap: var(--s-16); border-radius: var(--r-sm); }
+    .atlas-root .atlas-pdf-bar { box-sizing: border-box; height: var(--row-36); min-height: var(--row-36); gap: var(--s-4); padding: 0 var(--s-8); border-radius: 0; background: var(--surface); white-space: nowrap; }
+    .atlas-pdf-place { font: var(--t-ui); color: var(--text-2); font-variant-numeric: tabular-nums; }
+    .atlas-pdf-zoom { font: var(--t-meta); font-variant-numeric: tabular-nums; }
+    .atlas-root .atlas-pdf-num { inset: auto var(--s-4) auto auto; top: 100%; color: var(--text-3); font: var(--t-meta); }
+    .atlas-add-write-dialog .atlas-control-dialog-body { display: grid; gap: var(--s-12); }
+    .atlas-add-write-dialog .atlas-quick-more { font: var(--t-meta); }
+    .atlas-root :is(.atlas-newnote,.atlas-quick-found,.atlas-setup) { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); padding: var(--s-16); }
+    .atlas-root .atlas-review { border: 1px solid var(--border-strong); border-inline-start: 3px solid var(--gold); border-radius: var(--r-md); background: var(--surface); }
+    .atlas-root .atlas-review-head { padding: var(--s-8) var(--s-12); font: var(--t-ui); }
+    .atlas-root .atlas-review-body > .atlas-muted { font: var(--t-meta); color: var(--text-2); }
+    .atlas-root .atlas-edit-text { font: var(--t-read); max-width: 72ch; }
+    .atlas-root :is(.atlas-library,.atlas-learn,.atlas-write-page,.atlas-search) :is(.atlas-item,.atlas-paper-title,.atlas-result-title,.atlas-ref-title) { color: var(--text-1); }
+    .atlas-root :is(.atlas-library,.atlas-learn,.atlas-write-page,.atlas-search) .atlas-item { padding: var(--s-8); border-radius: var(--r-sm); font: var(--t-body); }
+    .atlas-root .atlas-setup pre { padding: var(--s-12); border-radius: var(--r-sm); font: var(--t-mono); }
+    @container (min-width: 901px) { .atlas-topic .atlas-topic-side { position: sticky; top: var(--s-12); max-height: calc(100vh - var(--s-72) - var(--s-48)); overflow: auto; } }
+    @container (max-width: 900px) { .atlas-topic .atlas-topic-side { position: static; padding: 0; border: 0; border-block-start: 1px solid var(--border); } }
+    @container (max-width: 640px) {
+      .atlas-root :is(.atlas-topic-main,.atlas-reading,.atlas-notebook,.atlas-paper-aside) .atlas-markdown,
+      .atlas-root :is(.atlas-lede,.atlas-learn-question,.atlas-setup p,.atlas-ref-abstract,.atlas-edit-text),
+      .atlas-topic .atlas-context > :last-child { font: var(--t-read-compact); }
+    }
+    `;
 
     // ===== client/90-register.js
     // ---------------------------------------------------------------- register ---

@@ -56,6 +56,10 @@ function PaperRefView({ url, topic, overview: ov, go, flash, anchor, anchorAt })
   }
   // Already in the library: the library's copy, with its reading note.
   if (data.inLibrary && data.inLibrary.pdf) return h(DocView, { path: data.inLibrary.pdf, overview: ov, go, flash, anchor, anchorAt });
+  if (data.offline && data.inLibrary?.map) return h('div', { className: 'atlas-page atlas-ref' },
+    h('p', { className: 'atlas-kicker' }, 'Local library'), h('h1', null, data.title || ref.label),
+    h('p', null, `No local PDF is available for arXiv:${data.id}${data.version}. Outside requests are off. You can read the paper map instead.`),
+    h(Button, { onClick: () => go({ view: 'doc', path: data.inLibrary.map }) }, 'Open paper map'));
   const readable = data.kind === 'arxiv';
   const cited = data.mentionedBy || [];
   const authors = data.authors || [];

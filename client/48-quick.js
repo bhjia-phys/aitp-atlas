@@ -27,32 +27,21 @@ function topicInView(ov) {
 
 function QuickAdd({ tab: initial, overview: ov, go, flash, onClose }) {
   const [tab, setTab] = useState(initial || 'paper');
-  const box = useRef(null);
+  const trigger = useRef(typeof document === 'undefined' ? null : document.activeElement);
+  const entry = useRef(null);
   const topic = useMemo(() => topicInView(ov), [ov]);
-  useEffect(() => {
-    const close = (event) => {
-      if (event.type === 'keydown' ? event.key === 'Escape' : !(box.current && box.current.contains(event.target))) onClose();
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', close);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', close);
-    };
-  }, [onClose]);
   const done = (next) => {
     onClose();
     go(next);
   };
-  return h('div', { className: 'atlas-quick', role: 'dialog', 'aria-label': 'Add a paper, or write a note or a LaTeX document', ref: box },
-    h('div', { className: 'atlas-seg', role: 'tablist', 'aria-label': 'What to add' },
-      QUICK_TABS.map(([key, label, icon]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on'), onClick: () => setTab(key) }, h(Icon, { name: icon, size: 14 }), ' ', label))),
-    tab === 'paper' ? h(QuickPaper, { ov, topic, done, flash }) : h(QuickNote, { key: tab, kind: tab === 'tex' ? 'tex' : 'md', ov, topic, done, flash }),
+  return h(Dialog, { className: 'atlas-add-write-dialog', title: 'Add or write', onClose, returnFocusRef: trigger, initialFocusRef: entry },
+    h(Segmented, { label: 'What to add', value: tab, options: QUICK_TABS.map(([value, label]) => ({ value, label })), onChange: setTab }),
+    tab === 'paper' ? h(QuickPaper, { ov, topic, done, flash, entry }) : h(QuickNote, { key: tab, kind: tab === 'tex' ? 'tex' : 'md', ov, topic, done, flash, entry }),
     h('p', { className: 'atlas-quick-more' }, 'A lecture or files: ', h(TextButton, { onClick: () => done({ view: 'library', tab: 'discover', add: Date.now() }) }, 'Library › Discover and add'), ' · ', h('kbd', null, 'Esc'), ' closes'));
 }
 
 /** A paper by its identifier: looked up, then added for a topic (or read first, in a tab). */
-function QuickPaper({ ov, topic, done, flash }) {
+function QuickPaper({ ov, topic, done, flash, entry }) {
   const [q, setQ] = useState('');
   const [found, setFound] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -86,8 +75,8 @@ function QuickPaper({ ov, topic, done, flash }) {
   }
   return h('div', { className: 'atlas-quick-body' },
     h('form', { className: 'atlas-quick-row', onSubmit: look },
-      h('input', { className: 'atlas-input', autoFocus: true, value: q, onChange: (e) => setQ(e.target.value), placeholder: 'arXiv ID or link, DOI, or INSPIRE link', 'aria-label': 'The paper' }),
-      h('button', { type: 'submit', className: 'atlas-button is-small', disabled: busy || !q.trim() }, busy ? 'Looking…' : 'Look up')),
+      h(Input, { className: 'atlas-input', inputRef: entry, value: q, onChange: (e) => setQ(e.target.value), placeholder: 'arXiv ID or link, DOI, or INSPIRE link', 'aria-label': 'The paper' }),
+      h(Button, { type: 'submit', small: true, primary: true, disabled: busy || !q.trim() }, busy ? 'Looking…' : 'Look up')),
     error ? h('p', { className: 'atlas-askbar-error', role: 'alert' }, error) : null,
     found ? h('div', { className: 'atlas-quick-found' },
       h('p', { className: 'atlas-quick-title' }, found.title || q),
@@ -96,7 +85,7 @@ function QuickPaper({ ov, topic, done, flash }) {
 }
 
 /** A note or a LaTeX document in a topic's folder, made from the template and opened for writing. */
-function QuickNote({ kind, ov, topic, done, flash }) {
+function QuickNote({ kind, ov, topic, done, flash, entry }) {
   const choices = useMemo(() => topicChoices(ov), [ov]);
   const [title, setTitle] = useState('');
   const [forTopic, setForTopic] = useState(topic || '');
@@ -118,18 +107,18 @@ function QuickNote({ kind, ov, topic, done, flash }) {
     }
   };
   return h('form', { className: 'atlas-quick-body', onSubmit: create },
-    h('input', { className: 'atlas-input', autoFocus: true, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === 'tex' ? 'Title of the document' : 'Title of the note', 'aria-label': 'Title' }),
+    h(Input, { className: 'atlas-input', inputRef: entry, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === 'tex' ? 'Title of the document' : 'Title of the note', 'aria-label': 'Title' }),
     h('div', { className: 'atlas-quick-row' },
       h('label', { className: 'atlas-ref-for' }, h('span', null, 'For'),
-        h('select', { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic it belongs to' },
+        h(Select, { className: 'atlas-input', value: forTopic, onChange: (e) => setForTopic(e.target.value), 'aria-label': 'The topic it belongs to' },
           h('option', { value: '' }, 'Choose a topic…'),
           choices.map((c) => h('option', { key: c.file, value: c.file }, c.label)))),
       h('label', { className: 'atlas-ref-for atlas-quick-folder' }, h('span', null, 'In'),
-        h('input', { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value), 'aria-label': 'The folder inside the topic' }))),
+        h(Input, { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value), 'aria-label': 'The folder inside the topic' }))),
     h('div', { className: 'atlas-quick-row' },
       h('span', { className: 'atlas-path' }, target ? target.slice(dirOf(forTopic).length + 1) : forTopic ? 'Name it to see where it goes' : 'Choose the topic it belongs to'),
       h('span', { className: 'atlas-spacer' }),
-      h('button', { type: 'submit', className: 'atlas-button is-primary is-small', disabled: busy || !target }, busy ? 'Creating…' : kind === 'tex' ? 'Create and open' : 'Create and write')));
+      h(Button, { type: 'submit', primary: true, small: true, disabled: busy || !target }, busy ? 'Creating…' : kind === 'tex' ? 'Create and open' : 'Create and write')));
 }
 
 /** The Write page: the LaTeX documents the notes link, by topic, newest first, each with its build state. */
@@ -158,7 +147,7 @@ function WriteView({ overview: ov, go, version, onQuick }) {
     error ? h(ErrorNote, { error }) : null,
     data && groups.length === 0 ? h(Empty, null, 'No topic note links a LaTeX document yet. Link one from its topic’s note, or start one with New LaTeX document.') : null,
     groups.map((g) => h('section', { key: g.key, className: 'atlas-section' },
-      h('h2', null, g.topic ? h(TextButton, { onClick: () => go({ view: 'doc', path: g.topic.file }) }, g.topic.title) : 'Outside the topics', h('span', { className: 'atlas-count' }, g.docs.length)),
+      h('h2', null, g.topic ? h(TextButton, { 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: g.topic.file }) }, g.topic.title) : 'Outside the topics', h('span', { className: 'atlas-count' }, g.docs.length)),
       h('ul', { className: 'atlas-items' }, g.docs.map((d) => h('li', { key: d.file }, h(WriteRow, { d, go })))))));
 }
 
@@ -166,9 +155,9 @@ function WriteRow({ d, go }) {
   const built = Boolean(d.pdf && d.pdf.mtimeMs >= d.mtimeMs - 1000);
   const state = !d.pdf ? 'not built yet' : built ? `PDF ${dateOf(d.pdf.mtimeMs)}` : 'PDF older than the source';
   return h('div', { className: 'atlas-write-row' },
-    h('button', { type: 'button', className: 'atlas-item', title: d.file, onClick: () => go({ view: 'doc', path: d.file, edit: true, full: true }) },
+    h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': true, title: d.file, onClick: () => go({ view: 'doc', path: d.file, edit: true, full: true }) },
       h(Icon, { name: 'writing', size: 15 }),
       h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, d.title), h('span', { className: 'atlas-item-sub' }, `${baseName(d.file)} · changed ${dateOf(d.mtimeMs)}`)),
       h(Chip, { dot: !d.pdf ? 'var(--status-other)' : built ? 'var(--status-done)' : 'var(--status-waiting)' }, state)),
-    d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
+    d.pdf ? h(Button, { small: true, quiet: true, icon: 'paper', 'data-atlas-open': true, title: 'Open the PDF in a tab beside the page', onClick: () => go({ view: 'doc', path: d.pdf.path, link: true }) }, 'PDF') : null);
 }

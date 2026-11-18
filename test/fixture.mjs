@@ -7,6 +7,27 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// A small valid PDF with a real text layer for both preview and byte-range tests.
+// All fields (including the stream) are ASCII, so character and byte offsets agree.
+function readingSample() {
+  const stream = 'BT /F1 24 Tf 52 675 Td (Atlas reading fixture) Tj\n/F1 12 Tf 0 -36 Td (This synthetic page demonstrates selectable text.) Tj ET\n';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 540 720] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}endstream`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const entries = ['0000000000 65535 f '];
+  for (const [index, object] of objects.entries()) {
+    entries.push(`${String(pdf.length).padStart(10, '0')} 00000 n `);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  return pdf + `xref\n0 ${entries.length}\n${entries.join('\n')}\ntrailer\n<< /Size ${entries.length} /Root 1 0 R >>\nstartxref\n${pdf.length}\n%%EOF\n`;
+}
+const READING_PDF = readingSample();
+
 const FILES = {
   'topics/research.md': `# Research programme
 
@@ -75,7 +96,7 @@ The [mixing driver](code/mix.py) writes [the gap series](data/gap.csv).
   'topics/mc/worm/figures/gap.png': Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex'),
   'topics/mc/worm/code/mix.py': 'print("mix")\n',
   'topics/mc/worm/data/gap.csv': 'step,gap\n1,0.52\n2,0.51\n',
-  'topics/topology/readings/thouless.pdf': '%PDF-1.4 reading\n',
+  'topics/topology/readings/thouless.pdf': READING_PDF,
   'topics/topology/manuscript/draft.tex': '\\documentclass{article}\n\\begin{document}\n\\section{Edge}\n\\end{document}\n',
   'topics/mc/worm/stability/research.md': `# Sampling stability of the worm estimator
 
@@ -139,7 +160,7 @@ How to compare eigenstates whose phases are arbitrary.
 `,
   'knowledge/papers/1510.07698/01-intro.md': `# Section 1
 `,
-  'knowledge/library/arxiv/1510.07698v2/paper.pdf': '%PDF-1.4 fixture\n',
+  'knowledge/library/arxiv/1510.07698v2/paper.pdf': READING_PDF,
 };
 
 export async function makeFixture() {

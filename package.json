@@ -1,7 +1,7 @@
 {
   "name": "aitp-atlas",
-  "version": "0.9.2",
-  "description": "AITP Atlas for DeepSeek Harness: one workspace to learn, explore and research physics over AITP notes — the research universe, what waits on you and what is running (agent teams with Oh-My-BBFF), papers and lectures from arXiv and INSPIRE into the library, PDFs with selectable text, LaTeX built beside its PDF with SyncTeX and citations, review of what a discussion changed, search and learning views.",
+  "version": "0.10.0",
+  "description": "AITP Atlas for DeepSeek Harness: draft physics questions at the Desk, explore a map of research notes, and read papers, discuss passages and edit LaTeX in two panes. Review observed changes against saved note baselines.",
   "type": "module",
   "license": "MIT",
   "author": "Bohan Jia",

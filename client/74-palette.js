@@ -160,7 +160,7 @@ function AtlasCommandPalette({ items, recent, onClose, onRun }) {
     h('section', { ref: box, tabIndex: -1, role: 'dialog', 'aria-label': 'Command palette', 'aria-modal': true, 'data-atlas-overlay': true, className: 'atlas-palette' },
       h('div', { className: 'atlas-palette-query' }, h(Icon, { name: 'search', size: 20 }), h('input', {
         ref: input, role: 'combobox', 'aria-label': 'Find a command, place, topic or discussion', 'aria-controls': prefix + '-list', 'aria-expanded': true,
-        'aria-autocomplete': 'list', 'aria-activedescendant': found.length ? prefix + '-' + at : undefined,
+        'aria-autocomplete': 'list', 'aria-describedby': prefix + '-scope-hint', 'aria-activedescendant': found.length ? prefix + '-' + at : undefined,
         autoComplete: 'off', value: query, placeholder: 'Type a command, a place, a topic or a discussion…',
         onChange: (e) => { setQuery(e.target.value); setCursor(0); }, onKeyDown: key })),
       h('div', { className: 'atlas-palette-list', role: 'listbox', id: prefix + '-list', 'aria-label': 'Results' },
@@ -177,7 +177,9 @@ function AtlasCommandPalette({ items, recent, onClose, onRun }) {
                 r.detail && h('span', { className: 'atlas-palette-detail' }, r.detail), r.shortcut && h(Kbd, null, r.shortcut));
             })) : null;
         })),
-      h('div', { className: 'atlas-palette-foot' }, h('span', null, '↑ ↓  Move'), h('span', null, 'Enter  Run'), h('span', null, 'Shift+Enter  Open beside'), h('span', null, 'Esc  Close'))));
+      h('footer', { className: 'atlas-palette-foot' },
+        h('div', { className: 'atlas-palette-hints', id: prefix + '-scope-hint' }, h('span', null, '# topics'), h('span', null, '@ discussions & teams'), h('span', null, '> commands')),
+        h('div', { className: 'atlas-palette-hints' }, h('span', null, '↑ ↓  Move'), h('span', null, 'Enter  Run'), h('span', null, 'Shift+Enter  Open beside'), h('span', null, 'Esc  Close')))));
 }
 
 function useAtlasChrome(p) {
@@ -246,6 +248,6 @@ const ATLAS_PALETTE_CSS = `
 .atlas-palette-list{padding:6px;overflow:auto}.atlas-palette-group{padding:10px var(--s-12) var(--s-4);font:var(--t-cap);font-size:11px;font-variant-caps:all-small-caps;letter-spacing:.09em;color:var(--text-3)}
 .atlas-palette-row{height:36px;display:flex;align-items:center;gap:10px;padding:0 var(--s-12);border-radius:var(--r-sm);font:var(--t-ui);cursor:pointer}.atlas-palette-row .atlas-icon{flex:none;color:var(--text-3)}.atlas-palette-row[aria-selected=true]{background:var(--selected)}.atlas-palette-row[aria-disabled=true]{cursor:default;color:var(--text-3)}
 .atlas-palette-label,.atlas-palette-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.atlas-palette-detail{min-width:0;color:var(--text-3);font:var(--t-meta)}.atlas-palette-row kbd{margin-left:auto;flex:none}
-.atlas-palette-foot{min-height:36px;flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:var(--s-12);padding:0 18px;border-top:1px solid var(--border);font:var(--t-meta);color:var(--text-3)}.atlas-palette-empty{padding:var(--s-12);font:var(--t-count);color:var(--text-3)}
+.atlas-palette-foot{min-height:36px;flex:none;display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:var(--s-4) var(--s-16);padding:var(--s-4) 18px;border-top:1px solid var(--border);font:var(--t-meta);color:var(--text-3)}.atlas-palette-hints{display:flex;flex-wrap:wrap;gap:var(--s-4) var(--s-12);min-width:0}.atlas-palette-hints span{white-space:nowrap}.atlas-palette-empty{padding:var(--s-12);font:var(--t-count);color:var(--text-3)}
 .atlas-shortcut-list{margin:0}.atlas-shortcut-list>div{display:flex;align-items:center;justify-content:space-between;gap:var(--s-16);min-height:var(--s-32);border-top:1px solid var(--border);font:var(--t-ui)}.atlas-shortcut-list dd{margin:0;color:var(--text-2)}
 `;

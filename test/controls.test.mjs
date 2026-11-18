@@ -84,6 +84,14 @@ test('dialog focuses the field, wraps Tab both ways, recaptures escaped focus an
   dispose(); assert.equal(c.doc.activeElement, opener); assert.ok([...c.listeners.values()].every(fns => !fns.length));
 });
 
+test('a dialog replacing another returns focus to the connected opener, not the detached previous input', () => {
+  const c = harness(), previous = c.element(), button = c.element(), field = c.element(), modal = c.element([field]);
+  previous.focus(); c.useAtlasDialogFocus({ current: modal }, () => {}, { returnFocusRef: { current: previous } });
+  // Between render and layout effects, the old dialog unmounts and restores its trigger.
+  previous.isConnected = false; button.focus();
+  const close = c.flush(); assert.equal(c.doc.activeElement, field); close(); assert.equal(c.doc.activeElement, button);
+});
+
 test('menu focuses the requested end; arrows wrap, skip disabled, native click focuses opener before executing, Tab exits', () => {
   const c = harness(), log = [], anchor = c.element(), first = c.element(), last = c.element();
   const menu = c.Menu({ label: 'Pane', anchor, initial: 'last', onClose: () => log.push('close'), items: [

@@ -38,6 +38,8 @@ test('palette input: cycle the active option, Shift+Enter opens beside, narrowin
   const calls=[], rt=controlsRuntime(), items=['Alpha','Beta'].map(label=>({id:label,label,group:'Topics'}));
   const render=()=>rt.palette({items,recent:[],onClose(){},onRun:(item,beside)=>calls.push([item.id,beside])});
   const input=()=>nodes(render()).find(n=>n.type==='input').props;
+  const hint=nodes(render()).find(n=>n.props?.id===input()['aria-describedby']);
+  assert.deepEqual(hint.children.map(n=>n.children[0]), ['# topics','@ discussions & teams','> commands']);
   const press=(key,props={})=>input().onKeyDown({key, preventDefault(){},stopPropagation(){},...props});
   press('ArrowDown'); assert.equal(input()['aria-activedescendant'],':palette:-1'); press('Enter',{shiftKey:true});
   press('ArrowDown'); assert.equal(input()['aria-activedescendant'],':palette:-0'); press('ArrowUp');

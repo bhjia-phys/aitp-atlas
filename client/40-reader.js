@@ -52,7 +52,7 @@ function DocFrame({ path, type, ov, go, flash, navigate, data, editing, children
   const owner = (data && data.owner) || (info && info.owner) || fileOwner || null;
   const color = owner ? directionColor(ov, owner.direction || topicDirection(ov, owner.id)) : 'var(--accent)';
   const title = (data && data.title) || baseName(path) || path;
-  const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
+  const crumbs = [{ label: 'Desk', go: { view: 'home' } }];
   if (owner) crumbs.push({ label: shortTitle(owner.title, 34), dot: color, go: { view: 'doc', path: owner.file } });
   crumbs.push({ label: baseName(path) || path });
   const editable = data && data.editable && !editing;
@@ -77,7 +77,7 @@ function DocFrame({ path, type, ov, go, flash, navigate, data, editing, children
       h('div', { className: 'atlas-actions' },
         type === 'folder' ? null : h(AskMenu, { asks }),
         editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path, edit: true, full: type === 'tex' }), title: type === 'tex' ? 'Write it as the page, with its PDF in a Preview tab beside it' : undefined }, 'Edit') : null,
-        type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
+        type === 'folder' ? null : h(Button, { quiet: true, icon: 'folder', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(path) }) }, 'Folder'),
         h(Button, { quiet: true, icon: 'external', title: 'Open with the system app', onClick: () => openFile(path).then(() => flash('Opened with the system app.')).catch((e) => flash(e.message)) }, 'System app'))),
     data ? h(LinkedFrom, { refs: data.linkedFrom, go, label: 'Cited by' }) : null,
     h(DocThreads, { path }),
@@ -200,6 +200,8 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
   const [aspect, setAspect] = useState(1.294);
   const [error, setError] = useState(null);
   const [zoom, setZoom] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const actions = React.useContext(AtlasActions);
   const [width, setWidth] = useState(760);
   const box = useRef(null);
   const pane = usePaneName();
@@ -207,6 +209,7 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
     let cancelled = false;
     let task = null;
     setDoc(null);
+    setCurrentPage(1);
     setError(null);
     loadPdfjs()
       .then((lib) => {
@@ -233,7 +236,7 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => setWidth(Math.min(980, Math.max(320, el.clientWidth - 8))));
+    const ro = new ResizeObserver(() => { if (el.clientWidth > 0) setWidth(Math.max(1, el.clientWidth - 8)); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -252,6 +255,7 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
           page = n;
         }
       }
+      if (page) setCurrentPage(page);
       if (page && onPageRef.current) onPageRef.current(page);
       const all = focusStore.get();
       const focus = all.byTab[pane];
@@ -314,13 +318,14 @@ function PdfView({ path, src, flash, anchor, anchorAt, marker, onPage, onPageCli
         : h(Button, { icon: 'external', onClick: () => openFile(path).catch((e) => flash(e.message)) }, 'Open with the system app'));
   }
   return h('div', { className: cx('atlas-pdf', onPageClick && 'is-synced'), ref: box, onClick: onBoxClick },
-    h('div', { className: 'atlas-pdf-bar' },
-      h('span', { className: 'atlas-muted' }, doc ? plural(doc.numPages, 'page') : 'Loading…'),
+    h('div', { className: 'atlas-pdf-bar', role: 'group', 'aria-label': 'PDF controls' },
+      h('span', { className: 'atlas-pdf-place' }, doc ? `Page ${currentPage} / ${doc.numPages}` : 'Opening…'),
       h('span', { className: 'atlas-pdf-zoom' },
-        h(Button, { small: true, quiet: true, onClick: () => setZoom(Math.max(0.5, zoom - 0.15)), title: 'Smaller' }, '−'),
+        h(Button, { small: true, quiet: true, disabled: zoom <= 0.5, onClick: () => setZoom((z) => Math.max(0.5, z - 0.15)), 'aria-label': 'Zoom out', title: 'Zoom out' }, '−'),
         h('span', { className: 'atlas-muted' }, Math.round(zoom * 100) + '%'),
-        h(Button, { small: true, quiet: true, onClick: () => setZoom(Math.min(2.5, zoom + 0.15)), title: 'Larger' }, '+'),
-        h(Button, { small: true, quiet: true, onClick: () => setZoom(1), title: 'Fit the width' }, 'Fit'))),
+        h(Button, { small: true, quiet: true, disabled: zoom >= 2.5, onClick: () => setZoom((z) => Math.min(2.5, z + 0.15)), 'aria-label': 'Zoom in', title: 'Zoom in' }, '+'),
+        h(Button, { small: true, quiet: true, onClick: () => setZoom(1), title: 'Fit to pane width' }, 'Fit'),
+        h(Button, { small: true, quiet: true, disabled: !actions?.focusPane, onClick: () => actions.focusPane?.(pane), title: 'Focus this pane' }, 'Focus'))),
     doc ? Array.from({ length: doc.numPages }, (_, i) => h(PdfPage, { key: i, doc, number: i + 1, width: width * zoom, aspect })) : h(Loading, { label: 'Opening the PDF…' }));
 }
 
@@ -464,9 +469,9 @@ function PaperAside({ paper, path, go, flash, navigate, topics }) {
     map ? h(PaperNote, { map, path, navigate, go, at: reading.at })
       : h('form', { className: 'atlas-paper-start', onSubmit: start },
         h('p', { className: 'atlas-muted' }, 'No paper map yet. Start one from the collection’s template; passages you keep from the PDF go into its “Your reading”.'),
-        h('label', { className: 'atlas-field' }, h('span', null, "Why I'm reading it"), h('input', { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value) })),
-        h('label', { className: 'atlas-field' }, h('span', null, 'For'), h('select', { className: 'atlas-input', value: topic, onChange: (e) => setTopic(e.target.value) }, h('option', { value: '' }, 'No topic'), (topics || []).map((t) => h('option', { key: t.file, value: t.file }, t.title)))),
-        h('button', { type: 'submit', className: 'atlas-button is-small is-primary', disabled: busy }, busy ? 'Starting…' : 'Start a reading note')),
+        h('label', { className: 'atlas-field' }, h('span', null, "Why I'm reading it"), h(Input, { className: 'atlas-input', value: why, onChange: (e) => setWhy(e.target.value) })),
+        h('label', { className: 'atlas-field' }, h('span', null, 'For'), h(Select, { className: 'atlas-input', value: topic, onChange: (e) => setTopic(e.target.value) }, h('option', { value: '' }, 'No topic'), (topics || []).map((t) => h('option', { key: t.file, value: t.file }, t.title)))),
+        h(Button, { type: 'submit', small: true, primary: true, disabled: busy }, busy ? 'Starting…' : 'Start a reading note')),
     h('div', { className: 'atlas-actions' },
       h(Button, { small: true, icon: 'spark', onClick: discuss }, 'Discuss this paper'),
       /^\d{4}\.\d{4,5}$|^[a-z-]+\/\d{7}$/.test(paper.key) ? h('a', { className: 'atlas-button is-small is-quiet', href: `https://arxiv.org/abs/${edition}`, target: '_blank', rel: 'noreferrer' }, h(Icon, { name: 'external', size: 14 }), h('span', null, 'arXiv')) : null),
@@ -480,7 +485,7 @@ function PaperNote({ map, navigate, go, at }) {
   if (error) return h('p', { className: 'atlas-muted' }, error.message);
   const yours = readingSection(data.body);
   return h('div', { className: 'atlas-paper-note' },
-    h(TextButton, { className: 'atlas-paper-note-title', onClick: () => go({ view: 'doc', path: map }) }, data.title || baseName(map)),
+    h(TextButton, { className: 'atlas-paper-note-title', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: map }) }, data.title || baseName(map)),
     yours ? h('div', { className: 'atlas-paper-yours' }, h(Markdown, { text: yours, baseFile: map, onNavigate: navigate, compact: true }))
       : h('p', { className: 'atlas-muted' }, 'Nothing under “Your reading” yet.'));
 }
@@ -495,7 +500,7 @@ function FolderView({ path, go, navigate, onInfo }) {
   const readme = data.entries.find((e) => /^readme\.md$/i.test(e.name));
   const folders = data.entries.filter((e) => e.folder);
   const files = data.entries.filter((e) => !e.folder);
-  const row = (e) => h('li', { key: e.path }, h('button', { type: 'button', className: 'atlas-item', onClick: () => navigate({ path: e.path }) },
+  const row = (e) => h('li', { key: e.path }, h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': READ_HERE.has(typeOf(e.path)) || undefined, onClick: () => navigate({ path: e.path }) },
     h(Icon, { name: TYPE_ICON[e.type] || (e.folder ? 'folder' : 'note'), size: 15 }),
     h('span', { className: 'atlas-item-text' }, h('span', { className: 'atlas-item-label' }, e.name), h('span', { className: 'atlas-item-sub' }, e.folder ? 'folder' : `${TYPE_LABEL[e.type] || 'File'} · ${sizeOf(e.size)}`)),
     h('span', { className: 'atlas-date' }, dateOf(e.mtimeMs))));

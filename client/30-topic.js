@@ -44,6 +44,30 @@ function splitNote(body) {
   };
 }
 
+// Limit each group independently; collapsing one does not throw away the remaining records.
+function TopicShelf({ id, title, icon, items, renderItem, defaultOpen = true, empty, footer, hint }) {
+  const [all, setAll] = useState(false);
+  return h(Fold, { id, title, icon, count: items.length, defaultOpen }, () => h(React.Fragment, null,
+    hint ? h('p', { className: 'atlas-shelf-hint' }, hint) : null,
+    items.length ? h('ul', { className: 'atlas-items' }, (all ? items : items.slice(0, 5)).map((item, i) => h('li', { key: item.id || item.key || `${i}:${item.path || item.url || ''}` }, renderItem(item)))) : empty,
+    items.length > 5 ? h('button', { type: 'button', className: 'atlas-shelf-more', 'aria-expanded': all, 'aria-label': all ? `Show fewer: ${title}` : `Show all ${items.length}: ${title}`, onClick: () => setAll(!all) }, all ? 'Show fewer' : `Show all (${items.length})`) : null,
+    footer));
+}
+
+// M1 keeps the local, session-checked 0.9 index; do not count other browsers' discussions.
+function TopicDiscussionShelf({ file }) {
+  const actions = React.useContext(AtlasActions);
+  const threads = useThreadIndex();
+  const rows = useSessionRows();
+  const list = threads.filter((t) => t.context?.topic?.path && pathKey(t.context.topic.path) === pathKey(file) && knownThread(rows, t))
+    .sort((a, b) => Number(a.status === 'resolved') - Number(b.status === 'resolved') || b.created - a.created);
+  return h(TopicShelf, { id: `${file}#discussions`, title: 'Discussions', icon: 'spark', items: list,
+    hint: 'From the Atlas index in this browser.',
+    empty: h(Empty, null, 'No discussions about this topic yet.'),
+    renderItem: (t) => h(React.Fragment, null, h(ThreadRow, { t, row: rowOf(rows, t.id), current: actions.current === t.id, onOpen: () => actions.openThread(t.id) }), t.status === 'resolved' ? h('span', { className: 'atlas-shelf-hint' }, 'Resolved') : null),
+    footer: h(Button, { small: true, icon: 'spark', onClick: () => actions.startAsk({}) }, 'Ask about this topic') });
+}
+
 function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
   const t = data.topic;
   const parts = useMemo(() => splitNote(data.body), [data.body]);
@@ -72,8 +96,8 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
   const color = t.isRoot ? 'var(--gold)' : directionColor(ov, dirSlug);
   const [creating, setCreating] = useState(false);
   usePublishFocus({ kind: 'topic', topic: { id: t.id, title: t.title || 'Root note', path: data.path } }, [data.path, t.title]);
-  const crumbs = [{ label: 'Universe', go: { view: 'home' } }];
-  if (t.directionHeading) crumbs.push({ label: t.directionHeading.replace(/^\d+\.\s*/, ''), dot: color, go: { view: 'home', anchor: dirSlug } });
+  const crumbs = [{ label: 'Desk', go: { view: 'home' } }];
+  if (t.directionHeading) crumbs.push({ label: t.directionHeading.replace(/^\d+\.\s*/, ''), dot: color, go: { view: 'map', anchor: dirSlug } });
   for (const a of t.ancestors.filter((a) => a.id !== '')) crumbs.push({ label: shortTitle(a.title, 34), go: { view: 'doc', path: a.file } });
   crumbs.push({ label: t.isRoot ? 'Root note' : shortTitle(t.title, 40) });
   const counts = t.counts || {};
@@ -84,6 +108,7 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
     counts.papers ? plural(counts.papers, 'paper or source', 'papers and sources') : null,
   ].filter(Boolean);
   const groups = (t.contents || []).filter((g) => g.key !== 'branches');
+  const incoming = data.linkedFrom.filter((r) => !t.children.some((c) => c.id === r.id));
   return h('div', { className: 'atlas-page is-wide atlas-topic', style: { '--dir': color } },
     h(Crumbs, { items: crumbs, go }),
     h('header', { className: 'atlas-topic-head' },
@@ -98,7 +123,7 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
         h(AskMenu, { asks: t.isRoot ? [{ key: 'continue', label: 'Continue the research', hint: 'Resume the authorized task', prompt: 'Continue the research.' }] : topicAsks() }),
         data.editable ? h(Button, { icon: 'edit', onClick: () => go({ view: 'doc', path: data.path, edit: true }) }, 'Edit note') : null,
         h(Button, { icon: 'plus', onClick: () => setCreating(!creating) }, 'New note'),
-        h(Button, { icon: 'folder', quiet: true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
+        h(Button, { icon: 'folder', quiet: true, 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: dirOf(data.path) }) }, 'Folder')),
       creating ? h(NewNote, { dir: dirOf(data.path), go, flash, onClose: () => setCreating(false) }) : null),
     t.context ? h('blockquote', { className: 'atlas-context' }, h('span', { className: 'atlas-label' }, 'The root says'), h('span', null, t.context)) : null,
     h(PendingEdits, { path: data.path, at: data.mtimeMs }),
@@ -112,21 +137,18 @@ function TopicWorkspace({ data, ov, go, flash, navigate, anchor, anchorAt }) {
             account.map((s) => h(Fold, { key: s.key, id: data.path + '#' + s.key, domId: sec + s.index, reveal: reveal.key === s.key ? reveal.n : 0, title: s.heading }, () => h(Markdown, { text: s.text, baseFile: data.path, onNavigate: navigate }))))
           : null),
       h('aside', { className: 'atlas-topic-side', 'aria-label': 'What this topic holds' },
-        h(Discussions, { match: (d) => Boolean(d.context.topic && d.context.topic.path === data.path) }),
-        t.children.length > 0
-          ? h('section', { className: 'atlas-side-block' },
-            h('h2', null, h(Icon, { name: 'branch' }), 'Branches', h('span', { className: 'atlas-count' }, t.children.length)),
-            t.children.map((c) => h('button', { key: c.id, type: 'button', className: 'atlas-branch', onClick: () => go({ view: 'doc', path: c.file }) },
-              h('span', { className: 'atlas-branch-title' }, c.title),
-              c.latest ? h('span', { className: 'atlas-branch-latest' }, c.latest.status ? h(StatusTag, { status: c.latest.status }) : null, h('span', null, c.latest.name)) : c.lead ? h('span', { className: 'atlas-branch-latest' }, c.lead) : null,
-              h('span', { className: 'atlas-date' }, c.date))))
-          : null,
-        h('section', { className: 'atlas-side-block' },
-          h('h2', null, h(Icon, { name: 'library' }), 'Contents'),
-          groups.length === 0 ? h(Empty, null, 'This note links no files yet.') : null,
-          groups.map((g) => h(Fold, { key: g.key, id: data.path + '#contents:' + g.key, title: g.title, count: g.items.length, icon: GROUP_ICON[g.key], defaultOpen: g.items.length <= 8 && ['notes', 'papers', 'writing'].includes(g.key) },
-            () => h('ul', { className: 'atlas-items' }, g.items.map((item, i) => h('li', { key: i }, h(ContentItem, { item, go, navigate }))))))),
-        h(LinkedFrom, { refs: data.linkedFrom.filter((r) => !t.children.some((c) => c.id === r.id)), go }))));
+        h(TopicDiscussionShelf, { key: data.path, file: data.path }),
+        t.children.length ? h(TopicShelf, { key: `${data.path}#branches`, id: `${data.path}#branches`, title: 'Branches', icon: 'branch', items: t.children,
+          renderItem: (c) => h('button', { type: 'button', className: 'atlas-branch', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: c.file }) },
+            h('span', { className: 'atlas-branch-title' }, c.title),
+            c.latest ? h('span', { className: 'atlas-branch-latest' }, c.latest.status ? h(StatusTag, { status: c.latest.status }) : null, h('span', null, c.latest.name)) : c.lead ? h('span', { className: 'atlas-branch-latest' }, c.lead) : null,
+            h('span', { className: 'atlas-date' }, c.date)) }) : null,
+        h(TopicShelf, { key: `${data.path}#contents`, id: `${data.path}#contents`, title: 'Contents', icon: 'library', items: groups,
+          empty: h(Empty, null, 'This note links no files yet.'),
+          renderItem: (g) => h(TopicShelf, { id: `${data.path}#contents:${g.key}`, title: g.title, items: g.items, icon: GROUP_ICON[g.key],
+            defaultOpen: g.items.length <= 8 && ['notes', 'papers', 'writing'].includes(g.key), renderItem: (item) => h(ContentItem, { item, navigate }) }) }),
+        incoming.length ? h(TopicShelf, { key: `${data.path}#incoming`, id: `${data.path}#incoming`, title: 'Linked from', icon: 'note', items: incoming,
+          renderItem: (r) => h('button', { type: 'button', className: 'atlas-item', 'data-atlas-open': true, onClick: () => go({ view: 'doc', path: r.file }) }, r.title) }) : null)));
 }
 
 function ContentItem({ item, navigate }) {
@@ -138,7 +160,7 @@ function ContentItem({ item, navigate }) {
     }
     else if (!missing) navigate({ path: item.path, anchor: item.anchor });
   };
-  return h('button', { type: 'button', className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
+  return h('button', { type: 'button', 'data-atlas-open': !missing && (item.url ? paperLink(item.url) : READ_HERE.has(typeOf(item.path))) || undefined, className: cx('atlas-item', missing && 'is-missing'), onClick, disabled: missing, title: item.url || item.path },
     h(Icon, { name: TYPE_ICON[item.type] || 'note', size: 15 }),
     h('span', { className: 'atlas-item-text' },
       h('span', { className: 'atlas-item-label' }, item.label),
@@ -195,12 +217,11 @@ function NewNote({ dir, go, flash, onClose }) {
     }
   };
   return h('form', { className: 'atlas-newnote', onSubmit: create },
-    h('label', null, h('span', null, 'Title'), h('input', { className: 'atlas-input', value: title, onChange: (e) => setTitle(e.target.value), placeholder: 'e.g. Spectral flow and the edge anomaly', autoFocus: true })),
-    h('label', null, h('span', null, 'Folder'), h('input', { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value) })),
-    h('div', { className: 'atlas-seg', role: 'radiogroup', 'aria-label': 'Kind' },
-      [['md', 'Markdown note'], ['tex', 'LaTeX']].map(([k, label]) => h('button', { key: k, type: 'button', role: 'radio', 'aria-checked': kind === k, className: cx('atlas-seg-item', kind === k && 'is-on'), onClick: () => setKind(k) }, label))),
+    h('label', null, h('span', null, 'Title'), h(Input, { className: 'atlas-input', value: title, onChange: (e) => setTitle(e.target.value), placeholder: 'e.g. Spectral flow and the edge anomaly', autoFocus: true })),
+    h('label', null, h('span', null, 'Folder'), h(Input, { className: 'atlas-input', value: folder, onChange: (e) => setFolder(e.target.value) })),
+    h(Segmented, { label: 'Kind', value: kind, onChange: setKind, options: [{ value: 'md', label: 'Markdown note' }, { value: 'tex', label: 'LaTeX' }] }),
     h('div', { className: 'atlas-newnote-foot' },
       h('span', { className: 'atlas-path' }, target ? target.slice(dir.length + 1) : 'Name the note to see its path'),
       h(Button, { quiet: true, onClick: onClose }, 'Cancel'),
-      h('button', { type: 'submit', className: 'atlas-button is-primary', disabled: busy || !target }, busy ? 'Creating…' : 'Create and edit')));
+      h(Button, { type: 'submit', primary: true, disabled: busy || !target }, busy ? 'Creating…' : 'Create and edit')));
 }

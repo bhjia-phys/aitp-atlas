@@ -166,10 +166,12 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     assert.equal(pdf.status, 200);
     assert.equal(pdf.headers['content-type'], 'application/pdf');
     assert.match(pdf.headers['content-security-policy'], /sandbox/);
-    assert.equal(pdf.buffer.toString('utf8'), '%PDF-1.4 reading\n');
+    const fixturePdf = await fsp.readFile(fx.file('topics/topology/readings/thouless.pdf'));
+    assert.deepEqual(pdf.buffer, fixturePdf);
+    assert.match(pdf.buffer.toString('ascii'), /\(Atlas reading fixture\) Tj/);
     const part = await call(h.routes, 'GET', 'raw', { query: q(fx.file('topics/topology/readings/thouless.pdf')), headers: { range: 'bytes=0-3' }, raw: true });
     assert.equal(part.status, 206);
-    assert.equal(part.headers['content-range'], 'bytes 0-3/17');
+    assert.equal(part.headers['content-range'], `bytes 0-3/${fixturePdf.length}`);
     assert.equal(part.buffer.toString('utf8'), '%PDF');
     assert.equal((await call(h.routes, 'GET', 'raw', { query: q(fx.file('topics/mc/worm/research.md')) })).status, 415);
     const dir = (await call(h.routes, 'GET', 'dir', { query: q(fx.file('topics/mc/worm')) })).json;

@@ -1,5 +1,5 @@
 // ------------------------------------------------------------------ review ---
-// What a discussion changed in the notes, beside the discussion: each edit with
+// What changed since this discussion's saved copies (not who made it): each edit with
 // the section it sits in, the removed and added words marked, and Keep or
 // Revert. Atlas kept a copy of the notes when it started the discussion; the
 // server compares against it and only reverts where the note still shows the
@@ -59,10 +59,7 @@ function ReviewPanel({ sessionId, running, flash }) {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState('');
   const load = useCallback(() => api('review/changes', { query: { session: sessionId } }).then(setData, () => {}), [sessionId]);
-  useEffect(() => {
-    load();
-  }, [load]);
-  // While the discussion works its edits appear as they land; when it is idle, now and then (members of a team may still write).
+  // Poll more frequently while running; a change can also come from outside this session.
   useEffect(() => {
     load();
     const timer = setInterval(load, running ? 4000 : 15000);
@@ -76,15 +73,17 @@ function ReviewPanel({ sessionId, running, flash }) {
     try {
       setData(await api(`review/${kind}`, { method: 'POST', body: { session: sessionId, path: file, id } }));
       if (kind === 'revert') flash('Reverted: the earlier text is back in the note.');
+      return true;
     } catch (error) {
       flash(error.message);
       load();
+      return false;
     } finally {
       setBusy('');
     }
   };
   const keepAll = async () => {
-    for (const f of files) await act('keep', f.path, 'all');
+    for (const f of files) if (!await act('keep', f.path, 'all')) return;
     flash('Kept: the edits stay in the notes.');
   };
   const draft = (text) => {
@@ -92,21 +91,21 @@ function ReviewPanel({ sessionId, running, flash }) {
     else flash('Atlas could not put it into the discussion.');
   };
   const names = files.map((f) => baseName(f.path)).join(', ');
-  return h('section', { className: 'atlas-review', 'aria-label': 'What this discussion changed' },
+  return h('section', { className: 'atlas-review', 'aria-label': 'Changes since this discussion’s baseline' },
     h('button', { type: 'button', className: 'atlas-review-head', 'aria-expanded': open, onClick: () => setOpen(!open) },
-      h('span', null, 'What this discussion changed'),
+      h('span', null, 'Changes since the baseline'),
       h('span', { className: 'atlas-chip is-new' }, plural(count, 'edit')),
       h('span', { className: 'atlas-review-toggle' }, open ? 'Hide' : 'Show')),
     open ? h('div', { className: 'atlas-review-body' },
-      h('p', { className: 'atlas-muted' }, `${files.map((f) => `${baseName(f.path)} · ${plural(f.edits.length, 'edit')}`).join('; ')}. Keep or revert each; a revert puts the earlier text back.`),
+      h('p', { className: 'atlas-muted' }, 'Compared with the copies saved for this discussion. These changes are already in the notes; the comparison does not identify who made them. Keep accepts the current text. Revert restores the earlier text.'),
       files.map((f) => f.edits.map((e) => h(EditCard, { key: f.path + e.id, file: f.path, edit: e, busy, onKeep: () => act('keep', f.path, e.id), onRevert: () => act('revert', f.path, e.id) }))),
       h('div', { className: 'atlas-review-actions' },
         h(Button, { small: true, primary: true, disabled: Boolean(busy), onClick: keepAll }, count > 1 ? 'Keep all' : 'Keep it'),
-        h(Button, { small: true, quiet: true, onClick: () => draft(`Run an independent AITP review of the edits you made to ${names} before I keep them: check each against the work it reports.`) }, 'Run an independent review'),
+        h(Button, { small: true, quiet: true, onClick: () => draft(`Independently review the changes observed in ${names} since this discussion’s baseline. Check each against the work it reports; do not assume who wrote it.`) }, 'Run an independent review'),
         h(Button, { small: true, quiet: true, onClick: () => draft('File the settled result where AITP says it belongs; your edits will appear in Atlas for my review.') }, 'File the settled result'))) : null);
 }
 
-/** On a topic page: unreviewed edits that discussions made to this note. */
+/** On a topic page: sessions whose baseline differs from the note. Baselines can overlap. */
 function PendingEdits({ path, at }) {
   const actions = React.useContext(AtlasActions);
   const threads = useThreadIndex();
@@ -115,9 +114,9 @@ function PendingEdits({ path, at }) {
   if (!list.length) return null;
   return h('div', { className: 'atlas-banner atlas-pending', role: 'status' },
     h(Icon, { name: 'edit' }),
-    h('span', null, 'Unreviewed edits in this note:'),
+    h('span', null, 'Changes compared with saved baselines:'),
     list.map((s) => {
       const t = threads.find((x) => x.id === s.session);
-      return h(TextButton, { key: s.session, onClick: () => actions.openThread(s.session), title: 'Open the discussion and review its edits' }, `${plural(s.edits, 'edit')} from ${t ? shortTitle(threadLabel(t), 48) : 'a discussion'}`);
+      return h(TextButton, { key: s.session, onClick: () => actions.openThread(s.session), title: 'Review the comparison in this discussion' }, `${t ? shortTitle(threadLabel(t), 48) : 'Discussion'} · ${plural(s.edits, 'edit')}`);
     }));
 }
