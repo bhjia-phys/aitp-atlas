@@ -31,12 +31,12 @@ When you ask about a passage, Atlas sends the topic, file, section or PDF page a
 
 ## Quick start
 
-1. **Install the bundle** in DeepSeek Harness 0.2.2 or a later compatible 0.2.x version. Open **Plugins → Add plugin** and enter the path to the `.tgz`, or run the command below. To build a bundle from a checkout, run `npm pack` with Node.js 22 or later.
+1. **Install Atlas and AITP Skills together** in DeepSeek Harness 0.2.2 or a later compatible 0.2.x version. If you use DSH Desktop, open it once to create its profile and then fully quit it. Run the installer below with Node.js 22 or later. It adds both bundles to the same DSH profile. From a source checkout, run `npm pack` to build the Atlas `.tgz` and use `scripts/install-dsh.mjs` as the installer path.
 2. **Point Atlas at your research folder.** Add the following entry to the profile's `cordis.patch.yml` and restart DSH. Set `root` to an existing folder on the DSH host. See the [installation guide](docs/guide.md#install) for Windows and WSL paths and shared-library settings.
-3. **Open Atlas** from the sidebar. An existing `research.md` opens directly. For an empty folder, use **Initialize workspace**, then **Start a research topic**. Install the [AITP Skills for DSH](https://github.com/bhjia-phys/AITP-Research-Protocol/blob/main/plugins/aitp/README.md) in the same profile to guide the research discussion.
+3. **Open Atlas** from the sidebar. An existing `research.md` opens directly. For an empty folder, use **Initialize workspace**, then **Start a research topic**. The discussion can use the installed AITP Skills to get started.
 
 ```sh
-dsh plugin --profile desktop add /path/to/aitp-atlas-0.9.1.tgz
+node install-dsh.mjs desktop ./aitp-atlas-0.9.2.tgz
 ```
 
 ```yaml

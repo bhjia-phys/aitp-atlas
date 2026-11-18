@@ -128,18 +128,23 @@ words, never your files. Requests go through the proxy in `HTTPS_PROXY`/`HTTP_PR
 
 ## Install
 
-1. Use a compatible DeepSeek Harness release (0.2.2 or a later compatible 0.2.x release).
-   In DSH, open **Plugins → Add plugin** and enter the absolute path to the Atlas `.tgz` file.
-   From a shell with DSH on the path, use `dsh plugin --profile desktop add /path/to/aitp-atlas-0.9.1.tgz`.
-   Use `--profile web` for a web installation. The package includes the compiled client and PDF reader.
+1. Use a compatible DeepSeek Harness release (0.2.2 or a later compatible 0.2.x release)
+   and Node.js 22 or later. Open DSH Desktop once to initialize its profile, then fully
+   quit it. Run `node install-dsh.mjs desktop ./aitp-atlas-0.9.2.tgz`.
+   Replace `desktop` with `web` for a web installation. On Windows, the installer finds the
+   standard Desktop installation. On other platforms, put `dsh` on your path.
+   The installer installs both bundles in one DSH operation and fetches the pinned `plugins/aitp`
+   bundle from the [AITP repository](https://github.com/bhjia-phys/AITP-Research-Protocol).
+   If this profile already has the standalone AITP Skills bundle installed, the installer reuses
+   it with its current version and enablement. In a source checkout, the same command is
+   `npm run install:dsh -- desktop ./aitp-atlas-0.9.2.tgz` after `npm pack`.
 2. Choose an existing research folder on the host running DSH. In that profile's `cordis.patch.yml`
    (normally under `~/.dsh/profiles/<profile>/`), add the entry below and restart DSH. On Windows,
    use a drive path such as `C:/Research/topics` or a Windows-accessible WSL path as in the example.
 3. Open **Atlas** in the sidebar. If the folder already contains its AITP `research.md`, Atlas
    opens it directly. For a fresh workspace, click **Initialize workspace** to create a starter
    `research.md` in that folder. Choose **Start a research topic** to open a discussion about the first
-   topic. With the [AITP Skills](https://github.com/bhjia-phys/AITP-Research-Protocol) in the same
-   profile, the discussion can use `aitp-memory` to set up the topic and link it to the root note.
+   topic. The discussion can use `aitp-memory` to set up the topic and link it to the root note.
 
 An id-targeted patch replaces the whole config. If `id: aitp-atlas` is already present, update
 that entry and retain any settings you want to keep.
@@ -179,7 +184,7 @@ Agent Teams, with roles and model tiers supplied by
 node build-client.mjs   # client.js from client/*.js
 npm test                # reader, host, client, web, LaTeX and review tests (a real WSL build when TeX is there)
 npm pack                # installable .tgz, with a check that the compiled client is current
-npm run test:dsh -- ./aitp-atlas-0.9.1.tgz  # test the package in isolated DSH profiles
+npm run test:dsh -- ./aitp-atlas-0.9.2.tgz  # test both bundles in isolated DSH profiles
 ```
 
 `client/*.js` are concatenated, in file-name order, into one factory scope inside DSH's module
