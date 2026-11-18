@@ -5982,7 +5982,7 @@ window.__ModuleLoader__.load({
         }
       };
       const keepAll = async () => {
-        for (const f of files) if (!await act('keep', f.path, 'all')) return;
+        for (const f of files) if (!await act('keep', f.path, f.keepAllId)) return;
         flash('Kept: the edits stay in the notes.');
       };
       const draft = (text) => {

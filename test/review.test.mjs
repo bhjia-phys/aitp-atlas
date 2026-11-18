@@ -27,7 +27,7 @@ test('review: line edits, and where each sits', () => {
   const edits = editsOf('x\ny\nx\n', 'x\nY\nx\n');
   assert.equal(edits.length, 1);
   assert.deepEqual([edits[0].removed, edits[0].added, edits[0].line], [['y'], ['Y'], 2]);
-  assert.match(edits[0].id, /^[0-9a-f]{12}-1$/);
+  assert.match(edits[0].id, /^[0-9a-f]{64}-1$/);
 });
 
 test('review: two sessions and a human edit are a shared observation, never a per-discussion rollback', async t => {
@@ -45,11 +45,70 @@ test('review: two sessions and a human edit are a shared observation, never a pe
   }
   assert.deepEqual(await b.rollup(['first','second','first'], () => true), [{session:'first',edits:1,shared:true},{session:'second',edits:1,shared:true}]);
   assert.deepEqual(await a.rollup(['first'], () => false), []);
-  await a.keep('first', file, 'all'); await a.forget('first');
+  await a.keep('first', file, (await a.changes('first')).files[0].keepAllId); await a.forget('first');
   const reloaded = createReview({ stateDir, workspace: fx.root });
   const remaining = (await reloaded.changes('second')).files[0];
   assert.ok(remaining.shared); await assert.rejects(reloaded.revert('second', file, remaining.edits[0].id), /will not revert/);
   assert.equal(await fsp.readFile(file, 'utf8'), human);
+});
+
+test('review: stale Keep, Revert and Keep all cannot retarget a repeated hunk or accept unseen changes', async t => {
+  const fx = await makeFixture(); t.after(() => fx.cleanup());
+  const stateDir = fx.file('review-state'), file = fx.file('topics/mc/worm/research.md');
+  const api = createReview({stateDir, workspace: fx.root});
+  const session = 'duplicates';
+  const note = (a,b) => `## A\n${a}\n\n## B\n${b}\n`;
+  await fsp.writeFile(file, note('old','old'));
+  await api.baseline(session,[file]);
+  await fsp.writeFile(file, note('new','new'));
+  const shown = (await api.changes(session)).files[0];
+  assert.deepEqual(shown.edits.map(e=>e.where), ['A','B']);
+  assert.notEqual(shown.edits[0].id,shown.edits[1].id);
+  assert.deepEqual((await api.changes(session)).files[0],shown,'polls are stable while both texts are unchanged');
+  const conflict = e => e.statusCode === 409 && /baseline changed/.test(e.message);
+  await fsp.writeFile(file, note('old','new')); // the human restored A; B now has the first occurrence
+  await assert.rejects(api.revert(session,file,shown.edits[0].id),conflict);
+  await assert.rejects(api.keep(session,file,shown.edits[0].id),conflict);
+  await assert.rejects(api.keep(session,file,shown.keepAllId),conflict);
+  await assert.rejects(api.keep(session,file,'all'),conflict); // a cached older client must fail closed
+  assert.equal(await fsp.readFile(file,'utf8'),note('old','new'));
+  assert.deepEqual((await api.changes(session)).files[0].edits.map(e=>e.where),['B']);
+  // A restored comparison is valid again. Accept A; the note stays unchanged but the baseline moves.
+  await fsp.writeFile(file, note('new','new'));
+  const next = (await api.keep(session,file,shown.edits[0].id)).files[0];
+  await assert.rejects(api.keep(session,file,shown.keepAllId),conflict);
+  await assert.rejects(api.revert(session,file,shown.edits[1].id),conflict);
+  assert.deepEqual(next.edits.map(e=>e.where),['B']);
+  assert.deepEqual((await api.keep(session,file,next.keepAllId)).files,[]);
+  assert.equal(await fsp.readFile(file,'utf8'),note('new','new'));
+});
+
+test('unbound 0.x baseline on shared knowledge: neither research root can list, claim, keep, revert or forget it', async t => {
+  const a = await makeFixture(), b = await makeFixture(); t.after(a.cleanup); t.after(b.cleanup);
+  const stateDir = a.file('review-state'), knowledge = a.file('knowledge'), file = path.join(knowledge,'index.md');
+  const session = 'unscoped-old', stored = path.join(stateDir,`${session}.json`);
+  const before = await fsp.readFile(file,'utf8');
+  // Real 0.x shape: no workspace or format tag. Either workspace legitimately reads this knowledge file.
+  const key = process.platform === 'win32' ? file.toLowerCase() : file;
+  const legacy = JSON.stringify({session, files:{[key]:{path:file,text:before,takenAt:1}}, updated:1});
+  await fsp.mkdir(stateDir); await fsp.writeFile(stored,legacy);
+  const current = before + '\nA human changed the shared index.\n'; await fsp.writeFile(file,current);
+  for (const root of [a.root,b.root]) {
+    const routes = host({root,knowledge,stateDir});
+    const get = (name,query) => call(routes,'GET',name,{query});
+    const post = (name,body) => call(routes,'POST',name,{body});
+    // Old cached id and a current, valid registry record still do not establish baseline ownership.
+    await post('discussions',{id:session});
+    assert.equal((await get('review/changes',`session=${session}`)).status,403);
+    assert.equal((await post('review/baseline',{session,files:[file]})).status,403);
+    for (const method of ['keep','revert']) assert.equal((await post(`review/${method}`,{session,path:file,id:'cached'})).status,403);
+    assert.equal((await post('review/forget',{session})).status,403);
+    const pending=await get('review/pending',`path=${encodeURIComponent(file)}`); assert.equal(pending.status,200); assert.deepEqual(pending.json.sessions,[]);
+    const needs=await get('needs','fresh=1'); assert.equal(needs.status,200); assert.deepEqual(needs.json.reviews,[]);
+  }
+  // Scanning for overlap while starting a tagged comparison must not rewrite the unbound peer either.
+  const live = createReview({stateDir,workspace:b.root}); await live.baseline('new-scoped',[file]);
+  assert.equal(await fsp.readFile(stored,'utf8'),legacy); assert.equal(await fsp.readFile(file,'utf8'),current);
 });
 
 const COOKIE = 'dsh-browser=signed';

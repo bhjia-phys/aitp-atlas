@@ -84,7 +84,7 @@ function ReviewPanel({ sessionId, running, flash }) {
     }
   };
   const keepAll = async () => {
-    for (const f of files) if (!await act('keep', f.path, 'all')) return;
+    for (const f of files) if (!await act('keep', f.path, f.keepAllId)) return;
     flash('Kept: the edits stay in the notes.');
   };
   const draft = (text) => {
