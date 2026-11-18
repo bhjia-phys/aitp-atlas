@@ -17,11 +17,11 @@ function useAtlasCatalog(store) {
 const ATLAS_CHROME_KEYS = [
   ['palette', 'Command palette', 'Ctrl+Shift+P', 'Ctrl+.'], ['search', 'Search', '/'], ['quick', 'Add or write', 'N'],
   ['newDiscussion', 'New discussion', 'Ctrl+Shift+J'], ['ask', 'Ask about this', 'Ctrl+J'],
-  ['rail', 'Toggle the rail', 'Ctrl+\\', 'Ctrl+Shift+\\'], ['focus', 'Focus pane', 'Ctrl+Shift+F', 'Ctrl+Alt+F'],
+  ['destinations', 'Open Atlas destinations', 'Ctrl+\\', 'Ctrl+Shift+\\'], ['focus', 'Focus pane', 'Ctrl+Shift+F', 'Ctrl+Alt+F'],
   ['full', 'Full screen (in Focus)', 'Shift+F11'], ['next', 'Next tab', 'Ctrl+Tab', 'Ctrl+PageDown'],
   ['previous', 'Previous tab', 'Ctrl+Shift+Tab', 'Ctrl+PageUp'], ['close', 'Close tab', 'Ctrl+W', 'Ctrl+Alt+W'],
   ['reopen', 'Reopen closed tab', 'Ctrl+Shift+T'], ['moveLeft', 'Move tab to other pane', 'Ctrl+Alt+←'], ['moveRight', 'Move tab to other pane', 'Ctrl+Alt+→'],
-  ...ATLAS_RAIL_PLACES.map(([id, label], i) => [id, label, `Alt+${i + 1}`]),
+  ...ATLAS_DESTINATIONS.map(([id, label], i) => [id, label, `Alt+${i + 1}`]),
 ];
 function atlasPhysicalKey(combo) {
   const parts = combo.split('+');
@@ -104,7 +104,7 @@ function atlasPaletteResults(items, input, recent = [], now = Date.now()) {
   return [...groups.values()].flatMap((rows) => rows.sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 6).map((r) => r.item)).slice(0, 30);
 }
 
-function atlasPaletteItems(p, threads, rows, bindings, focus, onMode, onShortcuts) {
+function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, onShortcuts) {
   const shortcuts = new Map(bindings.map((b) => [b.id, b.combo]));
   const commands = [];
   function cmd(id, label, icon, run, detail = '', disabled = false) {
@@ -118,12 +118,12 @@ function atlasPaletteItems(p, threads, rows, bindings, focus, onMode, onShortcut
   cmd('tex', 'New LaTeX document', 'writing', () => p.onQuick('tex'));
   cmd('focus', focus.focused ? 'Exit focus' : 'Focus pane', 'expand', focus.toggleFocus);
   cmd('full', 'Full screen', 'expand', focus.fullscreen, focus.focused ? '' : 'Enter Focus first', !focus.focused);
-  cmd('rail', 'Toggle the rail', 'panel', () => onMode('hidden'));
+  cmd('destinations', 'Open Atlas destinations', 'mark', onDestinations);
   cmd('split', 'Split', 'split', () => p.onSplit()); cmd('moveLeft', 'Move tab to the other pane', 'move', () => p.onMove());
   cmd('reopen', 'Reopen closed tab', 'back', () => p.onReopen());
   for (const mode of p.themeModes) cmd('theme:' + mode, 'Theme: ' + (mode === 'auto' ? 'Auto' : THEME_LABEL[mode] || mode), THEME_ICON[mode] || 'contrast', () => p.onTheme(mode));
   cmd('refresh', 'Read the files again', 'refresh', () => p.onRefresh()); cmd('keys', 'Keyboard shortcuts', 'keyboard', onShortcuts);
-  const places = ATLAS_RAIL_PLACES.map(([id, label, icon]) => ({ group: 'Places', id: 'place:' + id, label, icon,
+  const places = ATLAS_DESTINATIONS.map(([id, label, icon]) => ({ group: 'Places', id: 'place:' + id, label, icon,
     shortcut: shortcuts.get(id), run: (opts) => p.openPlace(id, { ...opts, focusComposer: id === 'desk' }) }));
   const topics = Object.values(p.overview?.topics || {}).filter((t) => t && t.file && t.id !== '').map((t) => ({ group: 'Topics',
     id: 'topic:' + t.file, label: t.title, icon: 'topics', detail: t.id, run: (opts) => p.openTopic(t.file, opts) }));
@@ -190,11 +190,11 @@ function useAtlasChrome(p) {
   const shortcut = (id) => bindings.find((k) => k.id === id)?.combo || '';
   const focus = useAtlasFocusMode(p.rootRef, layout, p.flash);
   const threads = useThreadIndex(), rows = useSessionRows();
-  const [overlay, setOverlay] = useState(null), [pref, setPref] = useState(() => atlasRailPreference(storageGet('prefs.v1', {})));
+  const [overlay, setOverlay] = useState(null), [menuStart, setMenuStart] = useState('first');
   const [recent, setRecent] = useState(() => { const ids = storageGet('prefs.v1', {})?.recentCommands; return Array.isArray(ids) ? ids.slice(0, 32) : []; });
-  const onMode = (action) => {
-    const next = atlasRailNext(pref, action); setPref(next);
-    storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), railMode: next.visible, railHidden: next.hidden });
+  const destinations = (start = 'first') => {
+    if (focus.focused) focus.toggleFocus(); // The anchor lives in the strip outside Focus.
+    setMenuStart(start === 'last' ? 'last' : 'first'); setOverlay('destinations');
   };
   const keys = () => setOverlay('shortcuts');
   const palette = () => setOverlay('palette');
@@ -205,9 +205,9 @@ function useAtlasChrome(p) {
     item.run({ otherPane: !!otherPane });
   };
   const actions = { palette, search: () => p.openPlace('search', {}), quick: () => p.onQuick('paper'), newDiscussion: p.onNewDiscussion,
-    ask: p.onAsk, rail: () => onMode('hidden'), focus: focus.toggleFocus, full: focus.fullscreen, next: () => p.onCycle(1), previous: () => p.onCycle(-1),
+    ask: p.onAsk, destinations, focus: focus.toggleFocus, full: focus.fullscreen, next: () => p.onCycle(1), previous: () => p.onCycle(-1),
     close: p.onClose, reopen: p.onReopen, moveLeft: p.onMove, moveRight: p.onMove };
-  for (const [id] of ATLAS_RAIL_PLACES) actions[id] = () => p.openPlace(id, { focusComposer: id === 'desk' });
+  for (const [id] of ATLAS_DESTINATIONS) actions[id] = () => p.openPlace(id, { focusComposer: id === 'desk' });
   const handler = useRef(null);
   handler.current = (e) => {
     const root = p.rootRef.current, target = e.composedPath?.()[0] || e.target;
@@ -222,15 +222,12 @@ function useAtlasChrome(p) {
     const onKey = (e) => handler.current(e);
     doc.addEventListener('keydown', onKey); return () => doc.removeEventListener('keydown', onKey);
   }, [p.rootRef]);
-  // Current 0.x thread records don't track unread turns or team decisions. Leave
-  // badges absent unless there is explicit evidence; 'running' and 'waiting' are not unread.
-  const counts = { discussions: threads.filter((t) => t.unread === true && t.kind !== 'team' && knownThread(rows, t)).length,
-    teams: threads.reduce((n, t) => n + (t.kind === 'team' && knownThread(rows, t) && Number.isSafeInteger(t.openDecisions) && t.openDecisions > 0 ? t.openDecisions : 0), 0) };
   return { focused: focus.focused, toggleFocus: focus.toggleFocus,
-    rail: focus.focused ? null : h(AtlasRail, { ...p, pref, onMode, counts, shortcut, onPalette: palette, onAbout: () => setOverlay('about'), onShortcuts: keys }),
+    workspaceMenu: focus.focused ? null : h(AtlasWorkspaceMenu, { ...p, open: overlay === 'destinations' && menuStart, onOpen: destinations,
+      onClose: close, shortcut, onPalette: palette, onAbout: () => setOverlay('about'), onShortcuts: keys }),
     overlays: h(React.Fragment, null,
       focus.focused && h(AtlasFocusHeader, { ...focus, activeTab: p.activeTab, rootRef: p.rootRef }),
-      overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, threads, rows, bindings, focus, onMode, keys), recent, onClose: close, onRun: run }),
+      overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, p.discussionRecords ?? threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
       overlay === 'shortcuts' && h(Dialog, { title: 'Keyboard shortcuts', onClose: close },
         h('p', null, shortcuts ? 'These bindings apply inside Atlas. DSH keeps its own shortcuts.' : 'The DSH shortcut catalog is unavailable. These are the local Atlas bindings.'),
         shortcuts?.runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),

@@ -265,9 +265,8 @@ function AtlasApp() {
   const wrap = (id,node) => h(PaneContext.Provider,{value:id},h(AtlasActions.Provider,{value:actionsFor(id)},node));
   const running=t=>Boolean(t.sessionId && rowOf(rows,t.sessionId)?.running);
   return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused',conversation&&'has-companion'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
-    focused?null:chrome.rail,
     h('div',{className:'atlas-body'},
-      !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
+      !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,workspaceMenu:p===shown[0]?chrome.workspaceMenu:null,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
         menuItems:menuItems(p,layout.active[p]),onShow:show,onClose:close,onFocus:focus,onPromote:promote,onDrag:startDrag,onDropAt:dropHandlers,domId}))),
       h('div',{className:'atlas-panes',ref:panesRef},
         state.order.map(id=>{

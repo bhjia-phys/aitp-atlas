@@ -5778,9 +5778,8 @@ window.__ModuleLoader__.load({
       const wrap = (id,node) => h(PaneContext.Provider,{value:id},h(AtlasActions.Provider,{value:actionsFor(id)},node));
       const running=t=>Boolean(t.sessionId && rowOf(rows,t.sessionId)?.running);
       return h('div',{ref:rootRef,className:cx('atlas-root atlas-shell-v2',drag&&'is-dragging-tab',focused&&'is-focused',conversation&&'has-companion'),'data-theme-base':theme.base,'data-theme':theme.name,style:themeStyle(theme)},
-        focused?null:chrome.rail,
         h('div',{className:'atlas-body'},
-          !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
+          !focused && h('div',{className:'atlas-strips'},shown.map(p=>h(AtlasTabStrip,{key:p,workspaceMenu:p===shown[0]?chrome.workspaceMenu:null,pane:p,ids:layout[p],active:layout.active[p],last:paneOfTab(layout,active)===p,tabs:displayTabs,ov,width:geometry(p).width,running,drag,drop,
             menuItems:menuItems(p,layout.active[p]),onShow:show,onClose:close,onFocus:focus,onPromote:promote,onDrag:startDrag,onDropAt:dropHandlers,domId}))),
           h('div',{className:'atlas-panes',ref:panesRef},
             state.order.map(id=>{
@@ -5804,26 +5803,19 @@ window.__ModuleLoader__.load({
     }
 
     // ===== client/71-rail.js
-    // Shell navigation (SH-2/3/7–10). Place ids, accessible names and shortcuts share this order.
-    const ATLAS_RAIL_PLACES = [
+    // The DSH sidebar is the only sidebar. Atlas navigation lives in the left pane
+    // strip, outside the tablist. Old railMode / railHidden prefs are ignored, not
+    // deleted: switching versions must not alter unrelated preferences.
+    const ATLAS_DESTINATIONS = [
       ['desk', 'Desk', 'desk'], ['discussions', 'Discussions', 'chat'], ['teams', 'Teams', 'team'],
       ['map', 'Map', 'universe'], ['library', 'Library', 'library'], ['learn', 'Learn', 'learn'], ['write', 'Write', 'writing'],
     ];
 
-    function atlasRailPreference(prefs) {
-      return { hidden: prefs?.railHidden === true, visible: prefs?.railMode === 'labels' ? 'labels' : 'icons' };
-    }
-
-    function atlasRailNext(pref, action) {
-      return action === 'labels' ? { hidden: false, visible: pref.visible === 'labels' ? 'icons' : 'labels' }
-        : { ...pref, hidden: !pref.hidden };
-    }
-
-    function atlasRailCount(count) {
+    function atlasMenuCount(count) {
       return Number.isSafeInteger(count) && count > 0 ? (count > 99 ? '99+' : String(count)) : '';
     }
 
-    // Shared by the two hot edges. Hover is delayed; keyboard activation is immediate.
+    // FC-3's top hot edge, independent of workspace navigation.
     function useAtlasHotEdge(enterDelay, leaveDelay) {
       const [shown, setShown] = useState(false);
       const timer = useRef(null);
@@ -5837,66 +5829,67 @@ window.__ModuleLoader__.load({
         show: () => { clear(); setShown(true); }, hide: () => { clear(); setShown(false); } };
     }
 
-    function AtlasRail({ pref, onMode, mode, themeModes, activePlace, shortcut, onPalette, openPlace, onQuick,
-      onTheme, onRefresh, onShortcuts, onAbout, counts }) {
-      const edge = useAtlasHotEdge(150, 300);
-      const [more, setMore] = useState(false);
-      const anchor = useRef(null);
-      const labels = pref.visible === 'labels';
-      const shown = !pref.hidden || edge.shown || more;
-      const change = (action) => { setMore(false); edge.hide(); onMode(action); };
-      const item = (id, label, icon, action, key, extras = {}) => {
-        const keys = key && shortcut(key);
-        const hint = [label, keys].filter(Boolean).join(' · ');
-        const active = id === activePlace;
-        const count = atlasRailCount(counts[id]);
-        const open = (e) => action(e);
-        const button = h('button', { type: 'button', key: id, className: cx('atlas-rail-item', id === 'palette' && 'atlas-rail-mark'),
-          'aria-current': active ? 'page' : undefined, 'aria-label': count ? `${label}, ${counts[id]} ${id === 'teams' ? 'items needing you' : 'unread replies'}` : label,
-          onClick: open, ...extras }, h(Icon, { name: icon, size: id === 'palette' ? 22 : 20 }), labels && h('span', { className: 'atlas-rail-label' }, label),
-          count && h('span', { className: cx('atlas-rail-badge', id === 'teams' && 'atlas-rail-badge-gold'), 'aria-hidden': true }, count));
-        return labels ? button : h(Tooltip, { key: id, label: hint, side: 'right', delay: 400 }, button);
+    function AtlasWorkspaceMenu({ open, onOpen, onClose, activePlace, openPlace, mode, themeModes, unreadCount, teamNeedsCount,
+      shortcut, onPalette, onQuick, onTheme, onRefresh, onShortcuts, onAbout }) {
+      const anchor = useRef(null), initial = useRef(null), menu = useRef(null);
+      const label = 'Atlas destinations';
+      const menuId = React.useId();
+      const triggerKeys = shortcut('destinations');
+      const places = ATLAS_DESTINATIONS.map(([id, name, icon]) => ({ id, name, icon, shortcut: shortcut(id),
+        count: id === 'discussions' ? unreadCount : id === 'teams' ? teamNeedsCount : 0,
+        countLabel: id === 'discussions' ? 'unread replies' : 'items needing you', current: activePlace === id,
+        run: (e) => openPlace(id, { focusComposer: id === 'desk', otherPane: !!e.shiftKey, permanent: !!(e.ctrlKey || e.metaKey || e.button === 1) }) }));
+      const actions = [
+        { id: 'palette', name: 'Commands', icon: 'mark', shortcut: shortcut('palette'), run: onPalette },
+        { id: 'search', name: 'Search', icon: 'search', shortcut: shortcut('search'), current: activePlace === 'search', run: (e) => openPlace('search', { otherPane: !!e.shiftKey }) },
+        { id: 'add', name: 'Add or write', icon: 'plus', shortcut: shortcut('quick'), run: () => onQuick('paper') },
+        { id: 'theme', name: 'Theme: ' + (THEME_LABEL[mode] || mode), icon: THEME_ICON[mode] || 'contrast', run: () => onTheme(themeModes[(themeModes.indexOf(mode) + 1) % themeModes.length]) },
+        { id: 'refresh', name: 'Read the files again', icon: 'refresh', run: onRefresh },
+        { id: 'keys', name: 'Keyboard shortcuts', icon: 'keyboard', run: onShortcuts },
+        { id: 'about', name: 'About Atlas', icon: 'note', run: onAbout },
+      ];
+      const first = open === 'last' ? actions.at(-1).id : places[0].id;
+      const activate = (item, event) => {
+        atlasFocusNode(anchor.current); onClose(); item.run(event);
       };
-      const places = ATLAS_RAIL_PLACES.map(([id, label, icon]) => {
-        const open = (e) => openPlace(id, { focusComposer: id === 'desk', otherPane: e.shiftKey, permanent: e.ctrlKey || e.metaKey || e.button === 1 });
-        return item(id, label, icon, open, id, { onAuxClick: (e) => { if (e.button === 1) { e.preventDefault(); open(e); } } });
-      });
-      const group = (name, children) => h('div', { className: 'atlas-rail-group', role: 'group', 'aria-label': name }, children);
+      const group = (name, items) => h('div', { role: 'group', 'aria-label': name },
+        h('div', { className: 'atlas-destinations-group', 'aria-hidden': true }, name),
+        items.map(item => {
+          const badge = atlasMenuCount(item.count);
+          return h('button', { type: 'button', key: item.id, tabIndex: -1, role: 'menuitem', ref: item.id === first ? initial : undefined,
+            'aria-current': item.current ? 'page' : undefined, 'aria-label': item.name, 'aria-description': badge ? `${item.count} ${item.countLabel}` : undefined,
+            className: 'atlas-destinations-item', onClick: e => activate(item, e), onAuxClick: e => { if (item.count !== undefined && e.button === 1) { e.preventDefault(); activate(item, e); } } },
+          h(Icon, { name: item.icon }), h('span', { className: 'atlas-destinations-name' }, item.name),
+          badge && h('span', { className: cx('atlas-destinations-count', item.id === 'teams' && 'is-gold'), 'aria-hidden': true }, badge),
+          item.shortcut ? h('span', { 'aria-hidden': true }, h(Kbd, null, item.shortcut)) : null);
+        }));
+      const keydown = e => {
+        if (e.isComposing || e.defaultPrevented) return;
+        if (e.key === 'Tab') { atlasFocusNode(anchor.current); onClose(); return; }
+        const buttons = [...menu.current.querySelectorAll('button[role="menuitem"]')], i = buttons.indexOf(e.target);
+        let next = atlasArrowIndex(e.key, i, buttons.length);
+        if (next === null && !e.altKey && !e.metaKey && !e.ctrlKey && /^[\p{L}\d]$/u.test(e.key)) {
+          const match = [...buttons.slice(i + 1), ...buttons.slice(0, i + 1)].find(b => b.getAttribute('aria-label').toLowerCase().startsWith(e.key.toLowerCase()));
+          if (match) next = buttons.indexOf(match);
+        }
+        if (next !== null) { e.preventDefault(); e.stopPropagation(); atlasFocusNode(buttons[next]); }
+      };
       return h(React.Fragment, null,
-        pref.hidden && !shown && h('button', { className: 'atlas-rail-edge', type: 'button', 'aria-label': 'Reveal Atlas rail',
-          onPointerEnter: edge.enter, onPointerLeave: edge.leave, onClick: edge.show, onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edge.show(); } } }),
-        shown && h('nav', { className: cx('atlas-rail', labels && 'atlas-rail-labels', pref.hidden && 'atlas-rail-overlay'), 'aria-label': 'Atlas',
-          onPointerEnter: edge.show, onPointerLeave: edge.leave, onFocus: edge.show,
-          onBlur: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) edge.leave(); } },
-          item('palette', 'Commands', 'mark', onPalette, 'palette'), group('Work', places.slice(0, 3)),
-          h('span', { className: 'atlas-rail-sep', 'aria-hidden': true }), group('Knowledge', places.slice(3)),
-          h('span', { className: 'atlas-rail-space' }), group('Actions', [
-            item('search', 'Search', 'search', (e) => openPlace('search', { otherPane: e.shiftKey }), 'search'),
-            item('new', 'Add or write', 'plus', () => onQuick('paper'), 'quick'),
-            item('theme', `Theme: ${THEME_LABEL[mode] || mode}`, THEME_ICON[mode] || 'contrast', () => onTheme(themeModes[(themeModes.indexOf(mode) + 1) % themeModes.length])),
-            item('more', 'More', 'more', () => setMore(!more), null, { ref: anchor, 'aria-haspopup': 'menu', 'aria-expanded': more }),
-          ])),
-        more && h(Menu, { anchor, label: 'More Atlas actions', side: 'right', align: 'end', onClose: () => setMore(false), items: [
-          { id: 'refresh', label: 'Read the files again', icon: 'refresh', onSelect: onRefresh },
-          { id: 'keys', label: 'Keyboard shortcuts', icon: 'keyboard', onSelect: onShortcuts },
-          { id: 'labels', label: labels ? 'Hide labels' : 'Show labels', onSelect: () => change('labels') },
-          { id: 'hide', label: pref.hidden ? 'Keep the rail visible' : 'Hide the rail', shortcut: shortcut('rail'), onSelect: () => change('hidden') },
-          { id: 'about', label: 'About Atlas', onSelect: onAbout },
-        ] }));
+        h('button', { ref: anchor, type: 'button', className: 'atlas-workspace-trigger', 'aria-label': label, 'aria-haspopup': 'menu',
+          'aria-expanded': !!open, 'aria-controls': open ? menuId : undefined, title: [label, triggerKeys].filter(Boolean).join(' · '),
+          onClick: () => open ? onClose() : onOpen('first'), onKeyDown: e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); onOpen(e.key === 'ArrowUp' ? 'last' : 'first'); } } },
+        h(Icon, { name: 'mark' }), h('span', null, 'Atlas'), h(Icon, { name: 'chevron', size: 12 })),
+        open && h(Popover, { anchor, id: menuId, role: 'menu', label, nodeRef: menu, initialFocusRef: initial, onClose,
+          className: 'atlas-destinations-menu', side: 'bottom', align: 'start', onKeyDown: keydown }, group('Places', places), group('Workspace actions', actions)));
     }
 
+    // Keep this style export stable for consumers of the concatenated theme.
     const ATLAS_RAIL_CSS = `
-    .atlas-rail{box-sizing:border-box;width:var(--s-56);height:100%;min-height:0;flex:none;display:flex;flex-direction:column;align-items:center;gap:var(--s-4);padding:10px 0;overflow-y:auto;scrollbar-width:none;background:var(--bg);border-right:1px solid var(--border)}
-    .atlas-rail-group{display:flex;flex:none;align-items:center;flex-direction:column;gap:var(--s-4)}
-    .atlas-rail-item{box-sizing:border-box;display:flex;flex:none;align-items:center;justify-content:center;position:relative;width:var(--s-40);height:var(--s-40);padding:0;border:none;border-radius:var(--r-md);background:transparent;color:var(--text-3);font:var(--t-ui);cursor:pointer}
-    .atlas-rail-item:hover{background:var(--hover);color:var(--text-1)}.atlas-rail-item:active{background:var(--pressed)}
-    .atlas-rail-item:focus-visible,.atlas-rail-edge:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-    .atlas-rail-item[aria-current=page]{background:var(--selected);color:var(--accent)}
-    .atlas-rail-item[aria-current=page]::before{content:'';position:absolute;left:-7px;top:50%;width:7px;height:7px;transform:translateY(-50%);background:var(--accent);clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%)}
-    .atlas-rail-mark{margin-bottom:10px;color:var(--gold)}.atlas-rail-sep{flex:none;width:var(--s-4);height:var(--s-4);border-radius:var(--r-full);background:var(--border-strong);margin:10px 0}.atlas-rail-space{flex:1}
-    .atlas-rail-badge{position:absolute;right:0;top:0;min-width:var(--s-16);height:var(--s-16);padding:0 var(--s-4);box-sizing:border-box;border-radius:var(--r-full);background:var(--accent);color:var(--text-on-accent);font:700 10px/16px var(--font-ui)}.atlas-rail-badge-gold{background:var(--gold);color:var(--gold-on)}
-    .atlas-rail-labels{width:208px;padding-inline:var(--s-8)}.atlas-rail-labels .atlas-rail-group,.atlas-rail-labels .atlas-rail-item{width:100%}.atlas-rail-labels .atlas-rail-item{justify-content:flex-start;gap:var(--s-12);padding-inline:10px}.atlas-rail-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .atlas-rail-edge,.atlas-rail-overlay{position:absolute;z-index:var(--z-rail);inset:0 auto 0 0}.atlas-rail-edge{width:6px;border:0;padding:0;background:transparent}.atlas-rail-overlay{background:var(--raised);box-shadow:var(--shadow-2)}
+    .atlas-workspace-trigger{height:var(--control-28);display:inline-flex;align-items:center;gap:var(--s-4);margin-right:var(--s-4);padding:0 var(--s-8);flex:none;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:transparent;color:var(--text-1);font:var(--t-ui);font-weight:500;white-space:nowrap;cursor:pointer}
+    .atlas-workspace-trigger>.atlas-icon:first-child{color:var(--gold)}.atlas-workspace-trigger>.atlas-icon:last-child{color:var(--text-3)}.atlas-workspace-trigger:hover{background:var(--hover)}.atlas-workspace-trigger[aria-expanded=true]{background:var(--selected);border-color:var(--border-control)}.atlas-workspace-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+    .atlas-root .atlas-destinations-menu{width:15rem;overflow-y:auto;padding:var(--s-4);color:var(--text-1)}.atlas-destinations-group{font:var(--t-cap);font-variant-caps:all-small-caps;letter-spacing:.09em;color:var(--text-3);padding:var(--s-4) var(--s-8)}.atlas-destinations-menu>[role=group]+[role=group]{border-top:1px solid var(--border);padding-top:var(--s-4);margin-top:var(--s-4)}
+    .atlas-destinations-item{width:100%;height:var(--control-32);display:flex;gap:var(--s-8);align-items:center;text-align:start;border:0;border-radius:var(--r-sm);padding:0 var(--s-8);background:transparent;color:var(--text-2);font:var(--t-ui);cursor:pointer}.atlas-destinations-item[aria-current=page]{background:var(--selected);color:var(--accent);font-weight:600}.atlas-destinations-item:hover{background:var(--hover);color:var(--text-1)}.atlas-destinations-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.atlas-destinations-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .atlas-destinations-count{min-width:var(--s-16);padding:0 var(--s-4);border-radius:var(--r-full);text-align:center;font:700 10px/16px var(--font-ui);background:var(--accent);color:var(--text-on-accent)}.atlas-destinations-count.is-gold{background:var(--gold);color:var(--gold-on)}
     `;
 
     // ===== client/72-tabs.js
@@ -6212,7 +6205,7 @@ window.__ModuleLoader__.load({
       return restoreTabSnapshot({ tabs, layout, lastDiscussion: companion?.id || last });
     }
 
-    function AtlasTabStrip({ pane, ids, active, last, tabs, ov, width, running, drag, drop, menuItems, onShow, onClose, onFocus, onPromote, onDrag, onDropAt, domId }) {
+    function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width, running, drag, drop, menuItems, onShow, onClose, onFocus, onPromote, onDrag, onDropAt, domId }) {
       const list = useRef(null);
       const [overflow, setOverflow] = useState(false);
       const [menu, setMenu] = useState(null);
@@ -6249,6 +6242,7 @@ window.__ModuleLoader__.load({
         return h(IconButton, {label, icon, className:'atlas-strip-tool', 'aria-haspopup':'menu','aria-expanded':menu?.kind===kind, onClick:e=>open(e,'first'), onKeyDown:e=>{if (e.key==='ArrowDown' || e.key==='ArrowUp') { e.preventDefault();open(e,e.key==='ArrowUp'?'last':'first'); }} });
       };
       return h('div', { className:cx('atlas-strip', last && 'is-last', drop?.pane === pane && drop.where === 'strip' && 'is-drop'), style:{width}, ...onDropAt(pane,'strip',indexAt) },
+        workspaceMenu,
         h('div', {className:'atlas-strip-tabs', role:'tablist', 'aria-label': `${pane === 'left' ? 'Left' : 'Right'} pane`, ref:list,
           onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
         ids.map((id,i)=>{
@@ -6433,11 +6427,11 @@ window.__ModuleLoader__.load({
     const ATLAS_CHROME_KEYS = [
       ['palette', 'Command palette', 'Ctrl+Shift+P', 'Ctrl+.'], ['search', 'Search', '/'], ['quick', 'Add or write', 'N'],
       ['newDiscussion', 'New discussion', 'Ctrl+Shift+J'], ['ask', 'Ask about this', 'Ctrl+J'],
-      ['rail', 'Toggle the rail', 'Ctrl+\\', 'Ctrl+Shift+\\'], ['focus', 'Focus pane', 'Ctrl+Shift+F', 'Ctrl+Alt+F'],
+      ['destinations', 'Open Atlas destinations', 'Ctrl+\\', 'Ctrl+Shift+\\'], ['focus', 'Focus pane', 'Ctrl+Shift+F', 'Ctrl+Alt+F'],
       ['full', 'Full screen (in Focus)', 'Shift+F11'], ['next', 'Next tab', 'Ctrl+Tab', 'Ctrl+PageDown'],
       ['previous', 'Previous tab', 'Ctrl+Shift+Tab', 'Ctrl+PageUp'], ['close', 'Close tab', 'Ctrl+W', 'Ctrl+Alt+W'],
       ['reopen', 'Reopen closed tab', 'Ctrl+Shift+T'], ['moveLeft', 'Move tab to other pane', 'Ctrl+Alt+←'], ['moveRight', 'Move tab to other pane', 'Ctrl+Alt+→'],
-      ...ATLAS_RAIL_PLACES.map(([id, label], i) => [id, label, `Alt+${i + 1}`]),
+      ...ATLAS_DESTINATIONS.map(([id, label], i) => [id, label, `Alt+${i + 1}`]),
     ];
     function atlasPhysicalKey(combo) {
       const parts = combo.split('+');
@@ -6520,7 +6514,7 @@ window.__ModuleLoader__.load({
       return [...groups.values()].flatMap((rows) => rows.sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 6).map((r) => r.item)).slice(0, 30);
     }
 
-    function atlasPaletteItems(p, threads, rows, bindings, focus, onMode, onShortcuts) {
+    function atlasPaletteItems(p, threads, rows, bindings, focus, onDestinations, onShortcuts) {
       const shortcuts = new Map(bindings.map((b) => [b.id, b.combo]));
       const commands = [];
       function cmd(id, label, icon, run, detail = '', disabled = false) {
@@ -6534,12 +6528,12 @@ window.__ModuleLoader__.load({
       cmd('tex', 'New LaTeX document', 'writing', () => p.onQuick('tex'));
       cmd('focus', focus.focused ? 'Exit focus' : 'Focus pane', 'expand', focus.toggleFocus);
       cmd('full', 'Full screen', 'expand', focus.fullscreen, focus.focused ? '' : 'Enter Focus first', !focus.focused);
-      cmd('rail', 'Toggle the rail', 'panel', () => onMode('hidden'));
+      cmd('destinations', 'Open Atlas destinations', 'mark', onDestinations);
       cmd('split', 'Split', 'split', () => p.onSplit()); cmd('moveLeft', 'Move tab to the other pane', 'move', () => p.onMove());
       cmd('reopen', 'Reopen closed tab', 'back', () => p.onReopen());
       for (const mode of p.themeModes) cmd('theme:' + mode, 'Theme: ' + (mode === 'auto' ? 'Auto' : THEME_LABEL[mode] || mode), THEME_ICON[mode] || 'contrast', () => p.onTheme(mode));
       cmd('refresh', 'Read the files again', 'refresh', () => p.onRefresh()); cmd('keys', 'Keyboard shortcuts', 'keyboard', onShortcuts);
-      const places = ATLAS_RAIL_PLACES.map(([id, label, icon]) => ({ group: 'Places', id: 'place:' + id, label, icon,
+      const places = ATLAS_DESTINATIONS.map(([id, label, icon]) => ({ group: 'Places', id: 'place:' + id, label, icon,
         shortcut: shortcuts.get(id), run: (opts) => p.openPlace(id, { ...opts, focusComposer: id === 'desk' }) }));
       const topics = Object.values(p.overview?.topics || {}).filter((t) => t && t.file && t.id !== '').map((t) => ({ group: 'Topics',
         id: 'topic:' + t.file, label: t.title, icon: 'topics', detail: t.id, run: (opts) => p.openTopic(t.file, opts) }));
@@ -6606,11 +6600,11 @@ window.__ModuleLoader__.load({
       const shortcut = (id) => bindings.find((k) => k.id === id)?.combo || '';
       const focus = useAtlasFocusMode(p.rootRef, layout, p.flash);
       const threads = useThreadIndex(), rows = useSessionRows();
-      const [overlay, setOverlay] = useState(null), [pref, setPref] = useState(() => atlasRailPreference(storageGet('prefs.v1', {})));
+      const [overlay, setOverlay] = useState(null), [menuStart, setMenuStart] = useState('first');
       const [recent, setRecent] = useState(() => { const ids = storageGet('prefs.v1', {})?.recentCommands; return Array.isArray(ids) ? ids.slice(0, 32) : []; });
-      const onMode = (action) => {
-        const next = atlasRailNext(pref, action); setPref(next);
-        storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), railMode: next.visible, railHidden: next.hidden });
+      const destinations = (start = 'first') => {
+        if (focus.focused) focus.toggleFocus(); // The anchor lives in the strip outside Focus.
+        setMenuStart(start === 'last' ? 'last' : 'first'); setOverlay('destinations');
       };
       const keys = () => setOverlay('shortcuts');
       const palette = () => setOverlay('palette');
@@ -6621,9 +6615,9 @@ window.__ModuleLoader__.load({
         item.run({ otherPane: !!otherPane });
       };
       const actions = { palette, search: () => p.openPlace('search', {}), quick: () => p.onQuick('paper'), newDiscussion: p.onNewDiscussion,
-        ask: p.onAsk, rail: () => onMode('hidden'), focus: focus.toggleFocus, full: focus.fullscreen, next: () => p.onCycle(1), previous: () => p.onCycle(-1),
+        ask: p.onAsk, destinations, focus: focus.toggleFocus, full: focus.fullscreen, next: () => p.onCycle(1), previous: () => p.onCycle(-1),
         close: p.onClose, reopen: p.onReopen, moveLeft: p.onMove, moveRight: p.onMove };
-      for (const [id] of ATLAS_RAIL_PLACES) actions[id] = () => p.openPlace(id, { focusComposer: id === 'desk' });
+      for (const [id] of ATLAS_DESTINATIONS) actions[id] = () => p.openPlace(id, { focusComposer: id === 'desk' });
       const handler = useRef(null);
       handler.current = (e) => {
         const root = p.rootRef.current, target = e.composedPath?.()[0] || e.target;
@@ -6638,15 +6632,12 @@ window.__ModuleLoader__.load({
         const onKey = (e) => handler.current(e);
         doc.addEventListener('keydown', onKey); return () => doc.removeEventListener('keydown', onKey);
       }, [p.rootRef]);
-      // Current 0.x thread records don't track unread turns or team decisions. Leave
-      // badges absent unless there is explicit evidence; 'running' and 'waiting' are not unread.
-      const counts = { discussions: threads.filter((t) => t.unread === true && t.kind !== 'team' && knownThread(rows, t)).length,
-        teams: threads.reduce((n, t) => n + (t.kind === 'team' && knownThread(rows, t) && Number.isSafeInteger(t.openDecisions) && t.openDecisions > 0 ? t.openDecisions : 0), 0) };
       return { focused: focus.focused, toggleFocus: focus.toggleFocus,
-        rail: focus.focused ? null : h(AtlasRail, { ...p, pref, onMode, counts, shortcut, onPalette: palette, onAbout: () => setOverlay('about'), onShortcuts: keys }),
+        workspaceMenu: focus.focused ? null : h(AtlasWorkspaceMenu, { ...p, open: overlay === 'destinations' && menuStart, onOpen: destinations,
+          onClose: close, shortcut, onPalette: palette, onAbout: () => setOverlay('about'), onShortcuts: keys }),
         overlays: h(React.Fragment, null,
           focus.focused && h(AtlasFocusHeader, { ...focus, activeTab: p.activeTab, rootRef: p.rootRef }),
-          overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, threads, rows, bindings, focus, onMode, keys), recent, onClose: close, onRun: run }),
+          overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, p.discussionRecords ?? threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
           overlay === 'shortcuts' && h(Dialog, { title: 'Keyboard shortcuts', onClose: close },
             h('p', null, shortcuts ? 'These bindings apply inside Atlas. DSH keeps its own shortcuts.' : 'The DSH shortcut catalog is unavailable. These are the local Atlas bindings.'),
             shortcuts?.runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),

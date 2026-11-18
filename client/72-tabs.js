@@ -310,7 +310,7 @@ function migrateTabState(saved, route, companion, last, side, places) {
   return restoreTabSnapshot({ tabs, layout, lastDiscussion: companion?.id || last });
 }
 
-function AtlasTabStrip({ pane, ids, active, last, tabs, ov, width, running, drag, drop, menuItems, onShow, onClose, onFocus, onPromote, onDrag, onDropAt, domId }) {
+function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width, running, drag, drop, menuItems, onShow, onClose, onFocus, onPromote, onDrag, onDropAt, domId }) {
   const list = useRef(null);
   const [overflow, setOverflow] = useState(false);
   const [menu, setMenu] = useState(null);
@@ -347,6 +347,7 @@ function AtlasTabStrip({ pane, ids, active, last, tabs, ov, width, running, drag
     return h(IconButton, {label, icon, className:'atlas-strip-tool', 'aria-haspopup':'menu','aria-expanded':menu?.kind===kind, onClick:e=>open(e,'first'), onKeyDown:e=>{if (e.key==='ArrowDown' || e.key==='ArrowUp') { e.preventDefault();open(e,e.key==='ArrowUp'?'last':'first'); }} });
   };
   return h('div', { className:cx('atlas-strip', last && 'is-last', drop?.pane === pane && drop.where === 'strip' && 'is-drop'), style:{width}, ...onDropAt(pane,'strip',indexAt) },
+    workspaceMenu,
     h('div', {className:'atlas-strip-tabs', role:'tablist', 'aria-label': `${pane === 'left' ? 'Left' : 'Right'} pane`, ref:list,
       onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
     ids.map((id,i)=>{

@@ -4,11 +4,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 const modules = ['71-rail', '73-focus', '74-palette'].map(s => readFileSync(new URL(`../client/${s}.js`, import.meta.url), 'utf8')).join('\n');
 const view = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(Boolean) });
-const base = { h: view, React: { Fragment: 'fragment' }, Icon: 'icon', Tooltip: 'tooltip', Menu: 'menu',
+const base = { h: view, React: { Fragment: 'fragment', useId:()=>':menu:' }, Icon: 'icon', Popover: 'popover', Kbd: 'kbd', atlasFocusNode: n=>n?.focus(),
   cx: (...v) => v.filter(Boolean).join(' '), THEME_LABEL: { auto: 'Auto', day: 'Day', night: 'Night' }, THEME_ICON: { auto: 'contrast', day: 'sun', night: 'moon' },
   PANEL_KEY: 'aitp-atlas', externalStore: (value) => ({ get: () => value, set: next => { value = next; } }), useState: init => [typeof init === 'function' ? init() : init, () => {}],
   useRef: initial => ({ current: initial }), useEffect() {}, rowOf: (rows, id) => rows?.byId?.[id], knownThread: (rows, t) => !!rows?.byId[t.id], teamOf: r => r?.team, threadLabel: t => t.title, baseName: p => p.split('/').pop() };
-const chrome = new Function(...Object.keys(base), `${modules}\nreturn { AtlasRail, atlasRailPreference, atlasRailNext, atlasRailCount, atlasBindChromeService, atlasChromeServices, atlasSidebarExpanded, atlasEnterFocus, atlasLeaveFocus, atlasToggleFullscreen, atlasEffectiveKeys, atlasPaletteItems, atlasPaletteResults, atlasChromeKey, atlasFrameAcceptsKey, atlasChromeInputOwner };`)(...Object.values(base));
+const chrome = new Function(...Object.keys(base), `${modules}\nreturn { AtlasWorkspaceMenu, atlasMenuCount, atlasBindChromeService, atlasChromeServices, atlasSidebarExpanded, atlasEnterFocus, atlasLeaveFocus, atlasToggleFullscreen, atlasEffectiveKeys, atlasPaletteItems, atlasPaletteResults, atlasChromeKey, atlasFrameAcceptsKey, atlasChromeInputOwner };`)(...Object.values(base));
 const nodes = tree => [tree, ...(tree.children || []).flatMap(nodes)];
 // Re-render one plain client function with real event handlers. Refs and state
 // persist across renders; a deterministic clock drives the hover boundaries.
@@ -20,18 +20,18 @@ function controlsRuntime() {
     setTimeout(fn, delay) { const id=++handle; timers.set(id,{ at:clock+delay, fn }); return id; }, clearTimeout: id => timers.delete(id),
     useAtlasDialogFocus() {}, Kbd:'kbd', React:{ ...base.React, useId:()=>':palette:' } };
   const {useAtlasHotEdge, AtlasCommandPalette} = new Function(...Object.keys(hooks),`${modules}\nreturn {useAtlasHotEdge,AtlasCommandPalette};`)(...Object.values(hooks));
-  return { edge: () => { cursor=0; return useAtlasHotEdge(150,300); }, palette: props => {cursor=0; return AtlasCommandPalette(props);},
+  return { edge: () => { cursor=0; return useAtlasHotEdge(120,600); }, palette: props => {cursor=0; return AtlasCommandPalette(props);},
     advance(ms) {clock+=ms; for(const [id,t] of timers) if(t.at<=clock) {timers.delete(id); t.fn();} },
     mount() { return effects.shift()(); } };
 }
 
-test('rail hot edge: bridge pointer crossings, honor both delays, cancel on unmount', () => {
+test('Focus header hot edge: bridge pointer crossings, honor both delays, cancel on unmount', () => {
   const rt = controlsRuntime(), first = rt.edge(), cleanup = rt.mount();
-  first.enter(); rt.advance(149); assert.equal(rt.edge().shown,false);
-  first.leave(); rt.advance(500); assert.equal(rt.edge().shown,false,'crossing the edge does not open the rail');
-  first.enter(); rt.advance(150); assert.equal(rt.edge().shown,true);
-  first.leave(); rt.advance(299); assert.equal(rt.edge().shown,true); first.show(); rt.advance(30); assert.equal(rt.edge().shown,true);
-  first.leave(); rt.advance(300); assert.equal(rt.edge().shown,false); first.enter(); cleanup(); rt.advance(500); assert.equal(rt.edge().shown,false);
+  first.enter(); rt.advance(119); assert.equal(rt.edge().shown,false);
+  first.leave(); rt.advance(600); assert.equal(rt.edge().shown,false,'crossing the edge does not open the header');
+  first.enter(); rt.advance(120); assert.equal(rt.edge().shown,true);
+  first.leave(); rt.advance(599); assert.equal(rt.edge().shown,true); first.show(); rt.advance(30); assert.equal(rt.edge().shown,true);
+  first.leave(); rt.advance(600); assert.equal(rt.edge().shown,false); first.enter(); cleanup(); rt.advance(500); assert.equal(rt.edge().shown,false);
 });
 
 test('palette input: cycle the active option, Shift+Enter opens beside, narrowing resets selection; IME Enter is not a command', () => {
@@ -47,24 +47,34 @@ test('palette input: cycle the active option, Shift+Enter opens beside, narrowin
   assert.deepEqual(calls,[['Beta',true],['Alpha',false]]);
 });
 
-test('rail: mode round-trip, safe defaults, bounds and zero badge', () => {
-  const init = chrome.atlasRailPreference({ railMode: 'garbage', railHidden: 1 });
-  assert.deepEqual(init, { visible: 'icons', hidden: false });
-  const labels = chrome.atlasRailNext(init, 'labels');
-  assert.deepEqual(chrome.atlasRailNext(chrome.atlasRailNext(labels, 'hidden'), 'hidden'), labels);
-  assert.deepEqual([0, -1, null, NaN, 2, 99, 100].map(chrome.atlasRailCount), ['', '', '', '', '2', '99', '99+']);
+test('workspace menu: one labeled trigger, no rail or hot edge, ignores both old rail prefs; keyboard opener selects first or last', () => {
+  const calls=[], props={themeModes:['auto','day','night'],mode:'auto',shortcut:()=>'',onOpen:v=>calls.push(v)};
+  for (const pref of [{railHidden:true},{railMode:'labels'}]) {
+    const tree=chrome.AtlasWorkspaceMenu({...props,pref,open:false});
+    assert.deepEqual(tree.children.map(n=>n.type),['button']); const t=tree.children[0];
+    assert.equal(t.props['aria-label'],'Atlas destinations'); assert.equal(t.props['aria-expanded'],false);
+    assert.ok(t.children.includes('Atlas')||nodes(t).includes('Atlas'));
+    t.props.onKeyDown({key:'ArrowUp',preventDefault(){}}); t.props.onClick();
+  }
+  assert.deepEqual(calls,['last','first','last','first']);
+  assert.deepEqual([0,-1,null,NaN,2,99,100].map(chrome.atlasMenuCount),['','','','','2','99','99+']);
 });
 
-test('rail: real controls route to the seven ordered places, Desk requests composer focus, theme takes an explicit mode', () => {
-  const calls = [], openPlace = (...args) => calls.push(args);
-  const tree = chrome.AtlasRail({ pref: { hidden: false, visible: 'labels' }, mode: 'day', themeModes: ['auto','day','night'], activePlace: 'desk',
-    counts: { teams: 101, discussions: 0 }, shortcut: () => '', onPalette() {}, openPlace, onTheme: (...args) => calls.push(args) });
-  const b = nodes(tree).filter(n => n.type === 'button');
-  assert.deepEqual(b.slice(1,8).map(n => n.props['aria-label']), ['Desk','Discussions','Teams, 101 items needing you','Map','Library','Learn','Write']);
-  assert.equal(b[1].props['aria-current'], 'page'); b[1].props.onClick({ shiftKey: true, ctrlKey: false, metaKey: false });
-  assert.deepEqual(calls.pop(), ['desk', { focusComposer: true, otherPane: true, permanent: false }]);
-  b[4].props.onAuxClick({ button: 1, preventDefault() {} }); assert.equal(calls.pop()[1].permanent, true);
-  b.find(n => n.props['aria-label'] === 'Theme: Day').props.onClick({}); assert.deepEqual(calls.pop(), ['night']);
+test('workspace menu: explicit destinations and actions, accessible counts only from data, selection returns focus and preserves routing modifiers', () => {
+  const calls = [], cb = id => (...a) => calls.push([id,...a]);
+  const props = { open:'first', mode:'day', themeModes:['auto','day','night'], activePlace:'desk', unreadCount:101,
+    shortcut:()=>'', onPalette:cb('cmd'), onQuick:cb('quick'), onRefresh:cb('refresh'), onShortcuts:cb('keys'),onAbout:cb('about'),
+    openPlace:cb('place'), onTheme:cb('theme'), onClose:cb('closed') };
+  const tree=chrome.AtlasWorkspaceMenu(props); const anchor=tree.children[0].props.ref;
+  anchor.current={focus:()=>calls.push(['focus'])};
+  const buttons=nodes(tree).filter(n=>n.props?.role==='menuitem');
+  assert.deepEqual(buttons.map(b=>b.props['aria-label']),['Desk','Discussions','Teams','Map','Library','Learn','Write','Commands','Search','Add or write','Theme: Day','Read the files again','Keyboard shortcuts','About Atlas']);
+  assert.equal(buttons[1].props['aria-description'],'101 unread replies');assert.ok(nodes(buttons[1]).includes('99+'));assert.equal(buttons[2].props['aria-description'],undefined);
+  assert.equal(buttons[0].props['aria-current'],'page'); buttons[0].props.onClick({shiftKey:true});
+  assert.deepEqual(calls.splice(0),[['focus'],['closed'],['place','desk',{focusComposer:true,otherPane:true,permanent:false}]]);
+  buttons[3].props.onAuxClick({button:1,preventDefault(){}}); assert.equal(calls.pop()[2].permanent,true);
+  buttons[10].props.onClick({}); assert.deepEqual(calls.pop(),['theme','night']);
+  buttons[9].props.onClick({}); assert.deepEqual(calls.pop(),['quick','paper']);
 });
 
 test('focus: inspect a verified frame only, recognize collapsed rail and an open drawer', () => {
@@ -102,7 +112,7 @@ const keys = chrome.atlasEffectiveKeys([], [], 'desktop');
 test('shortcuts: effective customized chords and fixed actions reserve combinations; browser fallback, conflicts, all seven places', () => {
   const bindings = chrome.atlasEffectiveKeys([{ binding: { code:'KeyQ', secondCode:'KeyP', modifiers:['control','shift'] } }], [{bindings:[{code:'Backslash',modifiers:['control']},{code:'Backslash',modifiers:['control','shift']}]}], 'web');
   const combo = id => bindings.find(b => b.id === id).combo;
-  assert.equal(combo('palette'),'Ctrl+.'); assert.equal(combo('rail'),''); assert.equal(combo('close'),'Ctrl+Alt+W');
+  assert.equal(combo('palette'),'Ctrl+.'); assert.equal(combo('destinations'),''); assert.equal(combo('close'),'Ctrl+Alt+W');
   for (const [id, key, code] of [['next','→','ArrowRight'], ['previous','←','ArrowLeft'], ['reopen','T','KeyT']]) {
     assert.equal(combo(id),'Ctrl+Alt+Shift+'+key);
     assert.equal(chrome.atlasChromeKey({ key, code, ctrlKey:true, altKey:true, shiftKey:true }, bindings, {canHandle:true}),id);
