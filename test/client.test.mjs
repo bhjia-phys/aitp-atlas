@@ -15,7 +15,7 @@ const react = {
 };
 const storage = new Map();
 const window = { localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) } };
-const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, routeFor, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, restoreTabs, saveTabs, tabLabel, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
+const client = new Function('require', 'window', `${body}\nreturn { contextBlock, chipsOf, headingBefore, threadTitle, promptOf, cleanSelection, focusContext, headingSlug, anchorTarget, splitNote, markdownPieces, encodeFragments, isWaiting, entrySummary, waitingItems, activityGroups, membersOf, teamBrief, slugOf, threadLabel, teamOf, boardSummary, modelOf, texText, citeContext, insertCite, texOutline, lineOfOffset, offsetOfLine, wordDiff, optionsOf, learningTopics, tabV2Label, layoutAdd, layoutMove, layoutRemove, otherPane, paneOfTab, placeKeys, paneFocus, besideOf, chatLocation, conversationLink, resolveTheme, cleanThemes, themeCycle, themeStyle, themeCss, THEME_TOKENS, directionColor, STYLES, pathKey, sideLabel, MARKDOWN_LABELS, paperLink, topicChoices, sideTitle, noteSlug, writeTarget };`)(
   (name) => (name === 'react' ? react : {}),
   window,
 );
@@ -285,31 +285,6 @@ test('learn: learning topics come first, then the rest by recency', () => {
   assert.deepEqual(rest.map((t) => t.id), ['qc', 'gw']);
 });
 
-test('tabs: files and papers open in a tab of their own, places in the page, a section stays where it is', () => {
-  const places = new Set(['/r/research.md', '/r/topics/t/research.md', '/r/topics/u/research.md']);
-  const isPlace = (p) => places.has(client.pathKey(p));
-  const route = (next, here = '/r/topics/t/research.md') => client.routeFor(next, here, isPlace);
-  assert.equal(route({ view: 'doc', path: '/r/topics/t/notes/a.md', link: true }), 'file', 'a note linked from the page');
-  assert.equal(route({ view: 'doc', path: '/r/library/arxiv/1/paper.pdf' }), 'file', 'a paper from a list');
-  assert.equal(route({ view: 'doc', path: '/r/topics/t/research.md', anchor: 'current-work' }), 'same', 'a section of the note open');
-  assert.equal(route({ view: 'doc', path: '/r/topics/u/research.md' }, ''), 'page', 'a topic is a place');
-  assert.equal(route({ view: 'doc', path: '/R/Topics/U/Research.md' }, '/x/y.pdf'), 'page', 'paths compare case-folded');
-  assert.equal(route({ view: 'doc', path: '/r/topics/u/research.md', link: true }, '/x/y.md'), 'file', 'a topic linked inside a document opens in a tab');
-  assert.equal(route({ view: 'doc', path: '/x/y.md', anchor: 'h' }, '/x/y.md'), 'same', 'a section of the file in a tab stays in it');
-  assert.equal(route({ view: 'doc', path: '/r/a/sec.tex', edit: true, anchor: 'L4', stay: true }, '/r/a/main.tex'), 'same', 'a LaTeX jump stays in its workspace');
-  assert.equal(route({ view: 'doc', path: '/r/topics/t/notes/new.md', edit: true, created: true }), 'file', 'a new note is written in a tab beside its topic');
-  assert.equal(route({ view: 'doc', path: '/x/y.pdf', full: true }, '/x/y.pdf'), 'page', 'open as the page');
-  assert.equal(route({ view: 'library' }, '/x/y.md'), 'page');
-  assert.equal(route({ back: true }, '/x/y.md'), 'page');
-  assert.deepEqual([...client.placeKeys({ rootFile: 'C:\\R\\research.md', topics: { a: { file: 'C:/R/a/research.md' } } })], ['c:/r/research.md', 'c:/r/a/research.md']);
-  const ov = { rootFile: '/r/research.md', title: 'Research programme', topics: { a: { file: '/r/a/research.md', title: 'Kicked top: spectral statistics' } } };
-  assert.deepEqual(['/r/a/research.md', '/R/research.md', '/r/a/notes/x.md'].map((p) => client.tabLabel({ kind: 'file', path: p }, { view: 'home' }, ov)), ['Kicked top', 'Research programme', 'x.md'], 'a topic note is named by its topic');
-  assert.equal(client.tabLabel({ kind: 'page' }, { view: 'doc', path: '/r/a/research.md' }, ov), 'Kicked top', 'the page tab names the place it shows');
-  assert.equal(client.tabLabel({ kind: 'page' }, { view: 'write' }, ov), 'Write');
-  assert.equal(client.tabLabel({ kind: 'discussion' }, { view: 'home' }, ov), 'Discussion');
-  assert.equal(client.tabLabel({ kind: 'preview', main: '/r/a/paper/main.tex' }, { view: 'home' }, ov), 'Preview · main.pdf');
-});
-
 test('tabs: two panes hold them; a tab reorders, moves across and closes, and each pane shows one it holds', () => {
   let l = { left: ['page'], right: [], active: { left: 'page', right: null }, split: 52 };
   l = client.layoutAdd(l, 'f1', 'right');
@@ -328,23 +303,6 @@ test('tabs: two panes hold them; a tab reorders, moves across and closes, and ea
   l = client.layoutMove(l, 'page', 'right');
   assert.deepEqual([l.left, l.right, l.active], [['f2'], ['page'], { left: 'f2', right: 'page' }], 'any tab can go to either side');
   assert.deepEqual([client.otherPane('left'), client.otherPane('right'), client.paneOfTab(l, 'page'), client.paneOfTab(l, 'nope')], ['right', 'left', 'right', null]);
-});
-
-test('tabs: they come back as they were left, and the 0.7 side panel becomes a tab on the right', () => {
-  storage.clear();
-  window.localStorage.setItem('aitp-atlas:side', JSON.stringify({ path: '/r/a/notes/x.md', anchor: 'h' }));
-  const old = client.restoreTabs(false);
-  assert.deepEqual(old.layout.left, ['page']);
-  assert.equal(old.layout.right.length, 1);
-  assert.deepEqual([old.tabs[old.layout.right[0]].path, old.tabs[old.layout.right[0]].anchor], ['/r/a/notes/x.md', 'h']);
-  const talking = client.restoreTabs(true);
-  assert.deepEqual(talking.layout.right.slice(-1), ['discussion'], 'an open discussion has its tab');
-  client.saveTabs({ ...talking, layout: client.layoutMove(talking.layout, 'discussion', 'left') });
-  const back = client.restoreTabs(true);
-  assert.deepEqual(back.layout.left, ['page', 'discussion'], 'where you put it');
-  assert.equal(back.tabs[back.layout.right[0]].path, '/r/a/notes/x.md');
-  assert.ok(!client.restoreTabs(false).layout.left.includes('discussion'), 'no discussion, no tab');
-  storage.clear();
 });
 
 test('tabs: a discussion is told what is open beside what it is about', () => {
@@ -526,11 +484,8 @@ test('papers: a paper link opens beside the page, read in Atlas; other sites sta
   assert.equal(client.paperLink('https://doi.org/10.1103/PhysRevB.99.012345').doi, '10.1103/PhysRevB.99.012345');
   assert.equal(client.paperLink('https://inspirehep.net/literature/1234567').recid, '1234567');
   for (const other of ['https://github.com/x/y', 'https://arxiv.org/list/hep-th/new', 'mailto:a@b.c', 'not a url', 'https://doi.org/nope']) assert.equal(client.paperLink(other), null, other);
-  const none = () => false;
-  assert.equal(client.routeFor({ view: 'paper', url: 'https://arxiv.org/abs/1' }, '', none), 'paper', 'in a tab of its own');
-  assert.equal(client.routeFor({ view: 'paper', url: 'https://arxiv.org/abs/1', full: true }, '', none), 'page', 'open as the page');
   assert.equal(client.sideTitle({}, { url: 'https://arxiv.org/abs/2401.01234v5' }), 'arXiv 2401.01234v5');
-  assert.equal(client.tabLabel({ kind: 'paper', url: 'https://arxiv.org/abs/2401.01234v5' }, { view: 'home' }, {}), 'arXiv 2401.01234v5');
+  assert.equal(client.tabV2Label({ kind: 'paper', url: 'https://arxiv.org/abs/2401.01234v5' }, {}), 'arXiv 2401.01234v5');
   const ov = { topics: { '': { id: '', title: 'Root', file: '/r/research.md' }, qc: { id: 'qc', title: 'Kicked top: spectral statistics', file: '/r/qc/research.md', parent: '' }, b: { id: 'qc/b', title: 'Level spacing', file: '/r/qc/b/research.md', parent: 'qc' } } };
   assert.deepEqual(client.topicChoices(ov).map((c) => c.label), ['Kicked top', 'Kicked top › Level spacing'], 'branches under their topic, the root left out');
 });

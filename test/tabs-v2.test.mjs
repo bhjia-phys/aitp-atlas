@@ -7,7 +7,7 @@ const js = readdirSync(dir).filter(f => f.endsWith('.js') && f !== '90-register.
 function client(storage = new Map()) {
   const window = { localStorage: { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v) } };
   const React = { createElement() {}, createContext: () => ({}), Component: class {} };
-  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, tabV2Label };')(n => n === 'react' ? React : {}, window);
+  return new Function('require','window', js + '\nreturn { emptyTabState, tabSpec, tabDestination, tabOpenState, tabActivate, tabPromote, tabMoveState, tabCloseState, tabReopen, tabScreenLayout, tabFollowState, tabFoldPreviews, migrateTabState, restoreTabSnapshot, saveTabState, loadTabState, tabV2Label };')(n => n === 'react' ? React : {}, window);
 }
 const c = client();
 const spec = (view, props = {}) => c.tabSpec({view, ...props},new Set(['/r/topic.md']));
@@ -75,6 +75,30 @@ test('MG-2: migrated route, old IDs/anchors/order, companion identity, one read 
   assert.equal(local.migrateTabState(null,{view:'activity'},null,'last').tabs['place:discussions'].view,'discussions');
   assert.equal(local.migrateTabState(null,{view:'doc',path:'/r/topic.md'},null,null,null,new Set(['/r/topic.md'])).tabs['file:/r/topic.md'].kind,'topic');
   assert.deepEqual(local.migrateTabState(null,{view:'home'},null,null,{path:'/r/x.md',anchor:'h'}).layout.right,['file:/r/x.md']);
+});
+
+test('in-place anchors and LaTeX jumps guard the originating editor, including case-folded aliases and an already-open target', () => {
+  const ask = [], dirty = {'file:/r/main.tex':true};
+  let s = open(c.emptyTabState(),spec('doc',{path:'/r/main.tex',edit:true}));
+  const id = s.layout.active.right;
+  const follow=(from,path,fields,allow)=>c.tabFollowState(s,from,spec('doc',{path,...fields}),{},dirty,k=>{ask.push(k);return allow;});
+  s=follow('desk','/R/Main.TEX',{anchor:'L42'},false);
+  assert.equal(s.tabs[id].path,'/r/main.tex','link reuse cannot change the editor mount key'); assert.equal(s.tabs[id].edit,true); assert.equal(s.tabs[id].anchor,'L42');
+  s=follow(id,'/R/Main.TEX',{anchor:'L8'},false);assert.equal(s.tabs[id].edit,true);assert.equal(s.tabs[id].path,'/r/main.tex');assert.deepEqual(ask,[]);
+  assert.equal(follow(id,'/r/main.tex',{edit:false},false),s);assert.equal(follow(id,'/r/section.tex',{stay:true,edit:true},false),s);
+  s=follow(id,'/r/section.tex',{stay:true,edit:true,anchor:'L4'},true);assert.deepEqual(ask,[id,id,id]);assert.equal(s.tabs[id].path,'/r/section.tex');assert.equal(s.tabs[id].anchor,'L4');
+  s=open(s,spec('doc',{path:'/r/open.tex',edit:true}),id);s=follow(id,'/r/open.tex',{stay:true,edit:true},false);assert.equal(s.tabs[id].path,'/r/section.tex');assert.equal(s.layout.active.left,'file:/r/open.tex');assert.equal(ask.length,3);
+});
+
+test('narrow fold keeps both mounted in stable order but a subsequent preview replaces just the last-used slot', () => {
+  let s = open(c.emptyTabState(),file('a'));s=open(s,file('b'),s.layout.active.right);const order=s.order;
+  s=c.tabFoldPreviews(s);assert.equal(s.order,order);assert.equal(s.tabs['file:/r/a.md'].temporary,false);assert.equal(s.tabs['file:/r/b.md'].temporary,true);
+  s=open(s,file('c'),'desk',{narrow:true});assert.ok(s.tabs['file:/r/a.md']);assert.equal(s.tabs['file:/r/b.md'],undefined);assert.deepEqual(s.layout.right,['file:/r/a.md']);
+});
+
+test('v2 labels distinguish topic notes, paper URLs and compiled LaTeX previews', () => {
+  const ov={rootFile:'/r/root.md',title:'Research',topics:{t:{file:'/r/topic.md',title:'Topic: the question'}}};
+  assert.deepEqual([spec('desk'),spec('write'),file('topic'),spec('doc',{path:'/r/root.md'}),file('x'),spec('preview',{main:'/r/main.tex'}),spec('paper',{url:'https://arxiv.org/abs/2401.01234v5'})].map(t=>c.tabV2Label(t,ov)),['Desk','Write','Topic','Research','x.md','Preview · main.pdf','arXiv 2401.01234v5']);
 });
 
 test('SH-4/6: narrow layout projects both strips without reparenting or destroying the saved layout; corrupt storage is sanitized', () => {

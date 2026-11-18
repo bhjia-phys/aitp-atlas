@@ -1,3 +1,73 @@
+const PANES = ['left', 'right'];
+const TAB_DRAG = 'application/x-atlas-tab';
+
+function otherPane(pane) {
+  return pane === 'left' ? 'right' : 'left';
+}
+
+function paneOfTab(layout, id) {
+  return layout.left.includes(id) ? 'left' : layout.right.includes(id) ? 'right' : null;
+}
+
+/** Each pane shows a tab it holds. */
+function fixActive(layout) {
+  const active = { ...layout.active };
+  for (const p of PANES) if (!layout[p].includes(active[p])) active[p] = layout[p][layout[p].length - 1] || null;
+  return { ...layout, active };
+}
+
+/** Add a tab to a pane, after `after` (or at the end), and show it. */
+function layoutAdd(layout, id, pane, after) {
+  const list = layout[pane].filter((x) => x !== id);
+  const at = after && list.includes(after) ? list.indexOf(after) + 1 : list.length;
+  list.splice(at, 0, id);
+  const other = layout[otherPane(pane)].filter((x) => x !== id);
+  return fixActive({ ...layout, [pane]: list, [otherPane(pane)]: other, active: { ...layout.active, [pane]: id } });
+}
+
+/** Move a tab to a pane at `index` (the end when absent), and show it there. */
+function layoutMove(layout, id, pane, index) {
+  const left = layout.left.filter((x) => x !== id);
+  const right = layout.right.filter((x) => x !== id);
+  const target = pane === 'left' ? left : right;
+  const at = index === undefined || index === null ? target.length : Math.max(0, Math.min(index, target.length));
+  target.splice(at, 0, id);
+  return fixActive({ ...layout, left, right, active: { ...layout.active, [pane]: id } });
+}
+
+/** Remove a tab; its pane shows the neighbor it had. */
+function layoutRemove(layout, id) {
+  const pane = paneOfTab(layout, id);
+  if (!pane) return layout;
+  const at = layout[pane].indexOf(id);
+  const rest = layout[pane].filter((x) => x !== id);
+  const active = { ...layout.active };
+  if (active[pane] === id) active[pane] = rest[Math.min(at, rest.length - 1)] || null;
+  return fixActive({ ...layout, [pane]: rest, active });
+}
+
+/** The files that are places in Atlas: the root note and every topic's note. */
+function placeKeys(ov) {
+  const keys = new Set();
+  if (!ov) return keys;
+  if (ov.rootFile) keys.add(pathKey(ov.rootFile));
+  for (const t of Object.values(ov.topics || {})) if (t && t.file) keys.add(pathKey(t.file));
+  return keys;
+}
+
+/** What Atlas calls a file: a topic's note by its topic (every one is research.md), anything else by its name. */
+function sideLabel(ov, path) {
+  const key = pathKey(path);
+  if (ov && ov.rootFile && pathKey(ov.rootFile) === key) return shortTitle(ov.title || 'Root note', 40);
+  for (const t of Object.values((ov && ov.topics) || {})) if (t && t.file && pathKey(t.file) === key) return shortTitle(t.title, 40);
+  return baseName(path) || path;
+}
+
+/** A tab's name for a file or a paper. */
+function sideTitle(ov, entry) {
+  return entry.url ? (paperLink(entry.url) || { label: entry.url }).label : sideLabel(ov, entry.path);
+}
+
 // Tabs v2. The body order is deliberately independent of strip order: React must
 // see the same keyed siblings when an editor or retained DSH session changes pane.
 const TAB_PLACES = { desk: ['Desk', 'desk'], discussions: ['Discussions', 'chat'], teams: ['Teams', 'team'], map: ['Map', 'universe'], library: ['Library', 'library'], learn: ['Learn', 'learn'], write: ['Write', 'writing'], search: ['Search', 'search'] };
@@ -5,7 +75,7 @@ const tabPreviewable = (kind) => ['file', 'paper', 'topic'].includes(kind);
 
 function tabSpec(route, places) {
   if (!route) return null;
-  const view = route.view === 'home' ? 'desk' : route.view === 'activity' ? 'discussions' : route.view;
+  const view = route.view === 'home' ? (route.anchor ? 'map' : 'desk') : route.view === 'activity' ? 'discussions' : route.view;
   if (view === 'desk') return { kind: 'desk', id: 'desk', key: 'desk' };
   if (Object.hasOwn(TAB_PLACES, view)) return { ...route, view, kind: 'place', key: 'place:' + view };
   if (view === 'doc' && route.path) return { ...route, kind: places?.has(pathKey(route.path)) ? 'topic' : 'file', key: 'file:' + pathKey(route.path) };
@@ -59,16 +129,24 @@ function tabCloseState(s, id, remember = true) {
   return { ...s, tabs, order: s.order.filter(i => i !== id), layout, lastPane: layout[s.lastPane].length ? s.lastPane : 'left', closed };
 }
 
+function tabFoldPreviews(s) {
+  // Both strips now read as one. Keep its last-used replacement slot and pin the
+  // other one, rather than discarding a body or silently keeping two slots.
+  const primary=s.layout[s.lastPane].find(id=>s.tabs[id].temporary);
+  const other=s.layout[otherPane(s.lastPane)].find(id=>s.tabs[id].temporary);
+  return primary && other ? tabPromote(s,other) : s;
+}
+
 function tabOpenState(s, from, spec, opts = {}, dirty = {}) {
   if (!spec) return s;
   const pane = tabDestination(s, from, spec, opts);
   const existing = Object.values(s.tabs).find(t => t.key === spec.key);
   const permanent = !tabPreviewable(spec.kind) || opts.permanent || opts.ctrlKey || opts.metaKey || opts.button === 1 || spec.edit || spec.created;
   if (existing) {
-    const tab = { ...existing, ...spec, id: existing.id, edit: Boolean(existing.edit || spec.edit), temporary: Boolean(existing.temporary && !permanent) };
+    const tab = { ...existing, ...spec, ...(existing.path && ['file','topic'].includes(spec.kind) ? {path: existing.path} : {}), id: existing.id, edit: Boolean(existing.edit || spec.edit), temporary: Boolean(existing.temporary && !permanent) };
     return tabActivate({ ...s, tabs: { ...s.tabs, [tab.id]: tab } }, tab.id);
   }
-  let next = s;
+  let next = opts.narrow ? tabFoldPreviews(s) : s;
   // M1: one actual DSH conversation at a time, but the v2 identity and
   // reopen entry are always for a specific (never an anonymous) session.
   if (spec.kind === 'discussion' || spec.kind === 'member') {
@@ -76,7 +154,8 @@ function tabOpenState(s, from, spec, opts = {}, dirty = {}) {
     if (old) next = tabCloseState(next, old.id);
   }
   if (!permanent) {
-    const old = next.layout[pane].find(id => next.tabs[id].temporary);
+    const candidates = opts.narrow ? next.order : next.layout[pane];
+    const old = candidates.find(id => next.tabs[id].temporary);
     if (old) next = dirty[old] || next.tabs[old].edit ? tabPromote(next, old) : tabCloseState(next, old, false);
   }
   // Old random IDs are valid on restore. New IDs are stable and namespaced.
@@ -84,6 +163,27 @@ function tabOpenState(s, from, spec, opts = {}, dirty = {}) {
   while (Object.hasOwn(next.tabs, id)) id += ':';
   const tab = { ...spec, id, temporary: !permanent };
   return { ...next, lastPane: pane, tabs: { ...next.tabs, [id]: tab }, order: [...next.order, id], layout: layoutAdd(next.layout, id, pane, next.layout.active[pane]), ...(tab.kind === 'discussion' ? { lastDiscussion: tab.sessionId } : {}) };
+}
+
+/** A jump inside an editor can change the file it edits (`stay`), or leave
+ * editing. Only those two transitions can discard a buffer. A link from a
+ * different tab always preserves the existing editor, even if its path uses
+ * different casing. The caller supplies the discard prompt. */
+function tabFollowState(s, from, spec, opts, dirty, discard) {
+  const own=s.tabs[from];
+  if (!own || !spec) return s;
+  if (['file','topic'].includes(own.kind) && ['file','topic'].includes(spec.kind) && (own.key===spec.key || spec.stay)) {
+    const twin=Object.values(s.tabs).find(t=>t.id!==from && t.key===spec.key);
+    if (!twin) {
+      const edit=Boolean(spec.edit || (own.edit && spec.anchor && spec.edit !== false));
+      const leaving=own.key!==spec.key || (own.edit && !edit);
+      if (leaving && dirty[from] && !discard(from)) return s;
+      const temporary=Boolean(own.temporary && !edit && !opts.permanent && !opts.ctrlKey && !opts.metaKey && opts.button!==1);
+      const tab={...own,...spec,id:from,path:own.key===spec.key ? own.path : spec.path, temporary,edit};
+      return tabActivate({...s,tabs:{...s.tabs,[from]:tab}},from);
+    }
+  }
+  return tabOpenState(s,from,spec,opts,dirty);
 }
 
 function tabMoveState(s, id, pane, index) {
@@ -267,7 +367,9 @@ function AtlasTabStrip({ pane, ids, active, last, tabs, ov, width, running, drag
 }
 
 const ATLAS_TAB_CSS = `
-.atlas-root.atlas-shell-v2 {flex-direction:row;}
+.atlas-root.atlas-shell-v2 {position:relative;isolation:isolate;flex-direction:row;}
+.atlas-library-local-filter {display:block;padding:var(--s-12) var(--s-24) 0;}
+.atlas-library-local-filter > input {width:min(100%,36ch);}
 .atlas-shell-v2 .atlas-body {min-width:0;}
 .atlas-shell-v2 .atlas-strips {height:var(--s-40);z-index:var(--z-strip);background:var(--bg);border-bottom:1px solid var(--border);}
 .atlas-shell-v2 .atlas-strip {align-items:center;padding:0 var(--s-8) 0 6px;gap:var(--s-4);}
@@ -282,7 +384,7 @@ const ATLAS_TAB_CSS = `
 .atlas-tab-slot {width:var(--s-20);height:var(--s-20);flex:none;display:grid;place-items:center;}
 .atlas-tab-slot > * {grid-area:1/1;}
 .atlas-tab-dirty {width:var(--s-8);height:var(--s-8);border-radius:var(--r-full);background:var(--text-2);}
-.atlas-tab-working {width:var(--s-12);height:var(--s-12);background:var(--accent);clip-path:polygon(50% 0%,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:atlas-twinkle var(--motion-twinkle) ease-in-out infinite alternate;}
+.atlas-tab-working {width:var(--s-12);height:var(--s-12);background:var(--accent);clip-path:var(--star-shape);animation:atlas-twinkle var(--motion-twinkle) var(--ease) infinite alternate;}
 .atlas-ptab:hover .atlas-tab-status,.atlas-ptab.is-on .atlas-tab-status {visibility:hidden;}
 .atlas-shell-v2 .atlas-strip-tool {margin:0;flex:none;width:28px;height:28px;}
 .atlas-shell-v2 .atlas-tab-body {background:var(--surface);}
