@@ -2,8 +2,8 @@
  * End-to-end test inside a real DeepSeek Harness host, in a throwaway DSH home
  * (DSH_HOME in a temporary folder, so the researcher's ~/.dsh is never touched).
  *
- *   1. headless: one installation adds Atlas and the upstream AITP Skills as
- *      separate bundles. A mock Messages server checks the model's skill catalog.
+ *   1. headless: install the packed Atlas alongside a configured local fixture
+ *      Skills bundle. A mock Messages server checks the model's skill catalog.
  *   2. web: the Atlas API answers from the fixture research tree.
  *   3. the research tree is byte-for-byte unchanged.
  *
