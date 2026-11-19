@@ -38,11 +38,11 @@ function atlasKeyOverlap(a, b) {
 function atlasEffectiveKeys(catalog, fixed, runtime) {
   const taken = [...catalog.map((r) => r.binding), ...fixed.flatMap((r) => r.bindings || [])].filter(Boolean);
   return ATLAS_CHROME_KEYS.map(([id, label, ...options]) => {
-    // These browser tab actions are commonly consumed before the page sees them.
-    if (runtime === 'web') {
-      const webKeys = { next: 'Ctrl+Alt+Shift+→', previous: 'Ctrl+Alt+Shift+←', reopen: 'Ctrl+Alt+Shift+T' };
-      if (id === 'close') options.reverse();
-      if (webKeys[id]) options.unshift(webKeys[id]);
+    // Without confirmed desktop rendering assume a browser. A conflicted safe
+    // chord must disable the shortcut, never fall through to closing a browser tab.
+    if (runtime !== 'desktop') {
+      const webKeys = { close:['Ctrl+Alt+W','Ctrl+Alt+Shift+W'], next:['Ctrl+Alt+Shift+→'], previous:['Ctrl+Alt+Shift+←'], reopen:['Ctrl+Alt+Shift+T'] };
+      if (webKeys[id]) options = webKeys[id];
     }
     const combo = options.find((s) => !taken.some((b) => atlasKeyOverlap(atlasPhysicalKey(s), b))) || '';
     return { id, label, combo, binding: combo ? atlasPhysicalKey(combo) : null };
@@ -196,7 +196,10 @@ function useAtlasChrome(p) {
   const services = React.useSyncExternalStore(atlasChromeServices.subscribe, atlasChromeServices.get);
   const layout = services.layout, shortcuts = services.shortcuts;
   const catalog = useAtlasCatalog(shortcuts?.catalog), fixed = useAtlasCatalog(shortcuts?.fixedCatalog);
-  const bindings = useMemo(() => atlasEffectiveKeys(catalog, fixed, shortcuts?.runtime), [catalog, fixed, shortcuts]);
+  // A desktop Host can also serve a normal Chromium tab. Its reserved keys
+  // belong to that browser, regardless of which Host supplied the catalogs.
+  const runtime = shortcuts?.runtime === 'desktop' && /\bElectron\//i.test(globalThis.navigator?.userAgent || '') ? 'desktop' : 'web';
+  const bindings = useMemo(() => atlasEffectiveKeys(catalog, fixed, runtime), [catalog, fixed, runtime]);
   const shortcut = (id) => bindings.find((k) => k.id === id)?.combo || '';
   const focus = useAtlasFocusMode(p.rootRef, layout, p.flash);
   const threads = useThreadIndex(), rows = useSessionRows();
@@ -240,7 +243,7 @@ function useAtlasChrome(p) {
       overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
       overlay === 'shortcuts' && h(Dialog, { title: 'Keyboard shortcuts', onClose: close },
         h('p', null, shortcuts ? 'These bindings apply inside Atlas. DSH keeps its own shortcuts.' : 'The DSH shortcut catalog is unavailable. These are the local Atlas bindings.'),
-        shortcuts?.runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),
+        runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),
         h('dl', { className: 'atlas-shortcut-list' }, [...bindings, { id: 'escape', label: 'Exit focus outside an editor or conversation', combo: 'Esc' }].map((b) => h('div', { key: b.id },
           h('dt', null, b.label), h('dd', null, b.combo ? h(Kbd, null, b.combo) : 'Reserved by DSH'))))),
       overlay === 'about' && h(Dialog, { title: 'About Atlas', onClose: close }, h('p', null, typeof ATLAS_VERSION === 'string' ? 'AITP Atlas · ' + ATLAS_VERSION : 'AITP Atlas'), h('p', null, 'A celestial atlas of your research programme.')),

@@ -276,6 +276,9 @@ async function startThread({ root, context, intent = 'ask', question, label, onC
     error.fallback = true;
     throw error;
   }
+  // An explicit saved choice must never create an orphan or silently fall back
+  // when the optional session model RPC is already known to be unavailable.
+  if (model) {const reason=atlasModelLimit(atlasModelAccess.get()); if (reason) throw new Error(reason+' No discussion was created.');}
   let workspaceId;
   if (workspaces && typeof workspaces.create === 'function') {
     const workspace = await workspaces.create({ path: root });
@@ -493,10 +496,9 @@ function AtlasConversationPanel({ sessionId, useSession, useConversation, useSes
 }
 
 function EmbeddedConversation({ sessionId, onOpenChat }) {
-  const kit = React.useContext(SlotKit);
+  const kit = React.useContext(SlotKit), sessions=svc('sessions');
   const [state, setState] = useState({ reference: null, error: null });
   useEffect(() => {
-    const sessions = svc('sessions');
     if (!sessions || typeof sessions.retain !== 'function') {
       setState({ reference: null, error: new Error('This DSH version cannot show the discussion here.') });
       return undefined;
@@ -504,20 +506,20 @@ function EmbeddedConversation({ sessionId, onOpenChat }) {
     let reference = null;
     try {
       reference = sessions.retain(sessionId, { source: 'atlas' });
-      setState({ reference, error: null });
+      setState({ reference, sessions, sessionId, error: null });
     } catch (error) {
-      setState({ reference: null, error });
+      setState({ reference: null, sessions, sessionId, error });
     }
     return () => {
       if (reference) reference.release();
     };
-  }, [sessionId]);
-  if (state.error || !kit.SessionProvider || !kit.renderSlot) {
+  }, [sessionId,sessions]);
+  if (state.error || !sessions?.retain || !kit.SessionProvider || !kit.renderSlot) {
     return h('div', { className: 'atlas-companion-fallback' },
       h('p', null, state.error ? state.error.message : 'This DSH version cannot show the discussion beside the document.'),
       h(Button, { icon: 'external', onClick: onOpenChat }, 'Open in chat'));
   }
-  if (!state.reference) return h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Opening the discussion…');
+  if (!state.reference || state.sessions!==sessions || state.sessionId!==sessionId) return h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Opening the discussion…');
   return h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
 }
 

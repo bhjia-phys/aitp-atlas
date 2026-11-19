@@ -259,6 +259,9 @@ function tabReopen(s, narrow = false) {
   return { ...opened, lastPane: pane, layout: layoutMove(opened.layout, id, pane, Math.max(pane === 'left' ? 1 : 0, entry.index)) };
 }
 
+function tabFocusSuccessor(layout,pane) {
+  return layout.active[pane] || layout.active.left || layout.active.right || null;
+}
 function tabScreenLayout(s, narrow) {
   if (!narrow || !s.layout.right.length) return s.layout;
   return { ...s.layout, left: [...s.layout.left, ...s.layout.right], right: [], active: { left: s.layout.active[s.lastPane], right: null } };
@@ -383,7 +386,7 @@ function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width
   useLayoutEffect(() => {
     const el = list.current;
     const measure = () => {
-      const on = el.querySelector('[aria-selected="true"]');
+      const on = el.querySelector('[aria-selected="true"]')?.closest('.atlas-ptab');
       if (on) {
         const x = on.offsetLeft;
         if (x < el.scrollLeft) el.scrollLeft = x;
@@ -401,8 +404,14 @@ function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width
     const i = children.findIndex(el => { const r = el.getBoundingClientRect(); return x < r.left + r.width / 2; });
     return i < 0 ? ids.length : i;
   };
+  const closeFromStrip = id => {
+    const owner=list.current, shell=owner?.closest('.atlas-shell-v2');
+    if (!onClose(id)) return; // including a cancelled unsaved-changes warning
+    requestAnimationFrame(()=> (owner?.querySelector('[role="tab"][aria-selected="true"]') || shell?.querySelector('.atlas-strip [role="tab"][aria-selected="true"]'))?.focus());
+  };
   const handleKey = (event, id) => {
-    if (event.target !== event.currentTarget) return;
+    if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent?.isComposing) return;
+    if (event.key === 'Delete' && id !== 'desk') { event.preventDefault(); closeFromStrip(id); return; }
     const i = ids.indexOf(id);
     const next = { ArrowRight: ids[(i+1)%ids.length], ArrowLeft: ids[(i-1+ids.length)%ids.length], Home: ids[0], End: ids.at(-1), Enter: id, ' ': id }[event.key];
     if (!next) return;
@@ -418,14 +427,13 @@ function AtlasTabStrip({ workspaceMenu, pane, ids, active, last, tabs, ov, width
       onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
     ids.map((id,i)=>{
       const t=tabs[id],label=tabV2Label(t,ov),on=id===active;
-      return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, 'aria-label':t.unread ? label+' · Unread reply' : undefined, tabIndex:on?0:-1, draggable:id!=='desk',
-        title:t.path || t.url || label, className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert'),
-        onClick:()=>onShow(id), onDoubleClick:()=>onPromote(id), onKeyDown:e=>handleKey(e,id), onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
-        onDragStart:e=>{ e.dataTransfer.setData(TAB_DRAG,id); e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id); },onDragEnd:()=>onDrag(null)},
-        h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label),
-        h('span',{className:'atlas-tab-slot'},
-          running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : t.unread ? h('span',{className:'atlas-tab-status atlas-tab-unread',title:'Unread reply','aria-hidden':true}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
-          id !== 'desk' ? h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:e=>{e.stopPropagation();onClose(id);}},h(Icon,{name:'close',size:12})) : null));
+      const status=running(t)?'Working':t.unread?'Unread reply':editorDirty[id]?'Unsaved changes':'';
+      return h('div',{key:id,role:'presentation',className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert')},
+        h('button',{type:'button',role:'tab',className:'atlas-ptab-target',id:domId('tab',id),'aria-controls':domId('panel',id),'aria-selected':on,'aria-label':status?`${label} · ${status}`:label,'aria-keyshortcuts':id==='desk'?undefined:'Delete',tabIndex:on?0:-1,draggable:id!=='desk',title:t.path||t.url||label,
+          onClick:()=>onShow(id),onDoubleClick:()=>onPromote(id),onKeyDown:e=>handleKey(e,id),onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
+          onDragStart:e=>{e.dataTransfer.setData(TAB_DRAG,id);e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id);},onDragEnd:()=>onDrag(null)},h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label)),
+        h('span',{className:'atlas-tab-slot'},status && h('span',{'aria-hidden':true,className:'atlas-tab-status '+(running(t)?'atlas-tab-working':t.unread?'atlas-tab-unread':'atlas-tab-dirty')}),
+          id!=='desk' && h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:()=>closeFromStrip(id)},h(Icon,{name:'close',size:12}))));
     }),drop?.pane===pane&&drop.where==='strip'&&drop.index===ids.length ? h('span',{className:'atlas-ptab-end'}) : null),
     overflow && tool('list','List tabs','chevron'),
     h(IconButton,{label:'Focus pane',icon:'expand',className:'atlas-strip-tool',onClick:()=>onFocus(active)}),
@@ -442,7 +450,10 @@ const ATLAS_TAB_CSS = `
 .atlas-shell-v2 .atlas-strip {align-items:center;padding:0 var(--s-8) 0 6px;gap:var(--s-4);}
 .atlas-shell-v2 .atlas-strip-tabs {align-items:center;padding:0;}
 .atlas-shell-v2 .atlas-ptab {height:30px;max-width:220px;padding:0 var(--s-4) 0 10px;gap:7px;border:0;border-radius:8px;color:var(--text-2);font:var(--t-ui);}
-.atlas-shell-v2 .atlas-ptab > .atlas-icon {color:var(--text-3);}
+.atlas-shell-v2 .atlas-ptab {padding-inline-start:0;gap:0;}
+.atlas-shell-v2 .atlas-ptab-target {appearance:none;min-width:0;height:100%;display:inline-flex;align-items:center;gap:7px;padding:0 var(--s-4) 0 10px;border:0;border-radius:inherit;color:inherit;background:transparent;font:inherit;cursor:pointer;}
+.atlas-shell-v2 .atlas-ptab-target:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;}
+.atlas-shell-v2 .atlas-ptab-target > .atlas-icon {color:var(--text-3);}
 .atlas-shell-v2 .atlas-ptab:hover {color:var(--text-1);background:var(--hover);}
 .atlas-shell-v2 .atlas-ptab.is-on {background:var(--raised);color:var(--text-1);font-weight:500;box-shadow:inset 0 0 0 1px var(--border);}
 .atlas-shell-v2 .atlas-strip.is-last .atlas-ptab.is-on {background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--border-strong);}

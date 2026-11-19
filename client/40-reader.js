@@ -572,7 +572,7 @@ function Editor({ data, go, flash, created, onSaved }) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
       if (dirty) save(false);
-    } else if (e.key === 'Tab' && !e.shiftKey) {
+    } else if ((e.ctrlKey || e.metaKey) && e.key === ']' && !e.altKey && !e.nativeEvent?.isComposing) { // Plain Tab always leaves the editor.
       e.preventDefault();
       const el = e.target;
       const start = el.selectionStart;
@@ -606,7 +606,7 @@ function Editor({ data, go, flash, created, onSaved }) {
       h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, statusText),
       h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; done(); } } }, 'Done')),
     h('div', { className: cx('atlas-editor-split', isMarkdown && preview && 'has-preview') },
-      h('textarea', { ref: area, className: 'atlas-editor-text', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
+      h('textarea', { ref: area, className: 'atlas-editor-text', title:'Tab leaves the editor; Ctrl+] or ⌘+] indents two spaces.', 'aria-keyshortcuts':'Control+] Meta+]', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
       isMarkdown && preview ? h('div', { className: 'atlas-editor-preview atlas-reading' }, h(Markdown, { text: shown.replace(/^---\n[\s\S]*?\n---\n/, ''), baseFile: data.path })) : null,
       !isMarkdown && data.type === 'tex' ? h(TexAside, { text: shown, path: data.path, go }) : null));
 }

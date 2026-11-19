@@ -241,7 +241,7 @@ function AddAnything({ ov, data, go, flash, topics, topic, focus }) {
   const modes = [['paper', 'Paper'], ['lecture', 'Lecture video'], ['files', 'Files']];
   return h('aside', { className: 'atlas-add', 'aria-label': 'Add anything' },
     h('h2', null, 'Add anything'),
-    h('div', { className: 'atlas-seg', role: 'tablist' }, modes.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': mode === key, className: cx('atlas-seg-item', mode === key && 'is-on'), onClick: () => choose(key) }, label))),
+    h(Segmented,{label:'Source to add',value:mode,onChange:choose,options:modes.map(([value,label])=>({value,label}))}),
     mode === 'paper' ? h(AddPaper, { ov, go, flash, topics, topic, focus }) : null,
     mode === 'lecture' ? h(AddLecture, { go, flash, topics, topic }) : null,
     mode === 'files' ? h(AddFiles, { data, go, flash, topics, topic }) : null,

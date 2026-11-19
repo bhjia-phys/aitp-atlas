@@ -105,10 +105,17 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
   const tab=displayTabs[active];
   const show = id => {update(s => tabActivate(s,id));setActivePane(id);};
   const promote = id => update(s => tabPromote(s,id));
-  const close = id => {
+  const close = (id,returnFocus=false) => {
     if (id === 'desk' || !stateRef.current.tabs[id]) return false;
     if (editorDirty[id] && !window.confirm('Close it without saving your changes?')) return false;
-    delete editorDirty[id];update(s => tabCloseState(s,id));return true;
+    const pane=paneOfTab(tabScreenLayout(stateRef.current,narrow),id);
+    delete editorDirty[id];update(s => tabCloseState(s,id));
+    if(returnFocus) requestAnimationFrame(()=>{
+      const next=tabFocusSuccessor(tabScreenLayout(stateRef.current,narrow),pane);
+      if(!next || !live.current)return;
+      (document.getElementById(domId('tab',next)) || document.getElementById(domId('panel',next)))?.focus();
+    });
+    return true;
   };
   const move = (id,pane,index) => {if (!narrow || pane === 'left') update(s => tabMoveState(s,id,pane,index));};
   const splitPane = (id = activeId(stateRef.current)) => {
@@ -228,7 +235,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
     openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
     openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
     onNewDiscussion:()=>nav.current(activeId(stateRef.current),{view:'desk'},{focusComposer:true}),onQuick:onQuick,onAsk:openAsk,onRefresh,onSplit:()=>splitPane(),
-    onMove:()=>{if(narrow || active==='desk') {flash(narrow?'Two panes need at least 720 px.':'Desk stays pinned on the left.');return;} move(active,otherPane(state.lastPane));},onReopen:reopen,onCycle:cycle,onClose:()=>close(active),flash });
+    onMove:()=>{if(narrow || active==='desk') {flash(narrow?'Two panes need at least 720 px.':'Desk stays pinned on the left.');return;} move(active,otherPane(state.lastPane));},onReopen:reopen,onCycle:cycle,onClose:()=>close(active,true),flash });
   const focus = (id=active) => {if (stateRef.current.tabs[id]) show(id);chrome.toggleFocus();};
   const focused=chrome.focused;
   const shown=focused ? [paneOfTab(layout,active)] : PANES.filter(p=>layout[p].length);
@@ -341,7 +348,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
       h('div',{className:'atlas-panes',ref:panesRef},
         state.order.map(id=>{
           const t=state.tabs[id],visible=visibleIds.includes(id);
-          return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
+          return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,inert:!visible,tabIndex:visible?0:-1,
             ref:bodyRef(id),className:cx('atlas-tab-body','is-'+t.kind,!visible&&'is-hidden'),style:geometry(paneOfTab(layout,id)),
             onFocusCapture:()=>show(id),onPointerDownCapture:()=>show(id),onClickCapture:e=>rememberGesture(e,id,e.nativeEvent?.atlasMiddle?{button:1}:{}),onAuxClickCapture:e=>middle(e,id)},
             wrap(id,h(Boundary,null,contentOf(t))));

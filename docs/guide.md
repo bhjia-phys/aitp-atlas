@@ -36,7 +36,7 @@ Open **Atlas ▾ → Keyboard shortcuts** for the **effective** bindings on this
 | New discussion; ask about current context | `Ctrl+Shift+J`; `Ctrl+J` |
 | Move within Commands; open a result beside; dismiss | Arrow keys; `Shift+Enter`; `Esc`. Prefix `>` for commands, `#` for topics, `@` for discussions/teams. |
 | Focus pane; full screen while focused | `Ctrl+Shift+F`; `Shift+F11`. Exit full screen before exiting Focus. |
-| Next / previous tab in web DSH; close; reopen | `Ctrl+Alt+Shift+→` / `←`; `Ctrl+Alt+W`; `Ctrl+Alt+Shift+T` |
+| Next / previous tab in web DSH; close; reopen | `Ctrl+Alt+Shift+→` / `←`; `Ctrl+Alt+W` (alternative `Ctrl+Alt+Shift+W`); `Ctrl+Alt+Shift+T`. If Close is reserved, focus the Atlas tab and press `Delete`, or use its close button. |
 | Move the active tab to the other pane | `Ctrl+Alt+←` or `Ctrl+Alt+→` |
 
 ## Start a native team

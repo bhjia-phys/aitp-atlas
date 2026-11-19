@@ -2765,7 +2765,7 @@ window.__ModuleLoader__.load({
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
           e.preventDefault();
           if (dirty) save(false);
-        } else if (e.key === 'Tab' && !e.shiftKey) {
+        } else if ((e.ctrlKey || e.metaKey) && e.key === ']' && !e.altKey && !e.nativeEvent?.isComposing) { // Plain Tab always leaves the editor.
           e.preventDefault();
           const el = e.target;
           const start = el.selectionStart;
@@ -2799,7 +2799,7 @@ window.__ModuleLoader__.load({
           h('span', { className: cx('atlas-editor-status', dirty && 'is-dirty', status.kind === 'error' && 'is-error') }, statusText),
           h(Button, { quiet: true, onClick: () => { if (!dirty || window.confirm('Discard your unsaved changes?')) { editorDirty[pane] = false; done(); } } }, 'Done')),
         h('div', { className: cx('atlas-editor-split', isMarkdown && preview && 'has-preview') },
-          h('textarea', { ref: area, className: 'atlas-editor-text', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
+          h('textarea', { ref: area, className: 'atlas-editor-text', title:'Tab leaves the editor; Ctrl+] or ⌘+] indents two spaces.', 'aria-keyshortcuts':'Control+] Meta+]', value: text, spellCheck: false, onChange: (e) => setText(e.target.value), onKeyDown, 'aria-label': 'Source of ' + baseName(data.path) }),
           isMarkdown && preview ? h('div', { className: 'atlas-editor-preview atlas-reading' }, h(Markdown, { text: shown.replace(/^---\n[\s\S]*?\n---\n/, ''), baseFile: data.path })) : null,
           !isMarkdown && data.type === 'tex' ? h(TexAside, { text: shown, path: data.path, go }) : null));
     }
@@ -3100,7 +3100,7 @@ window.__ModuleLoader__.load({
         } else if ((e.ctrlKey || e.metaKey) && key === 'b') {
           e.preventDefault();
           runBuild();
-        } else if (e.key === 'Tab' && !e.shiftKey) {
+        } else if ((e.ctrlKey || e.metaKey) && e.key === ']' && !e.altKey && !e.nativeEvent?.isComposing) { // Plain Tab always leaves the editor.
           e.preventDefault();
           const el = e.target;
           const start = el.selectionStart;
@@ -3154,7 +3154,7 @@ window.__ModuleLoader__.load({
             h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
             h('textarea', {
               ref: area,
-              className: 'atlas-write-text atlas-editor-text',
+              className: 'atlas-write-text atlas-editor-text', 'aria-keyshortcuts':'Control+] Meta+]',
               value: text,
               wrap: 'off',
               spellCheck: false,
@@ -3173,9 +3173,9 @@ window.__ModuleLoader__.load({
                 if (gutter.current) gutter.current.scrollTop = e.target.scrollTop;
               },
               'aria-label': 'Source of ' + baseName(data.path),
-              title: sync ? 'Ctrl+click a line to find it in the Preview' : 'Source',
+              title: 'Tab leaves the editor; Ctrl+] or ⌘+] indents two spaces.'+(sync?' Ctrl+click a line to find it in the Preview.':''),
             })),
-          open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', title: 'Drag to resize; double-click to reset', onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
+          open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', tabIndex:0,'aria-valuemin':30,'aria-valuemax':80,'aria-valuenow':split,'aria-valuetext':`${split}% source width`,title:'Use Left/Right to resize, Home/End for limits, or double-click to reset',onKeyDown:e=>{if(e.altKey||e.ctrlKey||e.metaKey)return; const v={ArrowLeft:Math.max(30,split-1),ArrowRight:Math.min(80,split+1),Home:30,End:80}[e.key];if(v!=null){e.preventDefault();e.stopPropagation();saveSplit(v);}}, onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
           open ? h('div', { className: 'atlas-write-side' },
             h('div', { className: 'atlas-write-side-head' },
               h('span', null, (WRITE_PANELS.find(([key]) => key === open) || [])[1]),
@@ -3649,7 +3649,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'atlas-meta' },
             h('span', null, plural(data.papers.length, 'paper')), h('span', null, plural(data.papers.filter((p) => p.pdf).length, 'PDF')), h('span', null, plural(entryCount, 'knowledge entry', 'knowledge entries')),
             data.index ? h(TextButton, { onClick: () => go({ view: 'doc', path: data.index.file }) }, 'Open the index') : null),
-          h('div', { className: 'atlas-seg is-tabs', role: 'tablist' }, tabs.map(([key, label, n]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on'), onClick: () => choose(key) }, label, n === null ? null : h('span', { className: 'atlas-count' }, n))))),
+          h(Segmented,{label:'Library view',value:tab,onChange:choose,options:tabs.map(([value,label,n])=>({value,label:n===null?label:`${label} (${n})`}))})),
         body);
     }
 
@@ -3666,7 +3666,7 @@ window.__ModuleLoader__.load({
       return h('section', { className: 'atlas-section' },
         h('div', { className: 'atlas-toolbar' },
           h('span', { className: 'atlas-label' }, 'Sort'),
-          h('div', { className: 'atlas-seg', role: 'radiogroup' }, [['newest', 'Newest'], ['cited', 'Most cited'], ['title', 'Title']].map(([k, label]) => h('button', { key: k, type: 'button', role: 'radio', 'aria-checked': sort === k, className: cx('atlas-seg-item', sort === k && 'is-on'), onClick: () => { setSort(k); storageSet('library-sort', k); } }, label)))),
+          h(Segmented,{label:'Sort papers',value:sort,onChange:k=>{setSort(k);storageSet('library-sort',k);},options:[{value:'newest',label:'Newest'},{value:'cited',label:'Most cited'},{value:'title',label:'Title'}]})),
         papers.length === 0 ? h(Empty, null, data.library ? 'No paper matches.' : 'No papers library was found.') : null,
         h('ul', { className: 'atlas-shelf' }, papers.map((p) => h('li', { key: p.key }, h(PaperRow, { p, go })))));
     }
@@ -3994,7 +3994,7 @@ window.__ModuleLoader__.load({
       const modes = [['paper', 'Paper'], ['lecture', 'Lecture video'], ['files', 'Files']];
       return h('aside', { className: 'atlas-add', 'aria-label': 'Add anything' },
         h('h2', null, 'Add anything'),
-        h('div', { className: 'atlas-seg', role: 'tablist' }, modes.map(([key, label]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': mode === key, className: cx('atlas-seg-item', mode === key && 'is-on'), onClick: () => choose(key) }, label))),
+        h(Segmented,{label:'Source to add',value:mode,onChange:choose,options:modes.map(([value,label])=>({value,label}))}),
         mode === 'paper' ? h(AddPaper, { ov, go, flash, topics, topic, focus }) : null,
         mode === 'lecture' ? h(AddLecture, { go, flash, topics, topic }) : null,
         mode === 'files' ? h(AddFiles, { data, go, flash, topics, topic }) : null,
@@ -4611,6 +4611,9 @@ window.__ModuleLoader__.load({
         error.fallback = true;
         throw error;
       }
+      // An explicit saved choice must never create an orphan or silently fall back
+      // when the optional session model RPC is already known to be unavailable.
+      if (model) {const reason=atlasModelLimit(atlasModelAccess.get()); if (reason) throw new Error(reason+' No discussion was created.');}
       let workspaceId;
       if (workspaces && typeof workspaces.create === 'function') {
         const workspace = await workspaces.create({ path: root });
@@ -4828,10 +4831,9 @@ window.__ModuleLoader__.load({
     }
 
     function EmbeddedConversation({ sessionId, onOpenChat }) {
-      const kit = React.useContext(SlotKit);
+      const kit = React.useContext(SlotKit), sessions=svc('sessions');
       const [state, setState] = useState({ reference: null, error: null });
       useEffect(() => {
-        const sessions = svc('sessions');
         if (!sessions || typeof sessions.retain !== 'function') {
           setState({ reference: null, error: new Error('This DSH version cannot show the discussion here.') });
           return undefined;
@@ -4839,20 +4841,20 @@ window.__ModuleLoader__.load({
         let reference = null;
         try {
           reference = sessions.retain(sessionId, { source: 'atlas' });
-          setState({ reference, error: null });
+          setState({ reference, sessions, sessionId, error: null });
         } catch (error) {
-          setState({ reference: null, error });
+          setState({ reference: null, sessions, sessionId, error });
         }
         return () => {
           if (reference) reference.release();
         };
-      }, [sessionId]);
-      if (state.error || !kit.SessionProvider || !kit.renderSlot) {
+      }, [sessionId,sessions]);
+      if (state.error || !sessions?.retain || !kit.SessionProvider || !kit.renderSlot) {
         return h('div', { className: 'atlas-companion-fallback' },
           h('p', null, state.error ? state.error.message : 'This DSH version cannot show the discussion beside the document.'),
           h(Button, { icon: 'external', onClick: onOpenChat }, 'Open in chat'));
       }
-      if (!state.reference) return h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Opening the discussion…');
+      if (!state.reference || state.sessions!==sessions || state.sessionId!==sessionId) return h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Opening the discussion…');
       return h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
     }
 
@@ -7086,10 +7088,17 @@ window.__ModuleLoader__.load({
       const tab=displayTabs[active];
       const show = id => {update(s => tabActivate(s,id));setActivePane(id);};
       const promote = id => update(s => tabPromote(s,id));
-      const close = id => {
+      const close = (id,returnFocus=false) => {
         if (id === 'desk' || !stateRef.current.tabs[id]) return false;
         if (editorDirty[id] && !window.confirm('Close it without saving your changes?')) return false;
-        delete editorDirty[id];update(s => tabCloseState(s,id));return true;
+        const pane=paneOfTab(tabScreenLayout(stateRef.current,narrow),id);
+        delete editorDirty[id];update(s => tabCloseState(s,id));
+        if(returnFocus) requestAnimationFrame(()=>{
+          const next=tabFocusSuccessor(tabScreenLayout(stateRef.current,narrow),pane);
+          if(!next || !live.current)return;
+          (document.getElementById(domId('tab',next)) || document.getElementById(domId('panel',next)))?.focus();
+        });
+        return true;
       };
       const move = (id,pane,index) => {if (!narrow || pane === 'left') update(s => tabMoveState(s,id,pane,index));};
       const splitPane = (id = activeId(stateRef.current)) => {
@@ -7209,7 +7218,7 @@ window.__ModuleLoader__.load({
         openPlace:(view,opts)=>nav.current(activeId(stateRef.current),{view},opts), openTopic:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),
         openFile:(path,opts)=>nav.current(activeId(stateRef.current),{view:'doc',path},opts),openThread:(id,opts)=>openThread(id,activeId(stateRef.current),opts),
         onNewDiscussion:()=>nav.current(activeId(stateRef.current),{view:'desk'},{focusComposer:true}),onQuick:onQuick,onAsk:openAsk,onRefresh,onSplit:()=>splitPane(),
-        onMove:()=>{if(narrow || active==='desk') {flash(narrow?'Two panes need at least 720 px.':'Desk stays pinned on the left.');return;} move(active,otherPane(state.lastPane));},onReopen:reopen,onCycle:cycle,onClose:()=>close(active),flash });
+        onMove:()=>{if(narrow || active==='desk') {flash(narrow?'Two panes need at least 720 px.':'Desk stays pinned on the left.');return;} move(active,otherPane(state.lastPane));},onReopen:reopen,onCycle:cycle,onClose:()=>close(active,true),flash });
       const focus = (id=active) => {if (stateRef.current.tabs[id]) show(id);chrome.toggleFocus();};
       const focused=chrome.focused;
       const shown=focused ? [paneOfTab(layout,active)] : PANES.filter(p=>layout[p].length);
@@ -7322,7 +7331,7 @@ window.__ModuleLoader__.load({
           h('div',{className:'atlas-panes',ref:panesRef},
             state.order.map(id=>{
               const t=state.tabs[id],visible=visibleIds.includes(id);
-              return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,
+              return h('div',{key:id,id:domId('panel',id),role:'tabpanel','data-session-id':tabConversation(t)?t.sessionId:undefined,'data-conversation-retained':tabConversation(t)?String(retained.includes(id)):undefined,'aria-label':tabV2Label(displayTabs[id],ov),'aria-labelledby':focused?undefined:domId('tab',id),'aria-hidden':visible?undefined:true,inert:!visible,tabIndex:visible?0:-1,
                 ref:bodyRef(id),className:cx('atlas-tab-body','is-'+t.kind,!visible&&'is-hidden'),style:geometry(paneOfTab(layout,id)),
                 onFocusCapture:()=>show(id),onPointerDownCapture:()=>show(id),onClickCapture:e=>rememberGesture(e,id,e.nativeEvent?.atlasMiddle?{button:1}:{}),onAuxClickCapture:e=>middle(e,id)},
                 wrap(id,h(Boundary,null,contentOf(t))));
@@ -7701,6 +7710,9 @@ window.__ModuleLoader__.load({
       return { ...opened, lastPane: pane, layout: layoutMove(opened.layout, id, pane, Math.max(pane === 'left' ? 1 : 0, entry.index)) };
     }
 
+    function tabFocusSuccessor(layout,pane) {
+      return layout.active[pane] || layout.active.left || layout.active.right || null;
+    }
     function tabScreenLayout(s, narrow) {
       if (!narrow || !s.layout.right.length) return s.layout;
       return { ...s.layout, left: [...s.layout.left, ...s.layout.right], right: [], active: { left: s.layout.active[s.lastPane], right: null } };
@@ -7825,7 +7837,7 @@ window.__ModuleLoader__.load({
       useLayoutEffect(() => {
         const el = list.current;
         const measure = () => {
-          const on = el.querySelector('[aria-selected="true"]');
+          const on = el.querySelector('[aria-selected="true"]')?.closest('.atlas-ptab');
           if (on) {
             const x = on.offsetLeft;
             if (x < el.scrollLeft) el.scrollLeft = x;
@@ -7843,8 +7855,14 @@ window.__ModuleLoader__.load({
         const i = children.findIndex(el => { const r = el.getBoundingClientRect(); return x < r.left + r.width / 2; });
         return i < 0 ? ids.length : i;
       };
+      const closeFromStrip = id => {
+        const owner=list.current, shell=owner?.closest('.atlas-shell-v2');
+        if (!onClose(id)) return; // including a cancelled unsaved-changes warning
+        requestAnimationFrame(()=> (owner?.querySelector('[role="tab"][aria-selected="true"]') || shell?.querySelector('.atlas-strip [role="tab"][aria-selected="true"]'))?.focus());
+      };
       const handleKey = (event, id) => {
-        if (event.target !== event.currentTarget) return;
+        if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent?.isComposing) return;
+        if (event.key === 'Delete' && id !== 'desk') { event.preventDefault(); closeFromStrip(id); return; }
         const i = ids.indexOf(id);
         const next = { ArrowRight: ids[(i+1)%ids.length], ArrowLeft: ids[(i-1+ids.length)%ids.length], Home: ids[0], End: ids.at(-1), Enter: id, ' ': id }[event.key];
         if (!next) return;
@@ -7860,14 +7878,13 @@ window.__ModuleLoader__.load({
           onWheel:e=>{if (Math.abs(e.deltaY)>Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;}},
         ids.map((id,i)=>{
           const t=tabs[id],label=tabV2Label(t,ov),on=id===active;
-          return h('div',{key:id,role:'tab', id:domId('tab',id), 'aria-controls':domId('panel',id), 'aria-selected':on, 'aria-label':t.unread ? label+' · Unread reply' : undefined, tabIndex:on?0:-1, draggable:id!=='desk',
-            title:t.path || t.url || label, className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert'),
-            onClick:()=>onShow(id), onDoubleClick:()=>onPromote(id), onKeyDown:e=>handleKey(e,id), onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
-            onDragStart:e=>{ e.dataTransfer.setData(TAB_DRAG,id); e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id); },onDragEnd:()=>onDrag(null)},
-            h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label),
-            h('span',{className:'atlas-tab-slot'},
-              running(t) ? h('span',{className:'atlas-tab-status atlas-tab-working',role:'img','aria-label':'Working'}) : t.unread ? h('span',{className:'atlas-tab-status atlas-tab-unread',title:'Unread reply','aria-hidden':true}) : editorDirty[id] ? h('span',{className:'atlas-tab-status atlas-tab-dirty',role:'img','aria-label':'Unsaved changes'}) : null,
-              id !== 'desk' ? h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:e=>{e.stopPropagation();onClose(id);}},h(Icon,{name:'close',size:12})) : null));
+          const status=running(t)?'Working':t.unread?'Unread reply':editorDirty[id]?'Unsaved changes':'';
+          return h('div',{key:id,role:'presentation',className:cx('atlas-ptab',on&&'is-on',t.temporary&&'is-temporary',drag===id&&'is-dragging',drag!==id&&drop?.pane===pane&&drop.where==='strip'&&drop.index===i&&'is-insert')},
+            h('button',{type:'button',role:'tab',className:'atlas-ptab-target',id:domId('tab',id),'aria-controls':domId('panel',id),'aria-selected':on,'aria-label':status?`${label} · ${status}`:label,'aria-keyshortcuts':id==='desk'?undefined:'Delete',tabIndex:on?0:-1,draggable:id!=='desk',title:t.path||t.url||label,
+              onClick:()=>onShow(id),onDoubleClick:()=>onPromote(id),onKeyDown:e=>handleKey(e,id),onMouseDown:e=>{if(e.button===1)e.preventDefault();},onAuxClick:e=>{if(e.button===1){e.preventDefault();onClose(id);}},
+              onDragStart:e=>{e.dataTransfer.setData(TAB_DRAG,id);e.dataTransfer.effectAllowed='move';onPromote(id);onDrag(id);},onDragEnd:()=>onDrag(null)},h(Icon,{name:tabV2Icon(t),size:16}),h('span',{className:'atlas-ptab-label'},label)),
+            h('span',{className:'atlas-tab-slot'},status && h('span',{'aria-hidden':true,className:'atlas-tab-status '+(running(t)?'atlas-tab-working':t.unread?'atlas-tab-unread':'atlas-tab-dirty')}),
+              id!=='desk' && h('button',{type:'button',className:'atlas-ptab-close',tabIndex:on?0:-1,'aria-label':'Close '+label,title:'Close '+label,onClick:()=>closeFromStrip(id)},h(Icon,{name:'close',size:12}))));
         }),drop?.pane===pane&&drop.where==='strip'&&drop.index===ids.length ? h('span',{className:'atlas-ptab-end'}) : null),
         overflow && tool('list','List tabs','chevron'),
         h(IconButton,{label:'Focus pane',icon:'expand',className:'atlas-strip-tool',onClick:()=>onFocus(active)}),
@@ -7884,7 +7901,10 @@ window.__ModuleLoader__.load({
     .atlas-shell-v2 .atlas-strip {align-items:center;padding:0 var(--s-8) 0 6px;gap:var(--s-4);}
     .atlas-shell-v2 .atlas-strip-tabs {align-items:center;padding:0;}
     .atlas-shell-v2 .atlas-ptab {height:30px;max-width:220px;padding:0 var(--s-4) 0 10px;gap:7px;border:0;border-radius:8px;color:var(--text-2);font:var(--t-ui);}
-    .atlas-shell-v2 .atlas-ptab > .atlas-icon {color:var(--text-3);}
+    .atlas-shell-v2 .atlas-ptab {padding-inline-start:0;gap:0;}
+    .atlas-shell-v2 .atlas-ptab-target {appearance:none;min-width:0;height:100%;display:inline-flex;align-items:center;gap:7px;padding:0 var(--s-4) 0 10px;border:0;border-radius:inherit;color:inherit;background:transparent;font:inherit;cursor:pointer;}
+    .atlas-shell-v2 .atlas-ptab-target:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;}
+    .atlas-shell-v2 .atlas-ptab-target > .atlas-icon {color:var(--text-3);}
     .atlas-shell-v2 .atlas-ptab:hover {color:var(--text-1);background:var(--hover);}
     .atlas-shell-v2 .atlas-ptab.is-on {background:var(--raised);color:var(--text-1);font-weight:500;box-shadow:inset 0 0 0 1px var(--border);}
     .atlas-shell-v2 .atlas-strip.is-last .atlas-ptab.is-on {background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--border-strong);}
@@ -8153,11 +8173,11 @@ window.__ModuleLoader__.load({
     function atlasEffectiveKeys(catalog, fixed, runtime) {
       const taken = [...catalog.map((r) => r.binding), ...fixed.flatMap((r) => r.bindings || [])].filter(Boolean);
       return ATLAS_CHROME_KEYS.map(([id, label, ...options]) => {
-        // These browser tab actions are commonly consumed before the page sees them.
-        if (runtime === 'web') {
-          const webKeys = { next: 'Ctrl+Alt+Shift+→', previous: 'Ctrl+Alt+Shift+←', reopen: 'Ctrl+Alt+Shift+T' };
-          if (id === 'close') options.reverse();
-          if (webKeys[id]) options.unshift(webKeys[id]);
+        // Without confirmed desktop rendering assume a browser. A conflicted safe
+        // chord must disable the shortcut, never fall through to closing a browser tab.
+        if (runtime !== 'desktop') {
+          const webKeys = { close:['Ctrl+Alt+W','Ctrl+Alt+Shift+W'], next:['Ctrl+Alt+Shift+→'], previous:['Ctrl+Alt+Shift+←'], reopen:['Ctrl+Alt+Shift+T'] };
+          if (webKeys[id]) options = webKeys[id];
         }
         const combo = options.find((s) => !taken.some((b) => atlasKeyOverlap(atlasPhysicalKey(s), b))) || '';
         return { id, label, combo, binding: combo ? atlasPhysicalKey(combo) : null };
@@ -8311,7 +8331,10 @@ window.__ModuleLoader__.load({
       const services = React.useSyncExternalStore(atlasChromeServices.subscribe, atlasChromeServices.get);
       const layout = services.layout, shortcuts = services.shortcuts;
       const catalog = useAtlasCatalog(shortcuts?.catalog), fixed = useAtlasCatalog(shortcuts?.fixedCatalog);
-      const bindings = useMemo(() => atlasEffectiveKeys(catalog, fixed, shortcuts?.runtime), [catalog, fixed, shortcuts]);
+      // A desktop Host can also serve a normal Chromium tab. Its reserved keys
+      // belong to that browser, regardless of which Host supplied the catalogs.
+      const runtime = shortcuts?.runtime === 'desktop' && /\bElectron\//i.test(globalThis.navigator?.userAgent || '') ? 'desktop' : 'web';
+      const bindings = useMemo(() => atlasEffectiveKeys(catalog, fixed, runtime), [catalog, fixed, runtime]);
       const shortcut = (id) => bindings.find((k) => k.id === id)?.combo || '';
       const focus = useAtlasFocusMode(p.rootRef, layout, p.flash);
       const threads = useThreadIndex(), rows = useSessionRows();
@@ -8355,7 +8378,7 @@ window.__ModuleLoader__.load({
           overlay === 'palette' && h(AtlasCommandPalette, { items: atlasPaletteItems(p, threads, rows, bindings, focus, destinations, keys), recent, onClose: close, onRun: run }),
           overlay === 'shortcuts' && h(Dialog, { title: 'Keyboard shortcuts', onClose: close },
             h('p', null, shortcuts ? 'These bindings apply inside Atlas. DSH keeps its own shortcuts.' : 'The DSH shortcut catalog is unavailable. These are the local Atlas bindings.'),
-            shortcuts?.runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),
+            runtime === 'web' && h('p', null, 'Web uses the bindings below for tab navigation and reopening, leaving the browser’s own tab shortcuts alone.'),
             h('dl', { className: 'atlas-shortcut-list' }, [...bindings, { id: 'escape', label: 'Exit focus outside an editor or conversation', combo: 'Esc' }].map((b) => h('div', { key: b.id },
               h('dt', null, b.label), h('dd', null, b.combo ? h(Kbd, null, b.combo) : 'Reserved by DSH'))))),
           overlay === 'about' && h(Dialog, { title: 'About Atlas', onClose: close }, h('p', null, typeof ATLAS_VERSION === 'string' ? 'AITP Atlas · ' + ATLAS_VERSION : 'AITP Atlas'), h('p', null, 'A celestial atlas of your research programme.')),

@@ -272,7 +272,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
     } else if ((e.ctrlKey || e.metaKey) && key === 'b') {
       e.preventDefault();
       runBuild();
-    } else if (e.key === 'Tab' && !e.shiftKey) {
+    } else if ((e.ctrlKey || e.metaKey) && e.key === ']' && !e.altKey && !e.nativeEvent?.isComposing) { // Plain Tab always leaves the editor.
       e.preventDefault();
       const el = e.target;
       const start = el.selectionStart;
@@ -326,7 +326,7 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
         h('pre', { className: 'atlas-write-gutter', ref: gutter, 'aria-hidden': true }, numbers),
         h('textarea', {
           ref: area,
-          className: 'atlas-write-text atlas-editor-text',
+          className: 'atlas-write-text atlas-editor-text', 'aria-keyshortcuts':'Control+] Meta+]',
           value: text,
           wrap: 'off',
           spellCheck: false,
@@ -345,9 +345,9 @@ function TexWorkspace({ data, go, flash, onSaved, anchor, anchorAt }) {
             if (gutter.current) gutter.current.scrollTop = e.target.scrollTop;
           },
           'aria-label': 'Source of ' + baseName(data.path),
-          title: sync ? 'Ctrl+click a line to find it in the Preview' : 'Source',
+          title: 'Tab leaves the editor; Ctrl+] or ⌘+] indents two spaces.'+(sync?' Ctrl+click a line to find it in the Preview.':''),
         })),
-      open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', title: 'Drag to resize; double-click to reset', onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
+      open ? h('div', { className: 'atlas-write-divider', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the source and the panel beside it', tabIndex:0,'aria-valuemin':30,'aria-valuemax':80,'aria-valuenow':split,'aria-valuetext':`${split}% source width`,title:'Use Left/Right to resize, Home/End for limits, or double-click to reset',onKeyDown:e=>{if(e.altKey||e.ctrlKey||e.metaKey)return; const v={ArrowLeft:Math.max(30,split-1),ArrowRight:Math.min(80,split+1),Home:30,End:80}[e.key];if(v!=null){e.preventDefault();e.stopPropagation();saveSplit(v);}}, onPointerDown: startSplit, onDoubleClick: () => saveSplit(64) }) : null,
       open ? h('div', { className: 'atlas-write-side' },
         h('div', { className: 'atlas-write-side-head' },
           h('span', null, (WRITE_PANELS.find(([key]) => key === open) || [])[1]),

@@ -40,7 +40,7 @@ function LibraryView({ overview: ov, go, flash, filter, version, tab: wanted, fo
       h('div', { className: 'atlas-meta' },
         h('span', null, plural(data.papers.length, 'paper')), h('span', null, plural(data.papers.filter((p) => p.pdf).length, 'PDF')), h('span', null, plural(entryCount, 'knowledge entry', 'knowledge entries')),
         data.index ? h(TextButton, { onClick: () => go({ view: 'doc', path: data.index.file }) }, 'Open the index') : null),
-      h('div', { className: 'atlas-seg is-tabs', role: 'tablist' }, tabs.map(([key, label, n]) => h('button', { key, type: 'button', role: 'tab', 'aria-selected': tab === key, className: cx('atlas-seg-item', tab === key && 'is-on'), onClick: () => choose(key) }, label, n === null ? null : h('span', { className: 'atlas-count' }, n))))),
+      h(Segmented,{label:'Library view',value:tab,onChange:choose,options:tabs.map(([value,label,n])=>({value,label:n===null?label:`${label} (${n})`}))})),
     body);
 }
 
@@ -57,7 +57,7 @@ function Shelf({ data, go, words, sort, setSort }) {
   return h('section', { className: 'atlas-section' },
     h('div', { className: 'atlas-toolbar' },
       h('span', { className: 'atlas-label' }, 'Sort'),
-      h('div', { className: 'atlas-seg', role: 'radiogroup' }, [['newest', 'Newest'], ['cited', 'Most cited'], ['title', 'Title']].map(([k, label]) => h('button', { key: k, type: 'button', role: 'radio', 'aria-checked': sort === k, className: cx('atlas-seg-item', sort === k && 'is-on'), onClick: () => { setSort(k); storageSet('library-sort', k); } }, label)))),
+      h(Segmented,{label:'Sort papers',value:sort,onChange:k=>{setSort(k);storageSet('library-sort',k);},options:[{value:'newest',label:'Newest'},{value:'cited',label:'Most cited'},{value:'title',label:'Title'}]})),
     papers.length === 0 ? h(Empty, null, data.library ? 'No paper matches.' : 'No papers library was found.') : null,
     h('ul', { className: 'atlas-shelf' }, papers.map((p) => h('li', { key: p.key }, h(PaperRow, { p, go })))));
 }

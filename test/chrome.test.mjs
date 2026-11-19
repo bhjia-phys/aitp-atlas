@@ -119,6 +119,18 @@ test('shortcuts: effective customized chords and fixed actions reserve combinati
   }
   const places = bindings.filter(b => /^Alt\+\d$/.test(b.combo)); assert.deepEqual(places.map(b=>b.id), ['desk','discussions','teams','map','library','learn','write']);
 });
+test('missing runtime uses safe web chords; host collisions never fall back to browser tab actions', () => {
+  for (const runtime of [undefined,null,'','web','unknown']) {
+    const defaults=chrome.atlasEffectiveKeys([],[],runtime);
+    assert.equal(defaults.find(b=>b.id==='close').combo,'Ctrl+Alt+W');
+    assert.equal(chrome.atlasChromeKey({key:'w',code:'KeyW',ctrlKey:true},defaults,{canHandle:true}),'');
+    const fixed=defaults.filter(b=>['next','previous','reopen','close'].includes(b.id)).map(b=>({bindings:[b.binding]}));
+    const fallback=chrome.atlasEffectiveKeys([],fixed,runtime).find(b=>b.id==='close');
+    assert.equal(fallback.combo,'Ctrl+Alt+Shift+W');
+    assert.equal(chrome.atlasChromeKey({key:'W',code:'KeyW',ctrlKey:true,altKey:true,shiftKey:true},[fallback],{canHandle:true}),'close');
+    assert.ok(chrome.atlasEffectiveKeys([{binding:fallback.binding}],fixed,runtime).filter(b=>['next','previous','reopen','close'].includes(b.id)).every(b=>b.combo===''&&!b.binding));
+  }
+});
 test('shortcuts: Escape priority, fullscreen, conversation/editable fields, non-Atlas panels and composition', () => {
   const page = { canHandle:true, focused:true, overlay:false, editor:false, browserOwnsEsc:false };
   const press = (key, code, event = {}, flags = {}) => chrome.atlasChromeKey({key, code, ...event}, keys, {...page,...flags});
