@@ -2,10 +2,11 @@
 // session-specific and applies on its next request. Never change the host default.
 const atlasModelAccess = externalStore(null);
 function installAtlasModelAccess(ctx) {
+  let owner=null;
   ctx.inject(['remote', 'remote.session'], scope => scope.effect(() => {
     const service = scope.remote.session;
-    atlasModelAccess.set(service);
-    return () => { if (atlasModelAccess.get() === service) atlasModelAccess.set(null); };
+    owner=scope; atlasModelAccess.set(service);
+    return () => { if (owner===scope) {owner=null; atlasModelAccess.set(null);} };
   }, 'aitp-atlas: discussion model selection'));
 }
 function atlasRequireResult(result, label) {
@@ -18,14 +19,22 @@ function atlasModelValue(selection) {
 function atlasCatalogEntry(catalog, choice) {
   return catalog?.groups?.find(g => g.id === choice?.provider)?.models.find(m => m.id === choice.model);
 }
+function atlasModelLimit(service) {
+  if (typeof service?.modelCatalog!=='function') return 'DSH’s model catalog is unavailable.';
+  if (typeof service.selectModel!=='function') return 'DSH model switching is unavailable.';
+  return '';
+}
 async function atlasFetchModelCatalog(service = atlasModelAccess.get()) {
-  if (!service?.modelCatalog || !service?.selectModel) throw new Error('DSH model selection is unavailable. Use the session default.');
-  return atlasRequireResult(await service.modelCatalog(), 'DSH could not load its model catalog.');
+  if (typeof service?.modelCatalog!=='function') throw new Error('DSH’s model catalog is unavailable.');
+  const catalog=atlasRequireResult(await service.modelCatalog(), 'DSH could not load its model catalog.');
+  if (!Array.isArray(catalog?.groups) || catalog.groups.some(g=>!Array.isArray(g?.models))) throw new Error('DSH did not return a usable model catalog.');
+  return catalog;
 }
 async function atlasSelectSessionModel(id, choice) {
   const service = atlasModelAccess.get();
-  if (!service?.selectModel) throw new Error('DSH model selection is unavailable. No model was changed.');
+  if (typeof service?.selectModel!=='function') throw new Error('DSH model selection is unavailable. No model was changed.');
   const entry = atlasCatalogEntry(await atlasFetchModelCatalog(service), choice);
+  if (service!==atlasModelAccess.get()) throw new Error('DSH model selection changed while checking the catalog. No model was changed.');
   if (!entry || (choice.effort && !entry.reasoning?.efforts?.some(e => e.id === choice.effort))) throw new Error('That model or effort is no longer available. Choose another model or use the DSH default.');
   atlasRequireResult(await service.selectModel({ sessionId: id, provider: choice.provider, model: choice.model,
     ...(choice.effort ? { reasoningEffort: choice.effort } : {}) }), 'DSH did not accept the model selection.');
@@ -47,6 +56,10 @@ function AtlasModelPicker({ value, onChange, sessionId, disabled }) {
     try { await onChange(choice); setOpen(false); } catch (e) { setError(e.message); }
     finally { pending.current = false; setBusy(false); }
   };
+  const limit=atlasModelLimit(service);
+  if (limit) return h('span', {className:'atlas-model-unavailable', role:'status'},
+    h('button', {type:'button',className:'atlas-model-chip',disabled:true,title:limit,'aria-label':`Model: ${value?.model || 'DSH default'} — ${limit}`},value?.model || 'DSH default'),
+    ' ',limit, !sessionId && value && h('button',{type:'button',className:'atlas-button is-small',disabled:disabled || busy,onClick:()=>choose(null)},'Use DSH default'));
   const entry = atlasCatalogEntry(catalog, selected), chosen = atlasCatalogEntry(catalog, value);
   const title = value ? `${chosen?.name || value.model}${value.effort ? ' · ' + value.effort : ''}` : 'DSH default';
   const row = (label, onClick, active, dis = false, key = label) => h('button', { key, type: 'button', className: 'atlas-model-option', onClick, disabled: busy || dis, 'aria-pressed': !!active }, label);

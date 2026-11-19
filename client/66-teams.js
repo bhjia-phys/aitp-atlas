@@ -41,13 +41,14 @@ function atlasCrewErrors(draft) {
 function atlasCrewCapabilities(services,catalog,choice) {
   if (typeof services.teams?.setEnabled!=='function') return 'Agent Teams is not available on this DSH.';
   if (typeof services.sessions?.create!=='function' || typeof services.sessions?.retain!=='function' || typeof services.workspaces?.create!=='function') return 'DSH cannot create and bind a lead in this research workspace.';
+  if (choice && typeof services.select!=='function') return 'DSH model switching is unavailable. Use the verified default lead model.';
   const route=choice || atlasModelValue(catalog?.default), entry=atlasCatalogEntry(catalog,route);
   if (!entry || (catalog.routableProviders && !catalog.routableProviders.includes(route.provider))) return choice ? 'The selected lead model is not available. Choose an available route.' : 'DSH has no available default lead model. Choose an available route.';
   if (route.effort && !entry.reasoning?.efforts?.some(e=>e.id===route.effort)) return 'The selected lead reasoning effort is unavailable.';
   return '';
 }
 function atlasCrewServices(root) {
-  return {teams:teamScope?.remote?.agentTeams,sessions:svc('sessions'),workspaces:svc('workspaces'),catalog:atlasFetchModelCatalog,select:atlasSelectSessionModel,
+  return {teams:teamScope?.remote?.agentTeams,sessions:svc('sessions'),workspaces:svc('workspaces'),catalog:atlasFetchModelCatalog,select:typeof atlasModelAccess.get()?.selectModel==='function' ? atlasSelectSessionModel : null,
     // Mutations here must surface an ambiguous result, not replay it in the transport.
     request:(path,body,method='POST')=>api(path,{method,body,query:{expectedRoot:root}},20)};
 }
@@ -210,7 +211,7 @@ const ATLAS_TEAM_ASSEMBLY_CSS = `
 .atlas-crew-sheet textarea { resize:vertical; }
 .atlas-crew-sheet select { height:var(--control-32); }
 .atlas-crew-summary { flex:1; text-align:left; font:var(--t-meta); color:var(--text-2); }
-.atlas-crew-error { color:var(--danger); }
+.atlas-crew-error { color:var(--danger-text); }
 .atlas-crew-hint,.atlas-crew-path { margin:0; color:var(--text-3); font:var(--t-meta); }
 .atlas-crew-hint { font-style:italic; } .atlas-crew-path,.atlas-crew-sheet pre { font-family:var(--font-mono); overflow-wrap:anywhere; }
 .atlas-crew-sheet pre { white-space:pre-wrap; font:var(--t-meta); font-family:var(--font-mono); }

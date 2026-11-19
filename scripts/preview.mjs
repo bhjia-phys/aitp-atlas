@@ -96,7 +96,7 @@ async function stopHost(host, closed) {
 }
 
 // The callback owns neither resource: all exits, including failed startup, dispose them here.
-export async function withPreview(use, { signal, debug = false } = {}) {
+export async function withPreview(use, { signal, debug = false, fixtureClientSource } = {}) {
   if (process.env.ATLAS_PREVIEW_ROOT !== undefined) throw new Error('Unset ATLAS_PREVIEW_ROOT: preview only accepts a freshly generated fixture.');
   const runtime = findRuntime();
   if (!runtime) throw new Error('No installed DSH runtime found. Set DSH_EXE to its absolute executable (and DSH_CLI for a Node/Electron CLI entry point).');
@@ -108,6 +108,12 @@ export async function withPreview(use, { signal, debug = false } = {}) {
     model = await startModel();
     const env = privateEnv(fx, model);
     await stageProfile(fx, env);
+    // Test-only alternate client content, never accepted by the CLI. Only the
+    // new fixture's staged copy is replaced; callers cannot select a path.
+    if (fixtureClientSource !== undefined) {
+      if (typeof fixtureClientSource !== 'string') throw new TypeError('Expected fixture client source text.');
+      await fs.writeFile(path.join(env.DSH_HOME,'profiles','web','node_modules','aitp-atlas','client.js'),fixtureClientSource);
+    }
     signal?.throwIfAborted();
     // Cookies are host-scoped, not port-scoped. Stay on loopback but off the user's DSH host.
     const bind = `127.77.${randomInt(1, 255)}.${randomInt(1, 255)}`;

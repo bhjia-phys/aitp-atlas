@@ -37,7 +37,7 @@ async function connect(socketUrl, report) {
 }
 
 // Both suites run on the same real, private browser/Host lifecycle, never a user tab.
-export async function runBrowserSmoke(flow = smokeM1) {
+export async function runBrowserSmoke(flow = smokeM1, {startup,fixtureClientSource} = {}) {
   return withPreview(async ({url,fx,env,model}) => {
   const browserDir=fx.file('chromium-profile');
   // Chromium needs native OS account discovery on Windows; --user-data-dir, not an
@@ -77,8 +77,11 @@ export async function runBrowserSmoke(flow = smokeM1) {
     await c.call('Page.navigate',{url});
     // Fresh DSH web profiles show the release notice asynchronously over the panel.
     const notice=q('button',`['继续','Continue'].includes(el.textContent.trim()) && /预览版说明|preview release|preview notice|preview version/i.test(document.body.innerText)`);
-    await click(notice,'private-profile DSH preview notice');
-    await click(q('button,[role="button"]',`[el.title,el.ariaLabel,el.textContent.trim()].includes('Atlas')`),'DSH sidebar Atlas');
+    if(startup)await startup({q,ev,wait,c}); // Optional keyboard-only lifecycle; no product hook.
+    else {
+      await click(notice,'private-profile DSH preview notice');
+      await click(q('button,[role="button"]',`[el.title,el.ariaLabel,el.textContent.trim()].includes('Atlas')`),'DSH sidebar Atlas');
+    }
     const place=async name=>{
       const trigger=q('button[aria-label="Atlas destinations"]');
       await wait(`Boolean(${trigger}) || Boolean(${q('.atlas-rail button')})`,'Atlas navigation ready');
@@ -112,7 +115,7 @@ export async function runBrowserSmoke(flow = smokeM1) {
     },4000);
     try { await closed; } finally {clearTimeout(force);}
   }
-});
+}, {fixtureClientSource});
 }
 
 async function smokeM1({q,wait,click,key,ev,c,place}) {
@@ -142,7 +145,7 @@ async function smokeM1({q,wait,click,key,ev,c,place}) {
     await sameTranscript();
     const pageOne=`Boolean(${q('canvas[aria-label="Page 1"]',`el.width>0 && el.height>0`)}) && Boolean(${q('.atlas-pdf-place', `el.textContent.includes('1 / 1')`)}) && Boolean(${q('.atlas-pdf-text span', `el.textContent.includes('Atlas reading fixture')`)})`;
     await wait(pageOne,'paper link rendered the local PDF without a network lookup');
-    await click(`${paperTab}?.querySelector('button[aria-label^="Close "]')`,'close the paper');
+    await click(`((${paperTab})?.closest('.atlas-ptab') || (${paperTab}))?.querySelector('button[aria-label^="Close "]')`,'close the paper');
     await wait(`!(${paperTab})`,'closed tab disappeared');
     await click(q('[aria-label="Pane menu"]'),'pane menu');
     await click(q('[role="menuitem"]',`el.textContent.includes('Reopen closed tab')`),'reopen closed paper');

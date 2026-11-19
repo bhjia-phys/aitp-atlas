@@ -71,6 +71,7 @@ function useAtlasFocusMode(rootRef, layout, flash) {
     else if (rootRef.current) {
       const root = rootRef.current;
       session.current = { root, owner: atlasEnterFocus(layout, atlasSidebarExpanded(root)) };
+      if (typeof layout?.toggleSidebar!=='function') flash('Atlas is focused. DSH layout is unavailable; its sidebar stays as it is.');
       setFocused(true);
     }
   };

@@ -1746,6 +1746,8 @@ window.__ModuleLoader__.load({
       const topicLabel = draft.topicId === null ? 'Auto' : topic?.title || 'No topic';
       const sessions = svc('sessions');
       const disabledReason = setup || !ov ? 'Set up a research workspace before starting work.' : teamMode ? (!actions.assembleTeam?'Team setup is unavailable.':'') : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
+      const modelService=React.useSyncExternalStore(atlasModelAccess.subscribe,atlasModelAccess.get);
+      const blockedModel=!teamMode && model && atlasModelLimit(modelService);
       const disabled = !!disabledReason || busy;
       const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0) + (registry.needs?.decisions?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
       const patch = (change) => { setDraft((prev) => ({ ...prev, ...change })); setError(''); };
@@ -1764,7 +1766,7 @@ window.__ModuleLoader__.load({
         if (ro) ro.observe(parent); return () => { if (ro) ro.disconnect(); };
       }, [draft.question]);
       const send = async () => {
-        if (latch.current || disabled || !draft.question.trim()) return;
+        if (latch.current || disabled || blockedModel || !draft.question.trim()) return;
         latch.current = true; setPopup(null); setBusy(true); setError('');
         try {
           const latest = key ? await router.flush(key) : null;
@@ -1789,7 +1791,7 @@ window.__ModuleLoader__.load({
             h(AtlasModelPicker, { value: model, disabled, onChange: (next) => { setModel(next); storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), model: next }); } }),
             h(Segmented,{label:'Composer mode',value:mode,options:[{value:'discuss',label:'Discuss',disabled:busy},{value:'team',label:'Team',disabled:busy}],onChange:setMode}),
             h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
-            teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+            teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !!blockedModel || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
           popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: draft.topicId, onChoose: choose, onClose: () => setPopup(null) }) : null,
           popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
         disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
@@ -1820,7 +1822,7 @@ window.__ModuleLoader__.load({
     .atlas-desk-greeting h1,.atlas-desk-welcome h1 { font:var(--t-display); letter-spacing:-.01em; color:var(--text-1); margin:var(--s-4) 0 0; }
     .atlas-desk-sky.is-stacked .atlas-desk-greeting { top:var(--s-8); transform:translateX(-50%); }
     .atlas-desk-welcome { text-align:center; padding:var(--s-48) 0 var(--s-72); }
-    .atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-strong); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
+    .atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-control); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
     .atlas-desk-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 var(--s-4) var(--accent-soft),var(--shadow-2); }
     .atlas-desk-composer textarea { display:block; width:100%; min-height:69px; max-height:276px; margin:0; padding:0; border:none; background:none; resize:none; color:var(--text-1); font:15px/23px var(--font-ui); }
     .atlas-desk-composer textarea:focus { outline:none; } .atlas-desk-composer textarea::placeholder { color:var(--text-3); }
@@ -5556,10 +5558,11 @@ window.__ModuleLoader__.load({
     // session-specific and applies on its next request. Never change the host default.
     const atlasModelAccess = externalStore(null);
     function installAtlasModelAccess(ctx) {
+      let owner=null;
       ctx.inject(['remote', 'remote.session'], scope => scope.effect(() => {
         const service = scope.remote.session;
-        atlasModelAccess.set(service);
-        return () => { if (atlasModelAccess.get() === service) atlasModelAccess.set(null); };
+        owner=scope; atlasModelAccess.set(service);
+        return () => { if (owner===scope) {owner=null; atlasModelAccess.set(null);} };
       }, 'aitp-atlas: discussion model selection'));
     }
     function atlasRequireResult(result, label) {
@@ -5572,14 +5575,22 @@ window.__ModuleLoader__.load({
     function atlasCatalogEntry(catalog, choice) {
       return catalog?.groups?.find(g => g.id === choice?.provider)?.models.find(m => m.id === choice.model);
     }
+    function atlasModelLimit(service) {
+      if (typeof service?.modelCatalog!=='function') return 'DSH’s model catalog is unavailable.';
+      if (typeof service.selectModel!=='function') return 'DSH model switching is unavailable.';
+      return '';
+    }
     async function atlasFetchModelCatalog(service = atlasModelAccess.get()) {
-      if (!service?.modelCatalog || !service?.selectModel) throw new Error('DSH model selection is unavailable. Use the session default.');
-      return atlasRequireResult(await service.modelCatalog(), 'DSH could not load its model catalog.');
+      if (typeof service?.modelCatalog!=='function') throw new Error('DSH’s model catalog is unavailable.');
+      const catalog=atlasRequireResult(await service.modelCatalog(), 'DSH could not load its model catalog.');
+      if (!Array.isArray(catalog?.groups) || catalog.groups.some(g=>!Array.isArray(g?.models))) throw new Error('DSH did not return a usable model catalog.');
+      return catalog;
     }
     async function atlasSelectSessionModel(id, choice) {
       const service = atlasModelAccess.get();
-      if (!service?.selectModel) throw new Error('DSH model selection is unavailable. No model was changed.');
+      if (typeof service?.selectModel!=='function') throw new Error('DSH model selection is unavailable. No model was changed.');
       const entry = atlasCatalogEntry(await atlasFetchModelCatalog(service), choice);
+      if (service!==atlasModelAccess.get()) throw new Error('DSH model selection changed while checking the catalog. No model was changed.');
       if (!entry || (choice.effort && !entry.reasoning?.efforts?.some(e => e.id === choice.effort))) throw new Error('That model or effort is no longer available. Choose another model or use the DSH default.');
       atlasRequireResult(await service.selectModel({ sessionId: id, provider: choice.provider, model: choice.model,
         ...(choice.effort ? { reasoningEffort: choice.effort } : {}) }), 'DSH did not accept the model selection.');
@@ -5601,6 +5612,10 @@ window.__ModuleLoader__.load({
         try { await onChange(choice); setOpen(false); } catch (e) { setError(e.message); }
         finally { pending.current = false; setBusy(false); }
       };
+      const limit=atlasModelLimit(service);
+      if (limit) return h('span', {className:'atlas-model-unavailable', role:'status'},
+        h('button', {type:'button',className:'atlas-model-chip',disabled:true,title:limit,'aria-label':`Model: ${value?.model || 'DSH default'} — ${limit}`},value?.model || 'DSH default'),
+        ' ',limit, !sessionId && value && h('button',{type:'button',className:'atlas-button is-small',disabled:disabled || busy,onClick:()=>choose(null)},'Use DSH default'));
       const entry = atlasCatalogEntry(catalog, selected), chosen = atlasCatalogEntry(catalog, value);
       const title = value ? `${chosen?.name || value.model}${value.effort ? ' · ' + value.effort : ''}` : 'DSH default';
       const row = (label, onClick, active, dis = false, key = label) => h('button', { key, type: 'button', className: 'atlas-model-option', onClick, disabled: busy || dis, 'aria-pressed': !!active }, label);
@@ -6028,13 +6043,14 @@ window.__ModuleLoader__.load({
     function atlasCrewCapabilities(services,catalog,choice) {
       if (typeof services.teams?.setEnabled!=='function') return 'Agent Teams is not available on this DSH.';
       if (typeof services.sessions?.create!=='function' || typeof services.sessions?.retain!=='function' || typeof services.workspaces?.create!=='function') return 'DSH cannot create and bind a lead in this research workspace.';
+      if (choice && typeof services.select!=='function') return 'DSH model switching is unavailable. Use the verified default lead model.';
       const route=choice || atlasModelValue(catalog?.default), entry=atlasCatalogEntry(catalog,route);
       if (!entry || (catalog.routableProviders && !catalog.routableProviders.includes(route.provider))) return choice ? 'The selected lead model is not available. Choose an available route.' : 'DSH has no available default lead model. Choose an available route.';
       if (route.effort && !entry.reasoning?.efforts?.some(e=>e.id===route.effort)) return 'The selected lead reasoning effort is unavailable.';
       return '';
     }
     function atlasCrewServices(root) {
-      return {teams:teamScope?.remote?.agentTeams,sessions:svc('sessions'),workspaces:svc('workspaces'),catalog:atlasFetchModelCatalog,select:atlasSelectSessionModel,
+      return {teams:teamScope?.remote?.agentTeams,sessions:svc('sessions'),workspaces:svc('workspaces'),catalog:atlasFetchModelCatalog,select:typeof atlasModelAccess.get()?.selectModel==='function' ? atlasSelectSessionModel : null,
         // Mutations here must surface an ambiguous result, not replay it in the transport.
         request:(path,body,method='POST')=>api(path,{method,body,query:{expectedRoot:root}},20)};
     }
@@ -6197,7 +6213,7 @@ window.__ModuleLoader__.load({
     .atlas-crew-sheet textarea { resize:vertical; }
     .atlas-crew-sheet select { height:var(--control-32); }
     .atlas-crew-summary { flex:1; text-align:left; font:var(--t-meta); color:var(--text-2); }
-    .atlas-crew-error { color:var(--danger); }
+    .atlas-crew-error { color:var(--danger-text); }
     .atlas-crew-hint,.atlas-crew-path { margin:0; color:var(--text-3); font:var(--t-meta); }
     .atlas-crew-hint { font-style:italic; } .atlas-crew-path,.atlas-crew-sheet pre { font-family:var(--font-mono); overflow-wrap:anywhere; }
     .atlas-crew-sheet pre { white-space:pre-wrap; font:var(--t-meta); font-family:var(--font-mono); }
@@ -8054,6 +8070,7 @@ window.__ModuleLoader__.load({
         else if (rootRef.current) {
           const root = rootRef.current;
           session.current = { root, owner: atlasEnterFocus(layout, atlasSidebarExpanded(root)) };
+          if (typeof layout?.toggleSidebar!=='function') flash('Atlas is focused. DSH layout is unavailable; its sidebar stays as it is.');
           setFocused(true);
         }
       };
@@ -9140,6 +9157,10 @@ window.__ModuleLoader__.load({
     // declares a session-scoped child slot, so DSH's own conversation can sit in
     // the companion pane beside a document (the recipe of DSH's subagent pane).
 
+    // The main slot must survive removal of all optional services. Notify its
+    // mounted React tree when a dependency arrives/leaves; never remount its tabs.
+    const atlasServiceGeneration=externalStore(0);
+    function atlasServiceChanged() {atlasServiceGeneration.set(atlasServiceGeneration.get()+1);}
     return {
       inject: ['slots'],
       apply(ctx) {
@@ -9156,6 +9177,7 @@ window.__ModuleLoader__.load({
           ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_KEY, order: 58, label: () => 'Atlas' }, AtlasIcon));
         ctx.slots.inject('main', () =>
           ctx.slots.register({ name: 'main', key: PANEL_KEY, children: { [CONVERSATION_SLOT]: { kind: 'single', scope: 'session' } } }, function AtlasMain(props) {
+            React.useSyncExternalStore(atlasServiceGeneration.subscribe,atlasServiceGeneration.get);
             const kit = useMemo(() => ({ SessionProvider: props.SessionProvider, renderSlot: props.renderSlot }), [props.SessionProvider, props.renderSlot]);
             return h(SlotKit.Provider, { value: kit }, h(Boundary, null, h(AtlasApp)));
           }));
@@ -9165,12 +9187,15 @@ window.__ModuleLoader__.load({
         for (const name of ['layout', 'shortcuts']) ctx.inject([name], scope => {
           scope.effect(() => atlasBindChromeService(name, scope.get(name)), 'aitp-atlas: ' + name);
         });
+        for (const name of ['sessions','workspaces']) ctx.inject([name], scope => {
+          scope.effect(() => {atlasServiceChanged(); return atlasServiceChanged;}, 'aitp-atlas: '+name);
+        });
         // Agent Teams, the way DSH's own team control reaches it; absent, Atlas starts no teams.
         ctx.inject(['remote', 'remote.agentTeams'], (scope) => {
           scope.effect(() => {
-            teamScope = scope;
+            teamScope = scope; atlasServiceChanged();
             return () => {
-              if (teamScope === scope) teamScope = null;
+              if (teamScope === scope) {teamScope = null; atlasServiceChanged();}
             };
           }, 'aitp-atlas: agent teams');
         });

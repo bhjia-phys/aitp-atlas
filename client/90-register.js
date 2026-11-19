@@ -3,6 +3,10 @@
 // declares a session-scoped child slot, so DSH's own conversation can sit in
 // the companion pane beside a document (the recipe of DSH's subagent pane).
 
+// The main slot must survive removal of all optional services. Notify its
+// mounted React tree when a dependency arrives/leaves; never remount its tabs.
+const atlasServiceGeneration=externalStore(0);
+function atlasServiceChanged() {atlasServiceGeneration.set(atlasServiceGeneration.get()+1);}
 return {
   inject: ['slots'],
   apply(ctx) {
@@ -19,6 +23,7 @@ return {
       ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_KEY, order: 58, label: () => 'Atlas' }, AtlasIcon));
     ctx.slots.inject('main', () =>
       ctx.slots.register({ name: 'main', key: PANEL_KEY, children: { [CONVERSATION_SLOT]: { kind: 'single', scope: 'session' } } }, function AtlasMain(props) {
+        React.useSyncExternalStore(atlasServiceGeneration.subscribe,atlasServiceGeneration.get);
         const kit = useMemo(() => ({ SessionProvider: props.SessionProvider, renderSlot: props.renderSlot }), [props.SessionProvider, props.renderSlot]);
         return h(SlotKit.Provider, { value: kit }, h(Boundary, null, h(AtlasApp)));
       }));
@@ -28,12 +33,15 @@ return {
     for (const name of ['layout', 'shortcuts']) ctx.inject([name], scope => {
       scope.effect(() => atlasBindChromeService(name, scope.get(name)), 'aitp-atlas: ' + name);
     });
+    for (const name of ['sessions','workspaces']) ctx.inject([name], scope => {
+      scope.effect(() => {atlasServiceChanged(); return atlasServiceChanged;}, 'aitp-atlas: '+name);
+    });
     // Agent Teams, the way DSH's own team control reaches it; absent, Atlas starts no teams.
     ctx.inject(['remote', 'remote.agentTeams'], (scope) => {
       scope.effect(() => {
-        teamScope = scope;
+        teamScope = scope; atlasServiceChanged();
         return () => {
-          if (teamScope === scope) teamScope = null;
+          if (teamScope === scope) {teamScope = null; atlasServiceChanged();}
         };
       }, 'aitp-atlas: agent teams');
     });

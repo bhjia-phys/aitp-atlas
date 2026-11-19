@@ -184,6 +184,8 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
   const topicLabel = draft.topicId === null ? 'Auto' : topic?.title || 'No topic';
   const sessions = svc('sessions');
   const disabledReason = setup || !ov ? 'Set up a research workspace before starting work.' : teamMode ? (!actions.assembleTeam?'Team setup is unavailable.':'') : !onStartDiscussion || typeof sessions?.create !== 'function' || typeof sessions?.retain !== 'function' ? 'This DSH cannot start discussions inside Atlas.' : '';
+  const modelService=React.useSyncExternalStore(atlasModelAccess.subscribe,atlasModelAccess.get);
+  const blockedModel=!teamMode && model && atlasModelLimit(modelService);
   const disabled = !!disabledReason || busy;
   const waiting = useMemo(() => registry.root === ov?.root && !registry.loading && !registry.needsError && !registry.needs?.teamErrors?.length ? ((registry.needs?.waiting?.length || 0) + (registry.needs?.reviews?.length || 0) + (registry.needs?.decisions?.length || 0)) : (ov ? waitingItems(ov).length : 0), [ov, registry.root, registry.loading, registry.needsError, registry.needs]);
   const patch = (change) => { setDraft((prev) => ({ ...prev, ...change })); setError(''); };
@@ -202,7 +204,7 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
     if (ro) ro.observe(parent); return () => { if (ro) ro.disconnect(); };
   }, [draft.question]);
   const send = async () => {
-    if (latch.current || disabled || !draft.question.trim()) return;
+    if (latch.current || disabled || blockedModel || !draft.question.trim()) return;
     latch.current = true; setPopup(null); setBusy(true); setError('');
     try {
       const latest = key ? await router.flush(key) : null;
@@ -227,7 +229,7 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
         h(AtlasModelPicker, { value: model, disabled, onChange: (next) => { setModel(next); storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), model: next }); } }),
         h(Segmented,{label:'Composer mode',value:mode,options:[{value:'discuss',label:'Discuss',disabled:busy},{value:'team',label:'Team',disabled:busy}],onChange:setMode}),
         h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
-        teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+        teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !!blockedModel || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
       popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: draft.topicId, onChoose: choose, onClose: () => setPopup(null) }) : null,
       popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
     disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
@@ -258,7 +260,7 @@ const ATLAS_DESK_CSS = `
 .atlas-desk-greeting h1,.atlas-desk-welcome h1 { font:var(--t-display); letter-spacing:-.01em; color:var(--text-1); margin:var(--s-4) 0 0; }
 .atlas-desk-sky.is-stacked .atlas-desk-greeting { top:var(--s-8); transform:translateX(-50%); }
 .atlas-desk-welcome { text-align:center; padding:var(--s-48) 0 var(--s-72); }
-.atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-strong); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
+.atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-control); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
 .atlas-desk-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 var(--s-4) var(--accent-soft),var(--shadow-2); }
 .atlas-desk-composer textarea { display:block; width:100%; min-height:69px; max-height:276px; margin:0; padding:0; border:none; background:none; resize:none; color:var(--text-1); font:15px/23px var(--font-ui); }
 .atlas-desk-composer textarea:focus { outline:none; } .atlas-desk-composer textarea::placeholder { color:var(--text-3); }
