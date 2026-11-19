@@ -274,8 +274,8 @@ function Menu({ anchor, items, onClose, label, initial = 'first', side, align, c
 // match the mock's 2px inset, 6px gap, 10px compact and 14px regular button padding.
 const ATLAS_CONTROL_CSS = `
 .atlas-root :is(.atlas-button,.atlas-icon-button,.atlas-chip,.atlas-control-input,.atlas-control-select,.atlas-control-segmented,.atlas-control-popover,.atlas-control-tip,.atlas-control-dialog,.atlas-control-toast) { box-sizing:border-box; }
-.atlas-root .atlas-button { height:var(--control-32); gap:calc(var(--s-12)/2); padding:0 calc(var(--control-28)/2); border:1px solid var(--border-strong); border-radius:var(--r-sm); background:transparent; color:var(--text-1); font:var(--t-ui); font-weight:500; white-space:nowrap; box-shadow:none; transition:background-color var(--motion-hover) var(--ease); }
-.atlas-root .atlas-button:hover:not(:disabled) { background:var(--hover); border-color:var(--border-strong); }
+.atlas-root .atlas-button { height:var(--control-32); gap:calc(var(--s-12)/2); padding:0 calc(var(--control-28)/2); border:1px solid var(--border-control); border-radius:var(--r-sm); background:transparent; color:var(--text-1); font:var(--t-ui); font-weight:500; white-space:nowrap; box-shadow:none; transition:background-color var(--motion-hover) var(--ease); }
+.atlas-root .atlas-button:hover:not(:disabled) { background:var(--hover); border-color:var(--border-control); }
 .atlas-root .atlas-button.is-primary { background:var(--accent); color:var(--text-on-accent); border-color:transparent; box-shadow:none; }
 .atlas-root .atlas-button.is-primary:hover:not(:disabled) { background:var(--accent-hover); border-color:transparent; }
 .atlas-root .atlas-button.is-quiet { border-color:transparent; color:var(--text-2); background:transparent; }
@@ -309,7 +309,7 @@ const ATLAS_CONTROL_CSS = `
 .atlas-control-segmented { display:inline-flex; height:var(--control-28); align-items:stretch; gap:2px; padding:2px; border-radius:var(--r-full); background:var(--sunken); box-shadow:inset 0 0 0 1px var(--border); }
 .atlas-control-segmented button { border:0; display:grid; place-content:center; padding:0 var(--s-12); border-radius:var(--r-full); color:var(--text-2); background:transparent; cursor:pointer; font:var(--t-ui); }
 .atlas-control-segmented button:hover:not(:disabled) { background:var(--hover); }
-.atlas-control-segmented button[aria-checked=true] { background:var(--raised); color:var(--text-1); font-weight:500; box-shadow:0 0 0 1px var(--border-strong); }
+.atlas-control-segmented button[aria-checked=true] { background:var(--raised); color:var(--text-1); font-weight:500; box-shadow:0 0 0 1px var(--border-control); }
 .atlas-control-kbd { display:inline-block; font:var(--t-meta); font-family:var(--font-mono); padding:0 var(--s-4); border-radius:var(--r-xs); border:1px solid var(--border-strong); border-bottom-width:2px; background:var(--sunken); color:var(--text-2); }
 .atlas-control-banner { display:flex; align-items:center; gap:var(--s-8); padding:var(--s-8) var(--s-12); border-radius:var(--r-md); color:var(--text-1); background:var(--accent-soft); font:var(--t-ui); }
 .atlas-banner-needs,.atlas-banner-warning { background:var(--gold-soft); color:var(--gold); }

@@ -268,8 +268,8 @@ window.__ModuleLoader__.load({
       night: {
         'bg': '#070B17', 'surface': '#0C1222', 'raised': '#131A2E', 'sunken': '#090E1B',
         'overlay': 'rgba(3, 5, 12, .66)', 'hover': 'rgba(200, 214, 255, .05)', 'pressed': 'rgba(200, 214, 255, .08)', 'selected': 'rgba(157, 184, 255, .12)',
-        'border': 'rgba(160, 180, 255, .11)', 'border-strong': 'rgba(160, 180, 255, .22)', 'border-control': '#5D6991',
-        'text-1': '#E9ECF5', 'text-2': '#AEB5CC', 'text-3': '#8A93B0', 'text-on-accent': '#0A0F1F',
+        'border': 'rgba(160, 180, 255, .11)', 'border-strong': 'rgba(160, 180, 255, .22)', 'border-control': '#707D9F',
+        'text-1': '#E9ECF5', 'text-2': '#AEB5CC', 'text-3': '#909AB7', 'text-on-accent': '#0A0F1F',
         'accent': '#9DB8FF', 'accent-hover': '#B6C9FF', 'accent-soft': 'rgba(157, 184, 255, .14)', 'glow': 'rgba(157, 184, 255, .45)',
         'gold': '#F4CE7A', 'gold-soft': 'rgba(244, 206, 122, .12)', 'gold-on': '#0A0F1F',
         'success-text': '#79D69A', 'success-soft': 'rgba(121, 214, 154, .13)',
@@ -280,32 +280,32 @@ window.__ModuleLoader__.load({
         'dx': '#898781', 'map-sky': '#0b1020', 'map-nebula': '#2A3A78', 'map-nebula-edge': '#0B1020',
         'danger': '#D03B3B', 'danger-text': '#ffb4b4', 'danger-soft': 'rgba(208, 59, 59, .12)',
         'accent-rgb': '157, 184, 255', 'gold-rgb': '244, 206, 122', 'map-glow-rgb': '220, 230, 255', 'map-gold-rgb': '255, 220, 150',
-        'idle': '#5d6890', 'mark-bg': '#ffd27a', 'mark-ink': '#0a0f1f',
+        'idle': '#707D9F', 'mark-bg': '#ffd27a', 'mark-ink': '#0a0f1f',
         'code-key': '#9db8ff', 'code-math': '#ffd27a', 'code-comment': '#7c86a5',
         'del-ink': '#ff8f8f', 'del-text': '#ffd0d0', 'ins-ink': '#6fd58f', 'ins-text': '#d2f7de',
-        'status-active': '#9db8ff', 'status-proposed': '#aeb6cf', 'status-waiting': '#fab219', 'status-blocked': '#d03b3b', 'status-done': '#0ca30c', 'status-other': '#7c86a5',
+        'status-active': '#9db8ff', 'status-proposed': '#aeb6cf', 'status-waiting': '#fab219', 'status-blocked': '#E15D5D', 'status-done': '#0ca30c', 'status-other': '#7c86a5',
         'ins-rgb': '80, 200, 120', 'del-rgb': '255, 110, 110', 'del-2-rgb': '255, 143, 143',
         'media-black': '#000000', 'page-shadow': '0 0 0 1px rgba(0,0,0,.04), 0 2px 4px rgba(0,0,0,.14), 0 18px 48px rgba(0,0,0,.28)',
       },
       day: {
         'bg': '#ECE7DC', 'surface': '#FAF8F2', 'raised': '#FFFEFA', 'sunken': '#F2EEE4',
         'overlay': 'rgba(28, 32, 51, .30)', 'hover': 'rgba(28, 32, 51, .045)', 'pressed': 'rgba(28, 32, 51, .08)', 'selected': 'rgba(44, 79, 163, .09)',
-        'border': 'rgba(40, 45, 70, .12)', 'border-strong': 'rgba(40, 45, 70, .22)', 'border-control': '#827C70',
-        'text-1': '#1C2033', 'text-2': '#474C61', 'text-3': '#5F6375', 'text-on-accent': '#FFFFFF',
+        'border': 'rgba(40, 45, 70, .12)', 'border-strong': 'rgba(40, 45, 70, .22)', 'border-control': '#787265',
+        'text-1': '#1C2033', 'text-2': '#474C61', 'text-3': '#555B6C', 'text-on-accent': '#FFFFFF',
         'accent': '#2C4FA3', 'accent-hover': '#233F86', 'accent-soft': 'rgba(44, 79, 163, .10)', 'glow': 'rgba(44, 79, 163, .22)',
-        'gold': '#8F5A00', 'gold-soft': 'rgba(201, 138, 20, .14)', 'gold-on': '#FFFFFF',
-        'success-text': '#1E7A3C', 'success-soft': 'rgba(30, 122, 60, .10)',
+        'gold': '#825000', 'gold-soft': 'rgba(201, 138, 20, .14)', 'gold-on': '#FFFFFF',
+        'success-text': '#186832', 'success-soft': 'rgba(30, 122, 60, .10)',
         'shadow-1': '0 1px 2px rgba(60, 50, 30, .06)', 'shadow-2': '0 10px 28px rgba(60, 50, 30, .14), 0 0 0 1px rgba(40, 45, 70, .06)', 'shadow-3': '0 28px 70px rgba(60, 50, 30, .20)',
         'n1': '#3067B8', 'n2': '#08856A', 'n3': '#A77601', 'n4': '#A93772', 'n5': '#5341B1', 'n6': '#B84412', 'n7': '#0B8FAA', 'n8': '#4A871B',
         'sky-line': 'rgba(40, 45, 70, .10)', 'sky-line-2': 'rgba(40, 45, 70, .22)', 'star': '#1C2033', 'wash': '.06',
         'paper': '#FFFFFF', 'paper-ink': '#1B1B1F', 'table': '#E3DDCF',
-        'dx': '#8A8578', 'map-sky': '#eceff6', 'map-nebula': '#C9D4F5', 'map-nebula-edge': '#F5F6FA',
-        'danger': '#C62828', 'danger-text': '#b42318', 'danger-soft': 'rgba(198, 40, 40, .12)',
-        'accent-rgb': '44, 79, 163', 'gold-rgb': '143, 90, 0', 'map-glow-rgb': '36, 87, 197', 'map-gold-rgb': '154, 98, 0',
-        'idle': '#9aa2bb', 'mark-bg': '#ffe08a', 'mark-ink': '#241a00',
-        'code-key': '#1f5fbf', 'code-math': '#8a5a00', 'code-comment': '#6b7390',
+        'dx': '#7B7569', 'map-sky': '#eceff6', 'map-nebula': '#C9D4F5', 'map-nebula-edge': '#F5F6FA',
+        'danger': '#C62828', 'danger-text': '#B12218', 'danger-soft': 'rgba(198, 40, 40, .12)',
+        'accent-rgb': '44, 79, 163', 'gold-rgb': '130, 80, 0', 'map-glow-rgb': '36, 87, 197', 'map-gold-rgb': '154, 98, 0',
+        'idle': '#68718D', 'mark-bg': '#ffe08a', 'mark-ink': '#241a00',
+        'code-key': '#1f5fbf', 'code-math': '#8a5a00', 'code-comment': '#595F79',
         'del-ink': '#c0362c', 'del-text': '#7a1a12', 'ins-ink': '#1a7f37', 'ins-text': '#0d4a1f',
-        'status-active': '#2f6fe0', 'status-proposed': '#7c86a5', 'status-waiting': '#fab219', 'status-blocked': '#d03b3b', 'status-done': '#0ca30c', 'status-other': '#8b93ad',
+        'status-active': '#2f6fe0', 'status-proposed': '#68718D', 'status-waiting': '#825000', 'status-blocked': '#d03b3b', 'status-done': '#277A38', 'status-other': '#6D7486',
         'ins-rgb': '26, 127, 55', 'del-rgb': '220, 60, 50', 'del-2-rgb': '200, 50, 40',
         'media-black': '#000000', 'page-shadow': '0 0 0 1px rgba(0,0,0,.04), 0 2px 4px rgba(0,0,0,.14), 0 18px 48px rgba(0,0,0,.28)',
       },
@@ -867,7 +867,8 @@ window.__ModuleLoader__.load({
     /** Scroll an element into view and mark it for a moment, so the eye lands where the link pointed. */
     function revealElement(element) {
       if (!element || !element.scrollIntoView) return;
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const reduced = element.ownerDocument?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      element.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'start' });
       element.classList.remove('atlas-target');
       void element.offsetWidth;
       element.classList.add('atlas-target');
@@ -1253,8 +1254,8 @@ window.__ModuleLoader__.load({
     // match the mock's 2px inset, 6px gap, 10px compact and 14px regular button padding.
     const ATLAS_CONTROL_CSS = `
     .atlas-root :is(.atlas-button,.atlas-icon-button,.atlas-chip,.atlas-control-input,.atlas-control-select,.atlas-control-segmented,.atlas-control-popover,.atlas-control-tip,.atlas-control-dialog,.atlas-control-toast) { box-sizing:border-box; }
-    .atlas-root .atlas-button { height:var(--control-32); gap:calc(var(--s-12)/2); padding:0 calc(var(--control-28)/2); border:1px solid var(--border-strong); border-radius:var(--r-sm); background:transparent; color:var(--text-1); font:var(--t-ui); font-weight:500; white-space:nowrap; box-shadow:none; transition:background-color var(--motion-hover) var(--ease); }
-    .atlas-root .atlas-button:hover:not(:disabled) { background:var(--hover); border-color:var(--border-strong); }
+    .atlas-root .atlas-button { height:var(--control-32); gap:calc(var(--s-12)/2); padding:0 calc(var(--control-28)/2); border:1px solid var(--border-control); border-radius:var(--r-sm); background:transparent; color:var(--text-1); font:var(--t-ui); font-weight:500; white-space:nowrap; box-shadow:none; transition:background-color var(--motion-hover) var(--ease); }
+    .atlas-root .atlas-button:hover:not(:disabled) { background:var(--hover); border-color:var(--border-control); }
     .atlas-root .atlas-button.is-primary { background:var(--accent); color:var(--text-on-accent); border-color:transparent; box-shadow:none; }
     .atlas-root .atlas-button.is-primary:hover:not(:disabled) { background:var(--accent-hover); border-color:transparent; }
     .atlas-root .atlas-button.is-quiet { border-color:transparent; color:var(--text-2); background:transparent; }
@@ -1288,7 +1289,7 @@ window.__ModuleLoader__.load({
     .atlas-control-segmented { display:inline-flex; height:var(--control-28); align-items:stretch; gap:2px; padding:2px; border-radius:var(--r-full); background:var(--sunken); box-shadow:inset 0 0 0 1px var(--border); }
     .atlas-control-segmented button { border:0; display:grid; place-content:center; padding:0 var(--s-12); border-radius:var(--r-full); color:var(--text-2); background:transparent; cursor:pointer; font:var(--t-ui); }
     .atlas-control-segmented button:hover:not(:disabled) { background:var(--hover); }
-    .atlas-control-segmented button[aria-checked=true] { background:var(--raised); color:var(--text-1); font-weight:500; box-shadow:0 0 0 1px var(--border-strong); }
+    .atlas-control-segmented button[aria-checked=true] { background:var(--raised); color:var(--text-1); font-weight:500; box-shadow:0 0 0 1px var(--border-control); }
     .atlas-control-kbd { display:inline-block; font:var(--t-meta); font-family:var(--font-mono); padding:0 var(--s-4); border-radius:var(--r-xs); border:1px solid var(--border-strong); border-bottom-width:2px; background:var(--sunken); color:var(--text-2); }
     .atlas-control-banner { display:flex; align-items:center; gap:var(--s-8); padding:var(--s-8) var(--s-12); border-radius:var(--r-md); color:var(--text-1); background:var(--accent-soft); font:var(--t-ui); }
     .atlas-banner-needs,.atlas-banner-warning { background:var(--gold-soft); color:var(--gold); }
@@ -8683,8 +8684,6 @@ window.__ModuleLoader__.load({
       0%, 100% { transform: scale(.75) rotate(0deg); opacity: .65; }
       50% { transform: scale(1.1) rotate(45deg); opacity: 1; }
     }
-    @keyframes atlas-flow { to { stroke-dashoffset: -18; } }
-    @media (prefers-reduced-motion: reduce) { .atlas-target { animation: none; box-shadow: 0 0 0 2px var(--gold); } }
 
     /* ---- topic workspace ---- */
     .atlas-topic-head { position: relative; padding: 6px 0 var(--s-4); }
@@ -9084,7 +9083,9 @@ window.__ModuleLoader__.load({
     }
     @keyframes atlas-flow { to { stroke-dashoffset: -18; } }
     @media (prefers-reduced-motion: reduce) {
-      .atlas-root * { animation: none !important; transition: none !important; }
+      .atlas-root, .atlas-root *, .atlas-root *::before, .atlas-root *::after {
+        animation: none !important; transition: none !important; scroll-behavior: auto !important;
+      }
     }
     `;
 

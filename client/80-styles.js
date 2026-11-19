@@ -307,8 +307,6 @@ const STYLES = `
   0%, 100% { transform: scale(.75) rotate(0deg); opacity: .65; }
   50% { transform: scale(1.1) rotate(45deg); opacity: 1; }
 }
-@keyframes atlas-flow { to { stroke-dashoffset: -18; } }
-@media (prefers-reduced-motion: reduce) { .atlas-target { animation: none; box-shadow: 0 0 0 2px var(--gold); } }
 
 /* ---- topic workspace ---- */
 .atlas-topic-head { position: relative; padding: 6px 0 var(--s-4); }
@@ -708,7 +706,9 @@ a.atlas-paper-name:hover { color: var(--accent); text-decoration: underline; tex
 }
 @keyframes atlas-flow { to { stroke-dashoffset: -18; } }
 @media (prefers-reduced-motion: reduce) {
-  .atlas-root * { animation: none !important; transition: none !important; }
+  .atlas-root, .atlas-root *, .atlas-root *::before, .atlas-root *::after {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  }
 }
 `;
 

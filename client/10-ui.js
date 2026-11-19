@@ -374,7 +374,8 @@ function nthHeading(element, n) {
 /** Scroll an element into view and mark it for a moment, so the eye lands where the link pointed. */
 function revealElement(element) {
   if (!element || !element.scrollIntoView) return;
-  element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const reduced = element.ownerDocument?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  element.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'start' });
   element.classList.remove('atlas-target');
   void element.offsetWidth;
   element.classList.add('atlas-target');

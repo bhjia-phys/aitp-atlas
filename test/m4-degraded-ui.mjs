@@ -53,7 +53,15 @@ await runBrowserSmoke(async function serviceOmissions({q,click,ev,wait,c,key,pla
   const focus=q('button[aria-label="Focus pane"]');
   await click(focus,'local Focus without DSH layout');await wait(inPage('DSH layout is unavailable'),'local focus explains retained sidebar');await key('Escape','Escape');await place('Library');console.log('PASS layout withheld: local Focus, exit, navigation');
   await reload('teams');await place('Teams');await click(text('button','New team'),'inspect team assembly');
-  await wait(inPage('Agent Teams is not available'),'missing team remote reason');assert.equal(await ev(`(${text('button','Start the team')}).disabled`),true);await click(text('.atlas-crew-sheet button','Cancel'),'close unavailable team');
+  // Use a valid charter: Start must be disabled by missing Agent Teams, not an empty goal/topic.
+  for(const [label,value] of [['What should the team find out?','Compare the two fixture conventions.'],['Done when','Both independent checks agree.']]) {
+    await click(q(`textarea[aria-label="${label}"]`),label);await c.call('Input.insertText',{text:value});
+  }
+  const topic=q('select[aria-label="Topic"]');await click(topic,'choose a fixture topic');await key('Escape','Escape');await key('Home','Home');await key('ArrowDown','ArrowDown');
+  assert.notEqual(await ev(`(${topic}).value`),'__choose__');
+  await wait(inPage('Agent Teams is not available'),'missing team remote reason');assert.equal(await ev(`(${text('button','Start the team')}).disabled`),true);assert.equal(await ev('window.__fixtureAtlasCounts.creates'),0);
+  assert.equal(await ev(`fetch('/aitp-atlas/api/teams').then(r=>r.json()).then(r=>r.teams.length)`),0);
+  await click(text('.atlas-crew-sheet button','Cancel'),'close unavailable team');
   console.log('PASS Agent Teams withheld: assembly remains readable; cannot launch');
   for (const fault of ['catalog','selectModel']) {
     await reload(fault,{provider:'fixture-saved',model:'old-choice'});
