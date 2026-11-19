@@ -12,7 +12,8 @@ import { seedTeamArtifacts } from './fixture.mjs';
 
 // Screenshots are never updated during a normal regression run. Stage viewport-only bytes in
 // memory and publish them only after the complete scenario and zero-console-error gate pass.
-const capture=process.argv.includes('--capture') || process.env.ATLAS_M3_SHOTS==='1', shots=new Map();
+const guide=process.argv.includes('--guide-capture');
+const capture=guide || process.argv.includes('--capture') || process.env.ATLAS_M3_SHOTS==='1', shots=new Map();
 await runBrowserSmoke(async function nativeTeams({q,wait,click,key,c,ev,place,model,fx}){
   const receipts=model.enableFixtureTeam(fx.root,'numerics');
   const desktop=async()=>{await c.call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});await wait(`innerWidth===1440 && innerHeight===900`,'desktop screenshot viewport');};
@@ -132,7 +133,10 @@ await runBrowserSmoke(async function nativeTeams({q,wait,click,key,c,ev,place,mo
 });
 if(capture){
   assert.deepEqual([...shots.keys()].sort(),['assembly','logbook-narrow','room-day','room-night']);
-  const dir=new URL('../design/1.0/reports/screens/',import.meta.url);await fs.mkdir(dir,{recursive:true});
-  for(const [name,png] of shots)await fs.writeFile(new URL('m3-'+name+'.png',dir),png);
-  console.log('Saved four private viewport PNGs in design/1.0/reports/screens.');
+  const dir=new URL(guide?'../docs/assets/workbench/':'../design/1.0/reports/screens/',import.meta.url);await fs.mkdir(dir,{recursive:true});
+  for(const [name,png] of shots){
+    if(guide && !name.startsWith('room-'))continue;
+    await fs.writeFile(new URL((guide?name.replace('room-','team-'):'m3-'+name)+'.png',dir),png);
+  }
+  console.log(guide?'Saved the paired Team room guide images; preserved M3 history.':'Saved four private viewport PNGs in design/1.0/reports/screens.');
 }

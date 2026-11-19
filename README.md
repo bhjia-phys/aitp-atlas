@@ -1,53 +1,40 @@
-<p align="center">
-  <img src="docs/assets/atlas-mark.svg" alt="" width="96" height="96">
-</p>
-<h1 align="center">AITP Atlas</h1>
-<p align="center"><strong>A workbench for theoretical physics in DeepSeek Harness</strong></p>
-<p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#working-with-aitp">Working with AITP</a> ·
-  <a href="docs/guide.md">User guide</a> ·
-  <a href="DESIGN.md">Design</a>
-</p>
+# AITP Atlas
 
-Atlas is built to serve research and the search for truth in physics. A derivation should lead back to its assumptions, and a numerical result to the calculation that produced it. A failed check or an unresolved objection belongs in the record when it changes what we can claim. Atlas keeps the question, its evidence and the discussion within reach as the work develops.
+Atlas is a physics research workbench inside DeepSeek Harness (DSH). Start a question at the **Desk**, open the topic's `research.md` beside a discussion, and follow a claim back to its derivation, calculation or paper. A discussion is a DSH session; a topic note is an ordinary file. Moving a discussion to a topic does not change the note.
 
-## Preview the research workbench and native teams (0.12.0 review branch)
+**[User guide](docs/guide.md)** · [Try the team example](docs/guide.md#try-the-two-seat-example) · [Install and configure](docs/guide.md#install) · [Upgrade or roll back](docs/guide.md#upgrade-and-rollback)
 
-From this source checkout with a compatible local DSH runtime, run `node build-client.mjs` then `npm run preview`. Open the **exact private URL** printed by the launcher and select **Atlas** in the DSH sidebar. This opens a disposable research programme and a local streaming mock model, not your profile or research. Press `q` then Enter in the terminal to discard it. Rebuild and restart the preview after editing the plugin.
+## Try it without installing into your profile
 
-Start on **Desk** to draft a question. **Auto** suggests topics; a weak match stays unfiled. Select **Atlas ▾ → Discussions** (or **Alt+2**) for research discussions, filters and filing. A tab is already-open content; **Atlas ▾** opens a destination, and DSH keeps its own sidebar. Try two discussions side by side, or move one to a topic and undo before its six-second notification window ends. To assemble a native research team, choose **Atlas ▾ → Teams → New team**. State the question, evidence that would settle it, owning topic and crew. Nothing starts until you confirm. The Team room distinguishes the lead’s actual DSH board, files submitted by members, independent reviews and decisions awaiting your answer. The ordinary preview model only replies with sample text; the [M3 review](design/1.0/reports/M3.md) describes the opt-in native-seat demonstration. See also the [M2 review](design/1.0/reports/M2.md) and [navigation comparison](design/1.0/reports/nav/nav-comparison-final.png).
-
-The installation instructions and [user guide](docs/guide.md) below describe the released 0.9.2 baseline; this review build does not require installing it.
-
-## A research session in Atlas
-
-- **Find the open question.** Universe maps the research programme, its topics and branches. Activity shows what is running and which decisions need the researcher's judgment.
-- **Read beside the work.** Open manuscripts, PDFs, code and figures at the cited section, page or line. Discover papers through arXiv and INSPIRE, and preserve the edition and provenance when adding a paper to the library.
-- **Work through the argument.** Select a passage to discuss, derive or check it in a DSH session beside the source. Use a separate review to check consequential claims, and review the changes made to the research notes.
-- **Keep what the evidence supports.** Link the resulting argument to its derivation, sources or calculation from the owning `research.md`. When it is time to write, edit LaTeX alongside its compiled PDF.
-
-## Working with AITP
-
-[AITP Research Protocol](https://github.com/bhjia-phys/AITP-Research-Protocol) defines the research cycle and the Skills that guide it. Its root, topic and branch `research.md` files carry the developing scientific argument, and `Current work` records where to resume. **Atlas** opens those same files as an interactive workspace. **DeepSeek Harness** runs the AI sessions and tools.
-
-When you ask about a passage, Atlas sends the topic, file, section or PDF page and selected text into the DSH discussion. AITP's `aitp-memory` Skill then guides the agent through the relevant notes and evidence. Atlas renders the resulting files directly, so the same research can be continued from any editor or agent that can read the workspace. [AITP's research cycle](https://github.com/bhjia-phys/AITP-Research-Protocol#a-topic-is-a-living-research-note)
-
-## Quick start
-
-1. **Install Atlas and AITP Skills together** in DeepSeek Harness 0.2.2 or a later compatible 0.2.x version. If you use DSH Desktop, open it once to create its profile and then fully quit it. Run the installer below with Node.js 22 or later. It adds both bundles to the same DSH profile. From a source checkout, run `npm pack` to build the Atlas `.tgz` and use `scripts/install-dsh.mjs` as the installer path.
-2. **Point Atlas at your research folder.** Add the following entry to the profile's `cordis.patch.yml` and restart DSH. Set `root` to an existing folder on the DSH host. See the [installation guide](docs/guide.md#install) for Windows and WSL paths and shared-library settings.
-3. **Open Atlas** from the sidebar. An existing `research.md` opens directly. For an empty folder, use **Initialize workspace**, then **Start a research topic**. The discussion can use the installed AITP Skills to get started.
+From a **source checkout**, with Node.js 22+ and a compatible local DSH runtime:
 
 ```sh
-node install-dsh.mjs desktop ./aitp-atlas-0.9.2.tgz
+npm run build
+npm run preview
 ```
 
-```yaml
-- id: aitp-atlas
-  name: aitp-atlas
-  config:
-    root: /path/to/research
-```
+Open the **exact private URL** printed by the launcher, select **Atlas** in DSH's sidebar and type `Is the worm sampler equilibrating reproducibly?` at the Desk. Inspect **Likely topic**, then press Enter. Open the topic or a cited file beside the answer. **Atlas ▾** opens destinations; the tabs next to it are things you have already opened. Stop with `q` then Enter, or Ctrl+C. This preview uses temporary research files, a separate profile and a local model with fixed replies; it does not enable model tool calls.
 
-See the [user guide](docs/guide.md) for reading, LaTeX, teams and review. The [design notes](DESIGN.md) explain the relationship between Atlas, the research files and the DSH host. [MIT license](LICENSE)
+For a native team with two real DSH child sessions and synthetic tasks, run `npm run preview:team` **instead**. Follow its printed assembly instructions. The Desk's Team mode and **Teams → New team** open a form; neither starts a run until you choose **Start the team**. The isolated example exercises message delivery, not scientific judgment.
+
+![Synthetic two-seat Team room in Day: a report and independent review are linked, while a convention still needs the researcher’s decision.](docs/assets/workbench/team-day.png)
+
+*Flow links the task to its report and review; the right column shows what still needs you. [See the same room in Night](docs/assets/workbench/team-night.png).*
+
+## Where to work
+
+| To… | Open… |
+| --- | --- |
+| Ask a question or resume something waiting for you | **Desk**. Leave filing on Auto, pick a topic, or choose No topic. |
+| Find, rename, move or resolve a conversation | **Discussions**. Filter by topic, unread replies, unfiled work or changes to review. |
+| Divide a scoped question among authors and a referee | **Teams**. Set the stopping test and limits first; inspect reports, reviews and outstanding decisions in the room. |
+| Follow a research direction to its branches and evidence | **Map**, then a topic, its Current work and linked files. |
+| Read a paper beside its note, study a topic, or edit a manuscript | **Library**, **Learn** or **Write**. Use **Atlas ▾ → Commands** to find these places from the keyboard. |
+
+[AITP Research Protocol](https://github.com/bhjia-phys/AITP-Research-Protocol) supplies the methods and Skills. Keep assumptions, counterexamples and unresolved disagreements in the owning note; a model reply, completed task or accepted report is not by itself evidence for a result.
+
+## Using your own research
+
+A release `.tgz` contains the built workbench, [guide](docs/guide.md) and [profile installer](scripts/install-dsh.mjs), **not** the source preview or test harness. Installation is a separate decision: choose the target profile, back it up, obtain approval and fully stop that DSH profile before installing. It is not necessary to install anything to read these documents. See [Install](docs/guide.md#install) for separate checkout and tarball commands, configuration and first launch.
+
+[MIT license](LICENSE)

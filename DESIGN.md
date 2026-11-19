@@ -1,5 +1,7 @@
 # AITP is the memory; Atlas is the workspace
 
+> Historical design for Atlas 0.x. References below to Activity and the BBFF team runner are not current functionality or permission guarantees. For the current workbench, use the [user guide](docs/guide.md); for the redesign record, see the [1.0 plan](design/1.0/PLAN.md). This historical document is not in the installable package.
+
 ## The story
 
 A research idea becomes a result through one continuous loop: an idea is discussed and
