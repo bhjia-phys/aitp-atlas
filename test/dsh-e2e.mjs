@@ -7,8 +7,10 @@
  *   2. web: the Atlas API answers from the fixture research tree.
  *   3. the research tree is byte-for-byte unchanged.
  *
- * Needs an installed DSH desktop (set DSH_EXE and DSH_CLI otherwise); without
- * one it reports SKIP. Run: `node test/dsh-e2e.mjs [path-to-package.tgz]`.
+ * `node test/dsh-e2e.mjs [local-package.tgz]`: pack the checkout if omitted;
+ * always use the archive's installer and a synthetic, already-configured Skills
+ * package offline. No runtime: NOT RUN (nonzero). `--upstream-skills` is a
+ * separate explicitly network-enabled pinned upstream compatibility check.
  */
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
@@ -18,15 +20,19 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, snapshot } from './fixture.mjs';
+import { releaseEnv, seedProfile, packedSubject } from './release-fixture.mjs';
 
 const here = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const installTarget = process.argv[2] ? path.resolve(process.argv[2]) : here;
+const args = process.argv.slice(2), online = args.includes('--upstream-skills');
+const files = args.filter(v=>v!=='--upstream-skills');
+if(files.length>1 || files.some(v=>v.startsWith('-'))) throw Error('Usage: node test/dsh-e2e.mjs [package.tgz] [--upstream-skills]');
+const archive = files[0] && path.resolve(files[0]);
 const appDir = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DeepSeek Harness');
 const dshExe = process.env.DSH_EXE || path.join(appDir, 'DeepSeek Harness.exe');
 const dshCli = process.env.DSH_CLI || path.join(appDir, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
 if (!existsSync(dshExe)) {
-  console.log(`SKIP: no DeepSeek Harness executable at ${dshExe} (set DSH_EXE and DSH_CLI)`);
-  process.exit(0);
+  console.log(`NOT RUN: no DeepSeek Harness executable at ${dshExe} (set DSH_EXE and DSH_CLI)`);
+  process.exit(2);
 }
 
 const fx = await makeFixture();
@@ -70,22 +76,15 @@ const model = http.createServer((req, res) => {
 });
 await new Promise((resolve) => model.listen(0, '127.0.0.1', resolve));
 
-const env = {
-  ...process.env,
-  ELECTRON_RUN_AS_NODE: '1',
-  DSH_HOME: home,
-  DEEPSEEK_BASE_URL: `http://127.0.0.1:${model.address().port}`,
-  DEEPSEEK_API_KEY: 'sk-atlas-e2e-placeholder',
-  NO_PROXY: '127.0.0.1,localhost',
-  no_proxy: '127.0.0.1,localhost',
-};
+const env = await releaseEnv(fx,{exe:dshExe,cli:dshCli,modelUrl:'http://127.0.0.1:'+model.address().port,online});
+let subject;
 const runCli = (exe, args, cwd) => new Promise((resolve) => {
   execFile(exe, args, { cwd, env, timeout: 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
     resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout: String(stdout), stderr: String(stderr) });
   });
 });
 const dsh = (args, cwd) => runCli(dshExe, ['--expose-internals', dshCli, ...args], cwd);
-const install = (profile) => runCli(process.execPath, [path.join(here, 'scripts', 'install-dsh.mjs'), profile, installTarget], fx.base);
+const install = (profile) => runCli(process.execPath, [subject.installer, profile, subject.tarball], fx.base);
 const profileManifest = async (profile) => JSON.parse(await fsp.readFile(path.join(home, 'profiles', profile, 'package.json'), 'utf8'));
 const request = (port, name, { query = '', cookie, method = 'GET', body, headers = {} } = {}) => new Promise((resolve, reject) => {
   const req = http.request({ host: '127.0.0.1', port, method, path: `/aitp-atlas/api/${name}${query ? '?' + query : ''}`, headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': 'application/json' } : {}), ...headers } }, (res) => {
@@ -153,11 +152,14 @@ async function stopWeb() {
 }
 
 try {
+  subject=await packedSubject(here,fx,env,archive);
+  console.log('Testing packed Atlas '+subject.manifest.version+' ('+(online?'explicit online upstream Skills check':'offline, local synthetic Skills; not upstream validation')+')');
+  for(const profile of ['headless','web','desktop'])await seedProfile(env,profile,{stub:!online,baseBundles:['@deepseek-ai/dsh-base',profile==='headless'?'@deepseek-ai/dsh-headless':'@deepseek-ai/dsh-web-app']});
   const tree = async () => ({ ...(await snapshot(fx.root)), ...(await snapshot(fx.knowledge)) });
   const beforeHeadless = await tree();
 
   const overlay = path.join(fx.base, 'overlay.yml');
-  await fsp.writeFile(overlay, ['- id: aitp-atlas', '  config:', `    root: ${JSON.stringify(fx.root)}`, `    stateDir: ${JSON.stringify(fx.file('atlas-state'))}`, ''].join('\n'), 'utf8');
+  await fsp.writeFile(overlay, ['- id: workspace-controller','  config:',`    documentsDirectory: ${JSON.stringify(fx.file('user/Documents'))}`,'- id: aitp-atlas', '  config:', '    web: false', `    root: ${JSON.stringify(fx.root)}`, `    stateDir: ${JSON.stringify(fx.file('atlas-state'))}`, ''].join('\n'), 'utf8');
 
   // 1. headless
   const installed = await install('headless');
@@ -166,8 +168,12 @@ try {
   const bundles = manifest.dsh.profile.bundles;
   assert.deepEqual(bundles.filter((name) => ['aitp-atlas', 'dsh-aitp-skills'].includes(name)).sort(), ['aitp-atlas', 'dsh-aitp-skills']);
   const skillSpec = manifest.dependencies['dsh-aitp-skills'];
-  assert.match(skillSpec, /bhjia-phys\/AITP-Research-Protocol/i);
-  ok('one install adds two separate bundles to a clean profile');
+  if(online) assert.match(skillSpec, /bhjia-phys\/AITP-Research-Protocol/i);
+  else {assert.match(installed.stdout,/Reusing the AITP Skills bundle/);assert.equal(skillSpec,'file:'+fx.file('user/fixture-skills').replaceAll('\\','/'));}
+  const installedPackage=path.join(home,'profiles','headless','node_modules','aitp-atlas');
+  assert.equal(JSON.parse(await fsp.readFile(path.join(installedPackage,'package.json'))).version,subject.manifest.version);
+  assert.ok((await fsp.readFile(path.join(installedPackage,'client.js'))).equals(subject.client));
+  ok('the packed installer selects Atlas and preserves the configured Skills dependency');
   const reinstalled = await install('headless');
   assert.equal(reinstalled.code, 0, `repeat installation failed:\n${reinstalled.stderr}\n${reinstalled.stdout}`);
   assert.match(reinstalled.stdout, /Reusing the AITP Skills bundle/);
@@ -182,13 +188,14 @@ try {
   const turns = requests.filter((body) => Array.isArray(body.messages));
   assert.ok(turns.length > 0, 'the mock model was called');
   const text = JSON.stringify(turns);
-  for (const name of ['aitp-memory', 'aitp-research', 'aitp-verify', 'aitp-writing', 'aitp-distill', 'aitp-human-learning', 'aitp-human-brainstorming', 'developing-librpa', 'ren-gw-notation', 'ren-gw-writing']) {
+  if(online) for (const name of ['aitp-memory', 'aitp-research', 'aitp-verify', 'aitp-writing', 'aitp-distill', 'aitp-human-learning', 'aitp-human-brainstorming', 'developing-librpa', 'ren-gw-notation', 'ren-gw-writing']) {
     assert.ok(text.includes(name), `the model can discover ${name}`);
   }
+  if (!online) assert.match(text, /atlas-release-fixture/, 'the configured local Skills bundle reached the synthetic model');
   assert.ok(turns.every((body) => (body.tools || []).every((tool) => !String(tool.name).startsWith('aitp_'))), 'no Atlas tools are offered');
   assert.doesNotMatch(text, /AITP research memory|# Research memory|aitp_(bearings|recall|card|remember|paper|check|dream)/, 'no Atlas prompt section or injected memory');
   assert.deepEqual(await tree(), beforeHeadless);
-  ok('the model sees the upstream AITP Skills through DSH’s native catalog');
+  ok(online?'upstream AITP Skills are discoverable in the native catalog':'offline headless request reached only the fixture model; no Atlas tools were injected');
 
   // 2. web
   const webInstalled = await install('web');
@@ -211,7 +218,19 @@ try {
   assert.equal(overview.status, 200);
   assert.equal(overview.json.title, 'Research programme');
   assert.deepEqual(overview.json.directions.map((d) => d.topics), [['mc/worm', 'mc/continuation'], ['topology'], []]);
-  ok('the web profile serves the universe from the research tree');
+  ok('the web profile serves the synthetic research programme');
+  const scope = new URLSearchParams({expectedRoot:fx.root}).toString();
+  const discussions = await request(port,'discussions',{cookie,query:scope});
+  assert.equal(discussions.status,200);assert.deepEqual(discussions.json.discussions,[]);
+  const teams = await request(port,'teams',{cookie,query:scope});
+  assert.equal(teams.status,200);assert.equal(teams.json.root,fx.root);assert.deepEqual(teams.json.teams,[]);
+  const templateList=await request(port,'teams/templates',{cookie,query:scope});
+  assert.equal(templateList.status,200);assert.ok(templateList.json.templates.some(t=>t.id==='derive-check'));
+  const topic=overview.json.topics['mc/worm'];
+  const preview=await request(port,'teams/preview',{cookie,method:'POST',query:scope,body:{topic:{id:topic.id,title:topic.title,path:topic.file},name:'Release fixture',goal:'Check the fixture.',doneWhen:'A limit is checked.',seats:[{name:'referee',role:'referee'}]}});
+  assert.equal(preview.status,200,preview.text);assert.deepEqual(preview.json.seatCalls.map(s=>s.name),['referee']);
+  assert.match(preview.json.brief,/roles[\\/]referee\.md/);assert.equal(existsSync(preview.json.runDir),false,'preview must not start a team');
+  ok('packed Discussions and Teams endpoints work; shipped role templates render without creating a run');
   const note = await request(port, 'note', { query: 'path=' + encodeURIComponent(fx.file('topics/mc/worm/research.md')), cookie });
   assert.equal(note.status, 200);
   assert.equal(note.json.topic.threads[0].name, 'Mixing test');
@@ -246,7 +265,7 @@ try {
   const newRoot = fx.file('fresh-workspace/topics');
   await fsp.mkdir(newRoot, { recursive: true });
   const newOverlay = fx.file('fresh-workspace.yml');
-  await fsp.writeFile(newOverlay, `- id: aitp-atlas\n  config:\n    root: ${JSON.stringify(newRoot)}\n    stateDir: ${JSON.stringify(fx.file('fresh-atlas-state'))}\n    web: false\n`);
+  await fsp.writeFile(newOverlay, `- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(fx.file('user/Documents'))}\n- id: aitp-atlas\n  config:\n    root: ${JSON.stringify(newRoot)}\n    stateDir: ${JSON.stringify(fx.file('fresh-atlas-state'))}\n    web: false\n`);
   const freshHost = await startWeb(newOverlay);
   const post = (name, body, options) => freshHost.call(name, { method: 'POST', body, ...options });
   assert.equal((await post('workspace/init', {})).status, 201);
@@ -284,18 +303,10 @@ try {
   assert.equal((await restarted.call('raw', { query: `path=${encodeURIComponent(attachmentPath)}`, headers: { range: 'bytes=0-3' } })).text, '%PDF');
   ok('restarting DSH restores the new topic, note, saved search and PDF');
   await stopWeb();
-  // Desktop owns first-run profile creation. Use an initialized, empty-of-add-ons profile.
-  const desktopDir = path.join(home, 'profiles', 'desktop');
-  await fsp.mkdir(desktopDir, { recursive: true });
-  await fsp.writeFile(path.join(desktopDir, 'package.json'), JSON.stringify({
-    name: 'dsh-profile-desktop', private: true,
-    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
-  }));
-  await fsp.writeFile(path.join(desktopDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n');
   const desktop = await install('desktop');
   assert.equal(desktop.code, 0, `joint installation (desktop) failed:\n${desktop.stderr}\n${desktop.stdout}`);
   assert.deepEqual((await profileManifest('desktop')).dsh.profile.bundles.filter((name) => ['aitp-atlas', 'dsh-aitp-skills'].includes(name)).sort(), ['aitp-atlas', 'dsh-aitp-skills']);
-  ok('the same joint installer selects both bundles in an empty initialized Desktop profile');
+  ok('the same joint installer selects both bundles in the isolated initialized Desktop profile');
   console.log(`ATLAS DSH E2E OK (${checks} checks)`);
 } finally {
   await stopWeb();
