@@ -24,6 +24,8 @@ The benchmark timestamps inside the page, not around CDP calls or test waits. A 
 
 For run-to-run context, a second private profile using the prior built client `df83607c5051` measured retained-tab p50/p95/max **16.8/24.5/28.2 ms** (40/40 < 50), Desk **31.0/36.9/36.9 ms** (8/8 < 300), and last-input-to-suggestion **263.8/271.3/271.3 ms** (0/12 < 150). These runs are not pooled; no causal speedup is inferred from the different builds.
 
+Final 1.0.0 candidate, client `3dc58c7127d9` on the same machine: retained-tab p50/p95/max **17.7/20.4/21.9 ms** (40/40 <50); warm Desk p95 **50.4 ms** (8/8 <300); request-to-visible p95 **27.1 ms** (12/12 <150); last-input-to-visible p95 **282.3 ms** (0/12 <150). Seven sessions again retained six actual transcript bodies. Hidden geometry probes produced zero layouts, and visible controls each produced one. The independent run finished with no console, page or HTTP errors. These numbers supersede the earlier run for the deliverable without erasing the earlier observations.
+
 ## Identity, eviction and hidden work
 
 - Alternating between two already-retained real discussions 40 times preserved both exact assistant link DOM objects (`isConnected` and identity under their original panel); the test waits for the complete reference link before measuring. Provider eviction at capacity is deliberately measured separately from ordinary switches.

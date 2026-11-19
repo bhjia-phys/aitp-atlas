@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   id: 'aitp-atlas',
   factory(require) {
     'use strict';
-    const ATLAS_VERSION = "0.12.0";
+    const ATLAS_VERSION = "1.0.0";
     // ===== client/00-runtime.js
     // ---------------------------------------------------------------- runtime ---
     // React, DSH primitives, the API client, colors, PDF.js and the AI hand-offs.

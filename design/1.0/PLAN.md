@@ -124,6 +124,8 @@ Implementation evidence is in the [M3 review report](reports/M3.md); these are i
 | 4.3 | Resilience pass: run with DSH services missing (no layout, no Agent Teams, no model selection) | QB-3 |
 | 4.4 | README and `docs/guide.md` for 1.0; screenshots from the fixture only, both themes | — |
 
+[Candidate review: implementation evidence and exceptions](reports/M4.md). The 150 ms routing bar is measured from request dispatch separately from DK-12's 250 ms debounce; it is **not met** if measured from the last keystroke. This is the local release-candidate gate, not approval to publish or install into the daily profile.
+
 ## Definition of done (every task)
 
 Requirement IDs implemented as written, or the deviation and its reason recorded in the milestone

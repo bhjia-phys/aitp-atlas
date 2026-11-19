@@ -1,6 +1,6 @@
 {
   "name": "aitp-atlas",
-  "version": "0.12.0",
+  "version": "1.0.0",
   "description": "Open Atlas in the DeepSeek Harness sidebar to read research notes, discuss a passage beside its source, or give a native team a question and stopping test. Review reports, decisions and observed changes before updating a note.",
   "type": "module",
   "license": "MIT",
