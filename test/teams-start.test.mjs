@@ -45,6 +45,15 @@ test('failed, ambiguous or replayed launches never create another lead or replay
     assert.equal(s.calls.filter(c=>c[0]==='create').length,phase==='replay'?0:1);assert.equal(s.calls.filter(c=>c[0]==='attempt').length,phase==='prompt'?1:0);assert.ok(!s.calls.some(c=>c[0]==='prompt'));assert.equal(s.calls.filter(c=>c[0]==='release').length,['enable','prompt'].includes(phase)?1:0);
   }
 });
+test('only an explicit pre-scaffold INVALID_TEAM rejection leaves the edited charter retryable',async()=>{
+  const rejection=()=>Object.assign(Error('Invalid goal.'),{status:400,body:{error:{code:'INVALID_TEAM'}}});
+  const s=kit(),req=s.deps.request;s.draft.seats[0].task='My edited task.';const prior=structuredClone(s.draft);
+  s.deps.request=async()=>{throw rejection();};await assert.rejects(s.launch(),e=>!e.startedRequest && e.message==='Invalid goal.');
+  assert.deepEqual(s.draft,prior);assert.deepEqual(s.calls.map(c=>c[0]),['catalog']);
+  s.deps.request=async(p,...rest)=>{if(p==='teams/team-a')throw rejection();return req(p,...rest);};
+  await assert.rejects(s.launch(),e=>e.startedRequest && e.stage==='register lead' && e.team.id==='team-a');
+  assert.equal(s.calls.filter(c=>c[0]==='create').length,1);assert.ok(!s.calls.some(c=>c[0]==='prompt'));
+});
 test('a missing, partial, wrong-case or rejected topic baseline blocks the first prompt and returns the bound lead',async()=>{
   for (const outcome of [null, {watching:[]}, {watching:['/fixture/other.md']}, {watching:['/fixture/RESEARCH.md']}, Error('baseline denied')]) {
     const s=kit(),request=s.deps.request;s.deps.request=async(p,b,m)=>{if(p!=='review/baseline')return request(p,b,m); if(outcome instanceof Error)throw outcome;return outcome;};

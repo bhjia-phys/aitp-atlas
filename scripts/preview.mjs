@@ -14,22 +14,27 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createInterface } from 'node:readline';
 import { makeFixture } from '../test/fixture.mjs';
 import { startModel } from './preview-model.mjs';
+import { seedInquiryFixture, prepareInquiryDemo } from './preview-inquiry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
-const usage = `Usage: npm run preview [-- [--team] [--debug]]
+const usage = `Usage: npm run preview [-- [--team | --inquiry] [--debug]]
   npm run preview                 Ordinary fixture replies (no tool calls)
   npm run preview -- --team       Enable the two-seat Worm team demo in the temporary fixture
+  npm run preview:inquiry          Try the scripted AdS inquiry (text only, no team or calculation)
   npm run preview -- --team --debug
 Open the printed private local URL and select Atlas. Stop with q + Enter or Ctrl+C.`;
 
 // Only the manual CLI opts in here; never arm a model in the shared preview lifecycle.
 export function previewCliOptions(args) {
-  if (args.some(a => a !== '--team' && a !== '--debug') || new Set(args).size !== args.length) throw new Error(usage);
+  const inquiry = args.includes('--inquiry'), team = args.includes('--team');
+  if ((inquiry && team) || args.some(a => !['--inquiry', '--team', '--debug'].includes(a)) || new Set(args).size !== args.length) throw new Error(usage);
   return {
     debug: args.includes('--debug'),
+    seedFixture: inquiry ? seedInquiryFixture : undefined,
     prepare({ fx, model }) {
-      if (!args.includes('--team')) return '';
+      if (inquiry) return prepareInquiryDemo(model);
+      if (!team) return '';
       model.enableFixtureTeam(fx.root, 'numerics');
       return `Two-seat fixture demo (one team per launch; nothing starts until you submit):
   1. Atlas → Teams → New team.
@@ -96,7 +101,7 @@ async function stopHost(host, closed) {
 }
 
 // The callback owns neither resource: all exits, including failed startup, dispose them here.
-export async function withPreview(use, { signal, debug = false, fixtureClientSource } = {}) {
+export async function withPreview(use, { signal, debug = false, fixtureClientSource, seedFixture } = {}) {
   if (process.env.ATLAS_PREVIEW_ROOT !== undefined) throw new Error('Unset ATLAS_PREVIEW_ROOT: preview only accepts a freshly generated fixture.');
   const runtime = findRuntime();
   if (!runtime) throw new Error('No installed DSH runtime found. Set DSH_EXE to its absolute executable (and DSH_CLI for a Node/Electron CLI entry point).');
@@ -105,6 +110,7 @@ export async function withPreview(use, { signal, debug = false, fixtureClientSou
   let model, host, closed, log = '';
   const safeLog = (text) => text.replace(/(token=)[\w-]+/g, '$1[redacted]').replaceAll(model.key, '[redacted]');
   try {
+    if (seedFixture) await seedFixture(fx);
     model = await startModel();
     const env = privateEnv(fx, model);
     await stageProfile(fx, env);
@@ -165,7 +171,7 @@ async function main() {
       if (instructions) console.log(instructions);
       if (!control.signal.aborted) await Promise.race([closed.then(() => { throw new Error('DSH exited.'); }),
         new Promise((resolve) => control.signal.addEventListener('abort', resolve, { once: true }))]);
-    }, { signal: control.signal, debug: options.debug });
+    }, { signal: control.signal, debug: options.debug, seedFixture: options.seedFixture });
   } catch (error) { if (!control.signal.aborted || error.name !== 'AbortError') throw error; }
   finally { input.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop); }
 }

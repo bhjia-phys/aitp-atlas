@@ -9,7 +9,7 @@ function context() {
   const ctx={slots:{inject:(_k,f)=>f(), register:(v,f)=>slots.push({v,f})},inject:(deps,fn)=>requests.set(deps.join('/'),fn)};
   const React={createContext:()=>({}),createElement:()=>{},Component:class{}};
   const actual=new Function('require','window','ctx',`
-    const ATLAS_DESTINATIONS=[];\n${code('00-runtime')}\n${code('60-threads')}\n${code('62-models')}\n${code('74-palette')}
+    const ATLAS_DESTINATIONS=[];\n${code('00-runtime')}\n${code('27-inquiry-connection')}\n${code('60-threads')}\n${code('62-models')}\n${code('74-palette')}
     let teamScope=null; function injectStyles() {} const AtlasIcon='icon';
     const plugin=(function(){ ${code('90-register')} })(); plugin.apply(ctx);
     return {plugin,atlasModelAccess,atlasSelectSessionModel,atlasFetchModelCatalog,atlasChromeServices,team:()=>teamScope};

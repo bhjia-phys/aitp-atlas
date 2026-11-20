@@ -15,6 +15,45 @@ In **Discussions**, use **Running**, **Needs you**, **Unread**, **Pinned**, **Un
 
 **Other DSH sessions → Adopt** adds an eligible existing session from this workspace to the Atlas index. If a new discussion reports a session ID but no confirmed prompt, inspect that session before retrying. Closing a tab is not resolving or stopping a session. **Resolve** archives the discussion in DSH and clears its saved comparison after confirmation if there are outstanding edits. **Reopen** starts a new comparison; it does not recover the one you cleared.
 
+### Follow a research inquiry
+
+At **Desk → Discuss**, ask normally or expand **Frame the inquiry**. The long-term question and today's question can differ. Add an excerpt from an earlier discussion and, optionally, its source URL. The excerpt is shared with the selected DSH model on send; a link is a reference, **not an automatic import**. For a public ChatGPT share URL you may expressly ask the lead to read that one link anonymously. Access depends on the model's available tools and the public page; if it fails, paste the relevant excerpt instead. Check what is actually included, especially before sharing unpublished material. Atlas remembers the draft in this browser; sending starts the ordinary workspace discussion, not a team.
+
+For example, a long-term question might concern a monitored boundary detector in Schwarzschild–AdS. The immediate question can simply be what the radial solutions look like. A teaching discussion should hold the horizon prescription fixed and say what changes at the outer boundary; it need not infer a measurement protocol, a phase transition or a numerical curve. Inspect a lead-reported link in the research route to see its assumptions, status and cited files. A supported label is the lead's description, not proof or an automated audit. If the model just answers in prose or its structured reply cannot be read, the original conversation remains available; Atlas does not invent a map.
+
+A team proposal is not a team. Read what the proposed seats would settle; open the charter, adjust first tasks and the stopping test, then decide whether to start. No card auto-submits a job or updates a research note. A linked team can bring identified reports back to the originating discussion for explicit assessment. Read the evidence or ask for an explanation of the same step. Use DSH's tool permissions for hard limits: prompt guidance is not a sandbox. Earlier replies remain in the DSH transcript; discussion cards summarize reported material, not hidden reasoning.
+
+### Compare reported curves
+
+In an inquiry result or teaching explanation, **Load comparison figure** reads an optional local dataset. Nothing is read just because the lead mentions a figure. Expand **Source and comparison conditions** to inspect the manifest, data and cited report. The lines join the supplied samples on one pair of linear axes; Atlas does not solve a model, interpolate missing rows, fit a curve or independently normalize each series.
+
+The lead snapshot contains only the pointer, e.g. `"figure": {"source": "teaching/labels.atlas-figure.json"}`. Below is a **schematic** manifest for demonstrating the display—not a calculation or evidence:
+
+```json
+{
+  "kind": "schematic",
+  "data": "teaching/labels.csv",
+  "xLabel": "Step",
+  "yLabel": "Marker height"
+}
+```
+
+For this illustration only, the CSV could contain:
+
+```csv
+Step,Marker A,Marker B
+0,0,1
+1,1,0
+```
+
+For a **computed** comparison, set `kind` to `computed` and also supply all of the following in the manifest:
+
+- `xUnit` and `yUnit`: the units used by **every** series (`1` for a dimensionless quantity).
+- `commonParameters` and `normalization`: describe the controls held fixed and the actual normalization used across series. If none was applied, say so. Do not supply a placeholder for an unknown convention.
+- `report`: a workspace-relative `.md` or `.txt` replay/evidence report. It should identify the data, what changed between curves, how the run can be repeated, and what was or was not checked. A readable report is a source to inspect, **not proof** of comparability or correctness.
+
+Manifest fields are strings. All paths start from the configured research root, **not** the manifest's directory; use `/` separators and ordinary, unlinked UTF-8 files. Instead of CSV, `data` can name a `.json` file containing `{"columns":["Step","Marker A","Marker B"],"rows":[[0,0,1],[1,1,0]]}` (the same schematic example). The first column must match `xLabel`; give the 2–6 series distinct names and supply a finite value for each series at each of 2–2,000 strictly increasing x samples. Limits are 16 KiB for the manifest, 256 KiB for data and 512 KiB for a report. When the sources or comparison conditions are missing, explain the limitation in the inquiry instead of substituting illustrative points for a computed result.
+
 ## Navigate, read and write
 
 **Atlas ▾** is the workspace menu; it is not another sidebar. The seven destinations, in shortcut order, are **Desk, Discussions, Teams, Map, Library, Learn, Write**. Search, Add or write, Commands, Theme and Keyboard shortcuts are in the same menu.
@@ -103,7 +142,7 @@ Atlas's paper lookups send identifiers/search terms to arXiv or INSPIRE; adding 
 Installation is **optional** and changes a DSH **profile**. The isolated preview runs from a source checkout, not from the release archive. Use Node.js 22+ and a DSH release compatible with the [`engines.dsh` range](../package.json). On Windows the installer looks for the standard Desktop installation; elsewhere it uses `dsh` on PATH unless configured otherwise.
 
 1. Choose the target profile (`desktop` below; use `web` if that is the intended profile). Initialize it once if necessary. Back up the profile and Atlas state; get explicit approval for **this profile and package**. **Fully quit DSH Desktop or stop the target DSH web host before running the installer.** Do not run against a live work profile just to try the preview.
-2. Choose **one** way to obtain the installer. In both examples `aitp-atlas-1.0.0.tgz` stands for the **actual archive filename** you built or received.
+2. Choose **one** way to obtain the installer. In both examples `aitp-atlas-1.1.0-rc.1.tgz` stands for the **actual archive filename** you built or received.
 
    **From the source checkout**, run in the repository root:
 
@@ -111,14 +150,14 @@ Installation is **optional** and changes a DSH **profile**. The isolated preview
    npm run build
    npm pack
    # Only after approval; use the filename npm pack printed:
-   node scripts/install-dsh.mjs desktop ./aitp-atlas-1.0.0.tgz
+   node scripts/install-dsh.mjs desktop ./aitp-atlas-1.1.0-rc.1.tgz
    ```
 
    **With only the release tarball**, put the archive in an empty working directory. It already contains the compiled client. Extract the bundled installer (and documentation) and pass it the original archive:
 
    ```sh
-   tar -xzf aitp-atlas-1.0.0.tgz
-   node package/scripts/install-dsh.mjs desktop ./aitp-atlas-1.0.0.tgz
+   tar -xzf aitp-atlas-1.1.0-rc.1.tgz
+   node package/scripts/install-dsh.mjs desktop ./aitp-atlas-1.1.0-rc.1.tgz
    ```
 
    The installer invokes DSH's native plugin installer. It reuses an already-installed standalone AITP Skills dependency in that profile, otherwise it fetches a pinned AITP Skills bundle. Review the target and the possible network dependency first. Do not run `npm run build`, `preview`, or `test` from the extracted `package/`: their development scripts and fixtures are not in the distribution.

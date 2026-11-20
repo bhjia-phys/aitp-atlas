@@ -131,14 +131,19 @@ test('host: authenticated routes, sorted contents, in-app documents and folders'
     const h = fakeContext();
     apply(h.ctx, { root: fx.root });
     assert.deepEqual(h.touched, [], 'Atlas gives the agent nothing: no tools, no prompt, no context, no guard');
-    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'discussions', 'discussions/import', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'needs', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'route', 'save', 'search', 'teams', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
+    assert.deepEqual([...h.routes.keys()].map((p) => p.replace('/aitp-atlas/api/', '')).sort(), ['append', 'dir', 'discover', 'discover/save', 'discussions', 'discussions/import', 'fonts/SourceSerif4Variable-Italic.woff2', 'fonts/SourceSerif4Variable-Roman.woff2', 'inquiry-evidence', 'inquiry-figure', 'knowledge', 'latex/build', 'latex/cite', 'latex/cite-index', 'latex/engines', 'latex/sync/edit', 'latex/sync/view', 'learn', 'lecture', 'needs', 'note', 'open', 'overview', 'paper-map', 'raw', 'review/baseline', 'review/changes', 'review/forget', 'review/keep', 'review/pending', 'review/revert', 'route', 'save', 'search', 'teams', 'upload', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'web/add', 'web/citations', 'web/citing', 'web/lookup', 'web/pdf', 'web/search', 'workspace/init', 'write']);
 
     // Without DSH's signed browser cookie, every route answers 401.
-    for (const name of ['overview', 'note', 'raw', 'dir', 'knowledge', 'vendor/pdf.min.mjs']) {
+    for (const name of ['overview', 'note', 'raw', 'dir', 'inquiry-evidence', 'inquiry-figure', 'knowledge', 'vendor/pdf.min.mjs']) {
       assert.equal((await call(h.routes, 'GET', name, { query: q(fx.file('topics/research.md')), cookie: false })).status, 401, name);
     }
     assert.equal((await call(h.routes, 'POST', 'save', { body: { path: fx.file('topics/x.md'), text: 'x', create: true }, cookie: false })).status, 401);
 
+    const cite = (pointer,root=fx.root) => call(h.routes,'GET','inquiry-evidence',{query:new URLSearchParams({expectedRoot:root,pointer}).toString()});
+    assert.deepEqual((await cite('mc/worm/research.md#L4')).json,{path:fx.file('topics/mc/worm/research.md'),anchor:'L4'});
+    for (const pointer of ['../knowledge/index.md','.hidden/config','C:/outside','a%2Fb','NUL.md','x#bogus']) assert.equal((await cite(pointer)).status,400,pointer);
+    assert.equal((await cite('missing.md')).status,404);
+    assert.equal((await cite('research.md',fx.base)).status,409);
     const ov = (await call(h.routes, 'GET', 'overview', { query: 'fresh=1' })).json;
     assert.deepEqual(ov.directions.map((d) => d.topics), [['mc/worm', 'mc/continuation'], ['topology'], []]);
     assert.deepEqual(ov.topics['mc/worm'].latest, { name: 'Mixing test', status: 'paused', date: '2026-11-02' });

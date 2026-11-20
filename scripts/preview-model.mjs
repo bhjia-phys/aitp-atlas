@@ -65,7 +65,17 @@ export async function startModel() {
   // Only the in-process smoke driver can schedule a gated turn. No HTTP control endpoint;
   // no prompt/body inspection. The ordinary CLI continues streaming its short fixture.
   const plans = [], stop = new AbortController();
-  let team;
+  let team, nextReply;
+  // Text-only, one-shot acceptance fixture. A session request must have native agent tools and
+  // its final user text must contain the expected marker. Background titles/summaries cannot
+  // spend a queued turn. No HTTP configuration, request logs, tool calls or prompt forwarding.
+  const replyNext = (text, marker) => {
+    if(nextReply || typeof text!=='string' || !text || text.length>24000 || typeof marker!=='string' || !marker || marker.length>1000)throw Error('Invalid or overlapping fixture reply');
+    let mark;
+    const matched=new Promise(resolve=>{mark=resolve;});
+    const plan={text,marker,used:false,mark};nextReply=plan;
+    return Object.assign(()=>plan.used,{matched}); // Optional notification; no polling or timer.
+  };
   const enableFixtureTeam = (root,worker='theorist') => {if(team)throw Error('Team fixture already armed');team=fixtureTeam(root,worker);return team.receipts;};
   const holdNext = label => {
     if (!['A', 'B'].includes(label)) throw new Error('Unknown fixture stream');
@@ -80,10 +90,14 @@ export async function startModel() {
     if (req.method !== 'POST' || !/^\/(?:v1\/)?messages(?:\?|$)/.test(req.url)) return res.writeHead(404).end();
     if (req.headers['x-api-key'] !== key && req.headers.authorization !== `Bearer ${key}`) return res.writeHead(401).end();
     let scripted={};
-    if(team){
+    if(team || nextReply){
       const chunks=[];let bytes=0;
       try {for await(const chunk of req){bytes+=chunk.length;if(bytes>4*1024*1024)return res.writeHead(413).end();chunks.push(chunk);}
-        scripted=team.script(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const last=body.messages?.at(-1), text=typeof last?.content==='string'?last.content:Array.isArray(last?.content)?last.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):'';
+        if(nextReply && last?.role==='user' && body.tools?.some(t=>t.name==='read') && text.includes(nextReply.marker)){
+          nextReply.used=true;scripted={text:nextReply.text};nextReply.mark();nextReply=null;
+        }else if(team)scripted=team.script(body);
       }catch{return res.writeHead(400).end();}
     }else req.resume(); // Default preview discards, rather than buffering or logging, all input.
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
@@ -121,7 +135,7 @@ export async function startModel() {
   server.listen(0, '127.0.0.1');
   await listening;
   return {
-    url: `http://127.0.0.1:${server.address().port}`, key, holdNext, enableFixtureTeam,
+    url: `http://127.0.0.1:${server.address().port}`, key, holdNext, replyNext, enableFixtureTeam,
     close: () => new Promise((resolve) => { stop.abort(); server.close(resolve); server.closeAllConnections(); }),
   };
 }

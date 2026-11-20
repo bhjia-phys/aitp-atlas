@@ -29,6 +29,10 @@ return {
       }));
     ctx.slots.inject(CONVERSATION_SLOT, () =>
       ctx.slots.register({ name: CONVERSATION_SLOT }, AtlasConversationPanel));
+    // Preserve the native chat elsewhere; in Desk lead sessions keep the record
+    // inspectable without rendering its machine-readable copy twice.
+    ctx.slots.inject('conversation.chat.markdown.fence', () =>
+      ctx.slots.register({name:'conversation.chat.markdown.fence',key:'atlas-inquiry',id:'aitp-atlas/inquiry-record'},InquiryRawFence));
     // Optional chrome services may appear or be disposed after Atlas mounts.
     for (const name of ['layout', 'shortcuts']) ctx.inject([name], scope => {
       scope.effect(() => atlasBindChromeService(name, scope.get(name)), 'aitp-atlas: ' + name);

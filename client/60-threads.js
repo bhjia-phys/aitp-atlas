@@ -299,7 +299,7 @@ async function startThread({ root, context, intent = 'ask', question, label, onC
       const saved = await registryCreate(record);
       await keepBaseline(id, context);
       if (onCreated) onCreated(saved);
-      atlasRequireResult(await session.prompt([{ type: 'text', text: promptOf(context, intent, question) }], 'queue'), 'DSH did not accept the question.');
+      atlasRequireResult(await session.prompt([{ type: 'text', text: origin === 'desk' && context.inquiry ? inquiryPrompt(context, intent, question) : promptOf(context, intent, question) }], 'queue'), 'DSH did not accept the question.');
       return saved;
     });
   } catch (e) { throw Object.assign(new Error(`Session ${id}: ${e.message}`), { sessionId: id }); }
@@ -495,7 +495,7 @@ function AtlasConversationPanel({ sessionId, useSession, useConversation, useSes
   return renderFactorySlot('conversation.content', { variant: 'embedded', phase: settling ? 'settling' : hero ? 'hero' : 'active', hero }, { slots: { views: AtlasChatView } });
 }
 
-function EmbeddedConversation({ sessionId, onOpenChat }) {
+function EmbeddedConversation({ sessionId, onOpenChat, inquiryView }) {
   const kit = React.useContext(SlotKit), sessions=svc('sessions');
   const [state, setState] = useState({ reference: null, error: null });
   useEffect(() => {
@@ -520,7 +520,8 @@ function EmbeddedConversation({ sessionId, onOpenChat }) {
       h(Button, { icon: 'external', onClick: onOpenChat }, 'Open in chat'));
   }
   if (!state.reference || state.sessions!==sessions || state.sessionId!==sessionId) return h('div', { className: 'atlas-companion-wait' }, h('span', { className: 'atlas-orbit', 'aria-hidden': true }), 'Opening the discussion…');
-  return h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
+  const chat=h('div', { className: 'atlas-embedded' }, h(kit.SessionProvider, { session: state.reference }, kit.renderSlot(CONVERSATION_SLOT, {})));
+  return inquiryView ? h(React.Fragment,null,h(InquiryConversation,{...inquiryView,binding:state.reference.binding}),h(InquiryEmbedded.Provider,{value:true},chat)) : chat;
 }
 
 /** The WSL distribution a research root lives in (`\\wsl.localhost\Ubuntu\…` or `\\wsl$\Ubuntu\…`), or ''. */
@@ -671,7 +672,7 @@ function Companion({ threadId, record, flash, root, overview, go, onOpenLink, mo
     handoff && h(DiscussionHandoffDialog, { record: thread, onClose: () => setHandoff(false), onOpen: id => actions.openThread(id), flash }),
     thread?.context && h(DiscussionMarginalia, { context: thread.context, replied }),
     h(ReviewPanel, { key: 'review:' + threadId, sessionId: threadId, running, flash }),
-    h('div', { className: 'atlas-companion-body', onClickCapture: openLink }, h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat })));
+    h('div', { className: 'atlas-companion-body', onClickCapture: openLink }, h(EmbeddedConversation, { key: threadId, sessionId: threadId, onOpenChat: openChat, inquiryView: editable && thread.origin==='desk' && thread.context?.inquiry ? {thread,root,go,flash,actions,resolved} : null })));
 }
 
 // ----------------------------------------------------------- ask surfaces ---

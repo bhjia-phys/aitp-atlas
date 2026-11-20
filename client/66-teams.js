@@ -28,13 +28,16 @@ function atlasCrewErrors(draft) {
   if (!draft.goal?.trim()) errors.goal='Write the question this team should answer.';
   if (!draft.doneWhen?.trim()) errors.doneWhen='State the evidence or result that would finish the work.';
   if (!draft.topic?.path) errors.topic='Choose the topic that will own the run folder.';
+  if (Object.hasOwn(draft,'origin') && !atlasCrewOrigin(draft.origin)) errors.origin='This proposal has no valid discussion receipt. Reopen it from its discussion.';
   const seats=draft.seats || [];
+  if (seats.length>16) errors.seats='Remove seats until there are at most 16.';
   seats.forEach((s,i)=>{
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(s.name) || /^(lead|readme|con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(s.name)) errors['seat'+i]='Use a non-reserved name: 1–32 lowercase letters, digits or hyphens; start with a letter.';
     else if (seats.some((other,j)=>i!==j && other.name===s.name)) errors['seat'+i]='Seat names must be unique.';
     else if (!atlasCrewRoles.includes(s.role) || !['core','one-shot'].includes(s.mode)) errors['seat'+i]='Choose a valid role and duration.';
     else if (s.role==='custom' && !s.roleCard?.trim()) errors['seat'+i]='Give this custom role a responsibility and write scope.';
     else if (s.model) errors['seat'+i]='DSH has not authorized an explicit model for this seat. Use no override.';
+    else if (s.task!=null && (typeof s.task!=='string' || s.task.length>8000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(s.task))) errors['seat'+i]='Use a first task of at most 8000 characters without control characters.';
   });
   return errors;
 }
@@ -61,7 +64,7 @@ async function atlasStartNativeTeam({root,draft,requestId},deps=atlasCrewService
   try {
     const result=await deps.request('teams',{...draft,requestId}); team=result?.team;
     if (!team?.id || !result.brief?.trim()) throw new Error('Atlas did not return the team and its lead brief.');
-    if (result.replayed || team.leadId) throw new Error('This launch was already recorded. Inspect its team before taking further action.');
+    if (result.replayed || team.leadId) throw Object.assign(new Error('This launch was already recorded. Inspect its team before taking further action.'),{existingTeam:true});
     stage='bind workspace';const workspace=await deps.workspaces.create({path:root}), workspaceId=workspace?.workspaceId || workspace?.id;
     if (!workspaceId) throw new Error('DSH did not resolve the research workspace.');
     stage='create lead';leadId=await deps.sessions.create({workspaceId});
@@ -89,7 +92,10 @@ async function atlasStartNativeTeam({root,draft,requestId},deps=atlasCrewService
       return receipt.team;
     } finally {ref.release();}
   } catch (error) {
-    throw Object.assign(new Error(`${error.message} Stage: ${stage}.${team ? ' Team: '+team.id+'.' : ''}${leadId ? ' Lead: '+leadId+'.' : ''} ${accepted ? 'DSH accepted the brief; do not resend it.' : attempted ? 'Delivery was not confirmed. Inspect the lead before sending anything again.' : 'No brief was sent by this attempt. Inspect existing teams before starting another launch.'}`),{team,leadId,stage,attempted,accepted,startedRequest:true});
+    // Only the registry's explicit, pre-scaffold validation failure can unlock this
+    // charter. A transport error or a later-stage refusal might already own a run.
+    if (!team && stage==='create run' && error.status===400 && error.body?.error?.code==='INVALID_TEAM') throw error;
+    throw Object.assign(new Error(`${error.message} Stage: ${stage}.${team ? ' Team: '+team.id+'.' : ''}${leadId ? ' Lead: '+leadId+'.' : ''} ${accepted ? 'DSH accepted the brief; do not resend it.' : attempted ? 'Delivery was not confirmed. Inspect the lead before sending anything again.' : 'No brief was sent by this attempt. Inspect existing teams before starting another launch.'}`),{team,leadId,stage,attempted,accepted,startedRequest:true,existingTeam:error.existingTeam===true});
   }
 }
 function atlasTeamSeatStatus(team,seat,leadRow,now=Date.now(),rows) {
@@ -117,14 +123,51 @@ function atlasCrewLaunchId() {
   if (!globalThis.crypto?.getRandomValues) return '';
   return 'launch-'+Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
 }
-function atlasCrewDraft(overview,preset={}) {
-  const topicId=preset.topicId ?? preset.topic?.id ?? (typeof preset.topic==='string' ? preset.topic : null);
-  const topic=topicId==null ? null : overview?.topics?.[topicId];
-  return {template:'derive-check',goal:preset.goal || '',doneWhen:'',topic:topic ? {id:topic.id,path:topic.file,title:topic.title} : null,
-    conventions:'',extraAllowed:[],extraAsk:[],inputs:(preset.attachments || []).map(a=>a.path).filter(Boolean),leadModel:preset.leadModel || null,seats:atlasCrewFromTemplate('derive-check')};
+function atlasCrewOrigin(raw) {
+  if (typeof raw?.discussionId!=='string' || !/^[a-zA-Z0-9_-]{1,120}$/.test(raw.discussionId) || typeof raw.proposalId!=='string' || !/^reply-(?:0|[1-9]\d{0,15})$/.test(raw.proposalId) || !Number.isSafeInteger(Number(raw.proposalId.slice(6)))) return null;
+  return {discussionId:raw.discussionId,proposalId:raw.proposalId};
 }
-function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
-  const [draft,setDraft]=useState(()=>atlasCrewDraft(overview,preset || {}));
+const atlasCrewText=v=>typeof v==='string'?v:'';
+function atlasCrewDraft(overview,preset={}) {
+  // Project proposal text into the same review sheet as a manual team. Never
+  // spread a proposed charter/seat: paths, role cards, routes and scopes aren't suggestions.
+  const proposal=['origin','seats','doneWhen','conventions'].some(k=>Object.hasOwn(preset,k));
+  const topicId=preset.topicId ?? (!proposal ? preset.topic?.id ?? preset.topic : null);
+  const topic=typeof topicId==='string' && Object.hasOwn(overview?.topics || {},topicId) ? overview.topics[topicId] : null;
+  const proposalSeats=Array.isArray(preset.seats)?preset.seats:[];
+  return {template:proposal?'custom':'derive-check',goal:atlasCrewText(preset.goal),doneWhen:atlasCrewText(preset.doneWhen),topic:topic?.file ? {id:topic.id,path:topic.file,title:topic.title} : null,
+    conventions:atlasCrewText(preset.conventions),extraAllowed:[],extraAsk:[],inputs:[...new Set((Array.isArray(preset.attachments)?preset.attachments:[]).map(a=>atlasCrewText(a?.path)).filter(Boolean))],
+    leadModel:proposal?null:preset.leadModel || null,seats:proposal?proposalSeats.map(s=>({name:atlasCrewText(s?.name),role:atlasCrewText(s?.role),task:atlasCrewText(s?.task),mode:'core',model:null})):atlasCrewFromTemplate('derive-check'),
+    ...(Object.hasOwn(preset,'origin')?{origin:atlasCrewOrigin(preset.origin)}:{})};
+}
+// An unfinished charter lives in this browser tab, not the host registry. Only
+// recover text from the identical workspace and seed. Never restore routes,
+// write scope, role-card overrides, run IDs or launch/confirmation state.
+function atlasCrewCache(scope,value) {
+  const key='aitp-atlas:charter.v1';
+  try {
+    const store=window.sessionStorage;
+    if(value===undefined){const entry=JSON.parse(store.getItem(key));return entry?.scope===scope?entry.text:null;}
+    if(value===null){if(JSON.parse(store.getItem(key))?.scope===scope)store.removeItem(key);return;}
+    const {goal,doneWhen,conventions,template,seats,topic,inputs,extraAsk}=value;
+    store.setItem(key,JSON.stringify({scope,text:{goal,doneWhen,conventions,template,extraAsk,topicId:topic?.id ?? null,attachments:inputs.map(path=>({path})),seats:seats.map(({name,role,task,mode})=>({name,role,task,mode}))}}));
+  } catch {} // Private browsing / storage quota must not block editing.
+  return null;
+}
+function atlasCrewRecover(overview,seed,text) {
+  if(!text || !Array.isArray(text.seats) || !atlasCrewTemplates.some(t=>t[0]===text.template))return seed;
+  const safe=atlasCrewDraft(overview,text);
+  return {...seed,goal:safe.goal,doneWhen:safe.doneWhen,conventions:safe.conventions,template:text.template,topic:safe.topic,inputs:safe.inputs,
+    extraAsk:['Starting a new seat','Web downloads'].filter(s=>Array.isArray(text.extraAsk) && text.extraAsk.includes(s)),
+    seats:safe.seats.map((s,i)=>({...s,mode:text.seats[i]?.mode==='one-shot'?'one-shot':'core'}))};
+}
+function AssembleTeamSheet(props) {
+  const seed=atlasCrewDraft(props.overview,props.preset || {}),scope=JSON.stringify([props.overview?.root,props.preset?.topicId,seed]);
+  return h(AtlasCrewEditor,{...props,key:scope,seed,scope});
+}
+function AtlasCrewEditor({overview,seed,scope,onClose,onStarted,flash}) {
+  const [recovery]=useState(()=>atlasCrewCache(scope));
+  const [draft,setDraft]=useState(()=>atlasCrewRecover(overview,seed,recovery));
   const [catalog,setCatalog]=useState(null),[catalogError,setCatalogError]=useState(''),[check,setCheck]=useState(0);
   const [preview,setPreview]=useState(null),[opened,setOpened]=useState(false),[editFiles,setEditFiles]=useState(false),[attach,setAttach]=useState(false);
   const [busy,setBusy]=useState(false),[problem,setProblem]=useState(null),[touched,setTouched]=useState({});
@@ -136,6 +179,7 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
   const errors=atlasCrewErrors(draft), first=Object.keys(errors)[0];
   const capability=(!requestId && 'A secure launch identity is unavailable in this browser.') || catalogError || (!overview?.root ? 'No research workspace was selected.' : catalog ? atlasCrewCapabilities(atlasCrewServices(),catalog,draft.leadModel) : '');
   const locked=busy || !!problem?.startedRequest;
+  useLayoutEffect(()=>{if(!locked && draft!==seed)atlasCrewCache(scope,draft);},[scope,draft,locked]);
   const update=patch=>{if (locked) return;setDraft(d=>({...d,...patch}));setProblem(null);};
   const payload={...draft,extraAllowed:draft.extraAllowed.map(s=>s.trim()).filter(Boolean)};
   const saved=JSON.stringify(payload);
@@ -150,26 +194,31 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
   const launch=async()=>{
     if (latch.current || locked || first || capability || !catalog) return;
     latch.current=true;setBusy(true);setProblem(null);
+    atlasCrewCache(scope,null); // Never recover a possibly submitted request as an unstarted draft.
     try {const team=await atlasStartNativeTeam({root:overview.root,draft:payload,requestId}); if(live.current){flash?.('Brief delivered to the lead.');onStarted(team);}}
-    catch(e){if(live.current)setProblem(e);} finally {if(live.current)setBusy(false);latch.current=false;}
+    catch(e){if(live.current){if(e.team?.id)recordTeamInIndex(overview.root,e.team);setProblem(e);}} finally {if(live.current)setBusy(false);latch.current=false;}
   };
   const close=()=>{if(!latch.current)onClose();};
   const input=(name,label,extra={})=>h('label',{className:'atlas-crew-field'},h('span',null,label),h('textarea',{'aria-label':label,ref:name==='goal'?goalRef:undefined,rows:name==='goal'?3:2,maxLength:4000,value:draft[name],disabled:locked,onChange:e=>update({[name]:e.target.value}),onBlur:()=>setTouched(v=>({...v,[name]:true})),...extra}),touched[name]&&errors[name]&&h('small',{className:'atlas-crew-error'},errors[name]));
   const modifySeat=(i,patch)=>update({seats:draft.seats.map((s,j)=>i===j?{...s,...patch}:s)});
   const seatCard=(s,i)=>h('article',{key:i,className:'atlas-crew-card','aria-label':'Member '+(i+1)},
     h('div',{className:'atlas-crew-card-top'},h(Icon,{name:'team',size:16}),h('input',{ref:e=>{seatRefs.current[i]=e;},'aria-label':`Seat ${i+1} name`,value:s.name,disabled:locked,maxLength:32,onChange:e=>modifySeat(i,{name:e.target.value})}),h(IconButton,{label:`Remove ${s.name || 'member'}`,icon:'close',small:true,disabled:locked,onClick:()=>update({seats:draft.seats.filter((_,j)=>i!==j)})})),
-    h('div',{className:'atlas-crew-pair'},h('select',{'aria-label':`Role for ${s.name}`,value:s.role,disabled:locked,onChange:e=>modifySeat(i,{role:e.target.value})},atlasCrewRoles.map(r=>h('option',{key:r,value:r},r))),
+    h('div',{className:'atlas-crew-pair'},h('select',{'aria-label':`Role for ${s.name}`,value:s.role,disabled:locked,onChange:e=>modifySeat(i,{role:e.target.value,roleCard:undefined})},!atlasCrewRoles.includes(s.role) && h('option',{value:s.role},'Choose a role'),atlasCrewRoles.map(r=>h('option',{key:r,value:r},r))),
       h('select',{'aria-label':`Duration for ${s.name}`,value:s.mode,disabled:locked,onChange:e=>modifySeat(i,{mode:e.target.value})},h('option',{value:'core'},'Core'),h('option',{value:'one-shot'},'One-shot'))),
     s.role==='custom' && h('textarea',{'aria-label':`Role card for ${s.name}`,placeholder:'Responsibilities and write scope',value:s.roleCard || '',disabled:locked,onChange:e=>modifySeat(i,{roleCard:e.target.value})}),
+    h('label',{className:'atlas-crew-field'},h('span',null,'First task'),h('textarea',{'aria-label':`First task for ${s.name}`,rows:2,maxLength:8000,placeholder:'Leave blank to use the role’s default first task.',value:s.task || '',disabled:locked,onChange:e=>modifySeat(i,{task:e.target.value})})),
     h('select',{'aria-label':`Model for ${s.name}`,disabled:true,title:'DSH verifies explicit child routes inside the lead session, not in the global model catalog.'},h('option',null,atlasInheritedRoute)),
     errors['seat'+i] && h('small',{className:'atlas-crew-error',role:'alert'},errors['seat'+i]));
   const count=draft.seats.length, templateNote=atlasCrewTemplateNote(draft), currentPreview=preview?.key===saved ? preview : null;
   const labelTopic=draft.topic?.title || 'Choose a topic';
   return h(Dialog,{title:'Assemble a team',wide:true,initialFocusRef:goalRef,className:'atlas-crew-sheet',onClose:close,footer:h(React.Fragment,null,
-    h('span',{className:'atlas-crew-summary'},`The lead starts ${count} ${count===1?'member':'members'} and puts the work on the task board.`),h(Button,{quiet:true,disabled:busy,onClick:close},locked&&!busy?'Close':'Cancel'),
-    problem?.team ? h(Button,{primary:true,onClick:()=>onStarted(problem.team)},'Open partial team') : h(Button,{primary:true,disabled:locked || !!first || !!capability || !catalog,onClick:launch},busy?'Starting…':'Start the team'))},
+    h('span',{className:'atlas-crew-summary'},`The lead starts ${count} ${count===1?'member':'members'} and puts the work on the task board.`),h(Button,{quiet:true,disabled:busy,onClick:()=>{if(!latch.current){atlasCrewCache(scope,null);close();}}},locked&&!busy?'Close':'Cancel'),
+    problem?.team ? h(Button,{primary:true,onClick:()=>onStarted(problem.team)},problem.existingTeam?'Open existing team':'Open partial team') : h(Button,{primary:true,disabled:locked || !!first || !!capability || !catalog,onClick:launch},busy?'Starting…':'Start the team'))},
     h('div',{className:'atlas-crew-columns'},h('div',{className:'atlas-crew-form'},
-      h('h3',null,'The question'),input('goal','What should the team find out?'),input('doneWhen','Done when'),
+      seed.origin && h('p',null,'Discussion proposal · Review the question and each first task. No team has been started by opening this draft.'),
+       recovery && h('p',{role:'status'},'Recovered charter text from this tab. Review model choices and file permissions again.'),
+       errors.origin && h(Banner,{tone:'error'},errors.origin),
+       h('h3',null,'The question'),input('goal','What should the team find out?'),input('doneWhen','Done when'),
       h('label',{className:'atlas-crew-field'},'Topic',h('select',{'aria-label':'Topic',value:draft.topic?.id ?? '__choose__',disabled:locked,onChange:e=>{const t=overview.topics[e.target.value];update({topic:t ? {id:t.id,title:t.title,path:t.file}:null});},onBlur:()=>setTouched(x=>({...x,topic:true}))},
         h('option',{value:'__choose__'},'Choose a topic'),Object.values(overview?.topics || {}).filter(t=>t?.file).map(t=>h('option',{key:t.id,value:t.id},t.title || 'Research root'))),touched.topic && errors.topic&&h('small',{className:'atlas-crew-error'},errors.topic)),
       h('div',{className:'atlas-crew-field'},h('span',null,'Lead model'),h(AtlasModelPicker,{value:draft.leadModel,disabled:locked,onChange:choice=>update({leadModel:choice})})),
@@ -185,7 +234,7 @@ function AssembleTeamSheet({overview,preset,onClose,onStarted,flash}) {
     h('div',{className:'atlas-crew-side'},h('h3',null,'The crew'),h(TeamConstellation,{mode:'assembly',lead:{name:'lead',role:'Lead',model:draft.leadModel},seats:draft.seats,onSelect:seat=>seatRefs.current[draft.seats.findIndex(s=>s.name===seat.name)]?.focus()}),
       h('div',{className:'atlas-crew-presets',role:'group','aria-label':'Team template'},atlasCrewTemplates.map(([id,label])=>h('button',{key:id,type:'button','aria-pressed':draft.template===id && !templateNote,disabled:locked,onClick:()=>update({template:id,seats:atlasCrewFromTemplate(id)})},label))),
       templateNote && h('span',{className:'atlas-crew-hint',role:'status'},templateNote),
-      draft.seats.map(seatCard),h(Button,{small:true,icon:'plus',disabled:locked || count>=16,onClick:()=>update({seats:[...draft.seats,atlasCrewSeat('theorist',draft.seats)]})},'Add a member'),
+      errors.seats && h(Banner,{tone:'error'},errors.seats),draft.seats.map(seatCard),h(Button,{small:true,icon:'plus',disabled:locked || count>=16,onClick:()=>update({seats:[...draft.seats,atlasCrewSeat('theorist',draft.seats)]})},'Add a member'),
       h('p',{className:'atlas-crew-hint'},'Explicit seat models need authorization from this lead’s delegation policy. The DSH catalog only verifies lead routes; seats request no override.'),
       draft.seats.some(s=>s.role==='referee') && catalog?.groups?.length>1 && h('p',{className:'atlas-crew-hint'},'A referee on another provider can reduce shared blind spots, if the lead can verify permission.'),
       h('details',{onToggle:e=>setOpened(e.currentTarget.open)},h('summary',null,'Brief the lead will receive'),opened && (currentPreview?.brief ? h('pre',null,currentPreview.brief) : h('p',{role:'status'},first ? 'Complete the required fields to preview the exact brief.' : currentPreview?.error || 'Preparing the brief…'))))));

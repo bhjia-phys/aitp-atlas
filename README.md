@@ -15,6 +15,8 @@ npm run preview
 
 Open the **exact private URL** printed by the launcher, select **Atlas** in DSH's sidebar and type `Is the worm sampler equilibrating reproducibly?` at the Desk. Inspect **Likely topic**, then press Enter. Open the topic or a cited file beside the answer. **Atlas ▾** opens destinations; the tabs next to it are things you have already opened. Stop with `q` then Enter, or Ctrl+C. This preview uses temporary research files, a separate profile and a local model with fixed replies; it does not enable model tool calls.
 
+To try the **research lead**, run `npm run preview:inquiry` instead. Follow the printed Schwarzschild–AdS example: start with a teaching question, inspect a branching route, then review a proposed division of work. Its fixture replies demonstrate the interface, not a black-hole calculation. In a configured workspace the same [inquiry flow](docs/guide.md#follow-a-research-inquiry) uses your selected DSH model.
+
 For a native team with two real DSH child sessions and synthetic tasks, run `npm run preview:team` **instead**. Follow its printed assembly instructions. The Desk's Team mode and **Teams → New team** open a form; neither starts a run until you choose **Start the team**. The isolated example exercises message delivery, not scientific judgment.
 
 ![Synthetic two-seat Team room in Day: a report and independent review are linked, while a convention still needs the researcher’s decision.](docs/assets/workbench/team-day.png)

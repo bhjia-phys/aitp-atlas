@@ -2,7 +2,7 @@
 // otherwise the topic's ID. Never persist a guess as if the researcher pinned it.
 function deskDraft(root) {
   const saved = storageGet('prefs.v1', {})?.deskDraft;
-  return saved && saved.root === root ? { question: typeof saved.question === 'string' ? saved.question : '', topicId: saved.topicId || (saved.mode === 'none' ? '' : null), attachments: Array.isArray(saved.attachments) ? saved.attachments.filter((a) => typeof a?.path === 'string' && typeof a?.label === 'string') : [] } : { question: '', topicId: null, attachments: [] };
+  return saved && saved.root === root ? { question: typeof saved.question === 'string' ? saved.question : '', topicId: saved.topicId || (saved.mode === 'none' ? '' : null), ...(saved.inquiry && typeof saved.inquiry === 'object' ? {inquiry:{...Object.fromEntries(['longQuestion','currentQuestion','sourceUrl','sourceExcerpt'].map(k=>[k,typeof saved.inquiry[k]==='string' ? saved.inquiry[k] : ''])),...(saved.inquiry.readPublicSource===true ? {readPublicSource:true} : {})}} : {}), attachments: Array.isArray(saved.attachments) ? saved.attachments.filter((a) => typeof a?.path === 'string' && typeof a?.label === 'string') : [] } : { question: '', topicId: null, attachments: [] };
 }
 
 function deskRouteKey(question, choice) {
@@ -176,7 +176,8 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
   const [model, setModel] = useState(() => storageGet('prefs.v1', {})?.model || null);
   const [route, setRoute] = useState(null);
   const router = useMemo(() => createDeskRouting(lookupDeskRoute, setRoute), []);
-  const key = ov ? deskRouteKey(draft.question, draft.topicId) : '';
+  const question = draft.question.trim() || (!teamMode && draft.inquiry?.currentQuestion?.trim()) || '';
+  const key = ov ? deskRouteKey(question, draft.topicId) : '';
   useEffect(() => { router.select(key); return () => router.clear(); }, [router, key]);
   const result = key && route?.key === key ? route : null;
   const selection = deskFiling(ov, draft.topicId, result);
@@ -204,14 +205,14 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
     if (ro) ro.observe(parent); return () => { if (ro) ro.disconnect(); };
   }, [draft.question]);
   const send = async () => {
-    if (latch.current || disabled || blockedModel || !draft.question.trim()) return;
+    if (latch.current || disabled || blockedModel || !question) return;
     latch.current = true; setPopup(null); setBusy(true); setError('');
     try {
       const latest = key ? await router.flush(key) : null;
       if (key && !latest) return; // This draft/root was replaced before lookup finished.
       const filing=deskFiling(ov,draft.topicId,latest);
       if(teamMode){ actions.assembleTeam({goal:draft.question.trim(),topicId:filing.topicId,leadModel:model,attachments:draft.attachments}); return; }
-      await onStartDiscussion({ question: draft.question.trim(), ...filing, model, attachments: draft.attachments });
+      await onStartDiscussion({ question, ...filing, model, attachments: draft.attachments, inquiry: draft.inquiry || {} });
       setDraft({ topicId: null, question: '', attachments: [] });
     } catch (cause) { setError(cause?.message || 'The discussion could not start.'); }
     finally { latch.current = false; setBusy(false); }
@@ -229,9 +230,10 @@ function DeskWorkspace({ overview: ov, go, focusRequest, setup, onRetry, onStart
         h(AtlasModelPicker, { value: model, disabled, onChange: (next) => { setModel(next); storageSet('prefs.v1', { ...storageGet('prefs.v1', {}), model: next }); } }),
         h(Segmented,{label:'Composer mode',value:mode,options:[{value:'discuss',label:'Discuss',disabled:busy},{value:'team',label:'Team',disabled:busy}],onChange:setMode}),
         h('span', { className: 'atlas-desk-hint' }, 'Shift+Enter for a new line'),
-        teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !!blockedModel || !draft.question.trim(), onClick: send }, busy ? '…' : '↑')),
+        teamMode ? h(Button,{small:true,primary:true,disabled:disabled || !draft.question.trim(),onClick:send},'Set up team…') : h(IconButton, { className: 'atlas-desk-send', label: busy ? 'Starting discussion…' : 'Send discussion', disabled: disabled || !!blockedModel || !question, onClick: send }, busy ? '…' : '↑')),
       popup === 'topic' && ov ? h(DeskTopics, { anchor: topicButton, ov, selected: draft.topicId, onChoose: choose, onClose: () => setPopup(null) }) : null,
       popup === 'attach' && ov ? h(DeskAttach, { anchor: attachButton, ov, beside: otherPane, onAttach: attach, onClose: () => setPopup(null) }) : null),
+    ov && !teamMode ? h('div',{className:'atlas-inquiry-desk-wrap'},h(InquiryStrip,{mode:'desk',inquiry:draft.inquiry || {},disabled:disabled || !!blockedModel,onChange:delta=>setDraft(prev=>({...prev,inquiry:{...prev.inquiry,...delta}}))})) : null,
     disabledReason ? h('p', { className: 'atlas-desk-message', role: 'status' }, disabledReason) : null,
     error ? h('div', { className: 'atlas-desk-message', role: 'alert' }, error, ' ', h(Button, { small: true, onClick: send, disabled }, 'Retry')) : null,
     result ? h('div', { className: 'atlas-desk-routing', role: 'group', 'aria-label': 'Likely topic', 'aria-live': 'polite' }, selection.candidates.length ? h(React.Fragment, null, h('span', { className: 'atlas-desk-route-label' }, 'Likely topic'), selection.candidates.slice(0, 3).map(({ topic: pick, reasons }) => h(Chip, { key: pick.id, variant: 'suggestion', dot: directionColor(ov, pick.direction), auto: selection.topicId === pick.id, selected: selection.topicId === pick.id, disabled, title: `${pick.title} · Matched: ${reasons.join(', ')}`, onClick: () => choose(pick.id) }, shortTitle(pick.title, 38)))) : h('span', null, result.unavailable ? 'Topic suggestions unavailable · will start unfiled.' : 'No matching topic · will start unfiled.')) : null,
@@ -261,6 +263,9 @@ const ATLAS_DESK_CSS = `
 .atlas-desk-sky.is-stacked .atlas-desk-greeting { top:var(--s-8); transform:translateX(-50%); }
 .atlas-desk-welcome { text-align:center; padding:var(--s-48) 0 var(--s-72); }
 .atlas-desk-composer { position:relative; max-width:720px; margin:-34px auto 0; padding:14px var(--s-16) 10px; border:1px solid var(--border-control); border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-2); box-sizing:border-box; }
+.atlas-inquiry-disc-wrap { flex:0 1 auto; min-height:0; max-height:36vh; max-height:min(36dvh,360px); overflow:auto; scrollbar-gutter:stable; overscroll-behavior:contain; }
+.atlas-inquiry-original { font:var(--t-meta); color:var(--text-2); } .atlas-inquiry-original summary {cursor:pointer;}
+.atlas-inquiry-desk-wrap { max-width:720px; margin:var(--s-12) auto 0; }
 .atlas-desk-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 var(--s-4) var(--accent-soft),var(--shadow-2); }
 .atlas-desk-composer textarea { display:block; width:100%; min-height:69px; max-height:276px; margin:0; padding:0; border:none; background:none; resize:none; color:var(--text-1); font:15px/23px var(--font-ui); }
 .atlas-desk-composer textarea:focus { outline:none; } .atlas-desk-composer textarea::placeholder { color:var(--text-3); }

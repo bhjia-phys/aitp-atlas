@@ -1,6 +1,6 @@
 {
   "name": "aitp-atlas",
-  "version": "1.0.0",
+  "version": "1.1.0-rc.1",
   "description": "Open Atlas in the DeepSeek Harness sidebar to read research notes, discuss a passage beside its source, or give a native team a question and stopping test. Review reports, decisions and observed changes before updating a note.",
   "type": "module",
   "license": "MIT",
@@ -50,6 +50,7 @@
     "build": "node build-client.mjs",
     "preview": "node scripts/preview.mjs",
     "preview:team": "node scripts/preview.mjs --team",
+    "preview:inquiry": "node scripts/preview.mjs --inquiry",
     "install:dsh": "node scripts/install-dsh.mjs",
     "prepack": "node build-client.mjs --check",
     "test": "node build-client.mjs --check && node --test \"test/*.test.mjs\"",

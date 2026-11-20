@@ -185,11 +185,12 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
   const assemble=(from,preset={})=>{if(root)setAssembly({from,preset});};
   // Desk submission activates the real session only after DSH accepts its first
   // message; failure is returned to the Desk so the researcher can retry.
-  const submitDesk = async ({question,topicId,attachments=[],model=null,filing='none',candidates=[]}) => {
+  const submitDesk = async ({question,topicId,attachments=[],inquiry={},model=null,filing='none',candidates=[]}) => {
     const t = topicId == null ? null : ov?.topics?.[topicId];
     const context=focusContext({topic:t ? {id:t.id,title:t.title,path:t.file} : null});
     if (attachments.length) context.attachments=attachments;
     context.routing={filing,candidates};
+    context.inquiry=normalizeInquirySeed(inquiry); // Validate before DSH creates a session.
     const record = await startThread({root:ov.root,context,intent:'ask',question,origin:'desk',filing,candidates,model});
     if (live.current) openThread(record.id,'desk');
     return record;
@@ -305,7 +306,7 @@ function AtlasRootShell({overview,version,setVersion,registry,rows,legacy,worksp
       return h(TeamRoom,{...props,scope,teamId:team.id,team,visible:visibleIds.includes(t.id),section:t.section,decisionId:t.decisionId,onMember:(id,name)=>openSeat(team.id,id,name,t.id),onAddSeat:()=>setSeatTeam(team.id)});
     }
     if (t.kind==='member' && t.teamId) return h(TeamMemberTab,{...props,scope,team:tabTeamRecord(t.teamId,scope),seatName:t.seatName,sessionId:t.sessionId,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onTeam:()=>openTeam(t.teamId,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
-    if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
+    if (tabConversation(t)) return h(DiscussionTab,{key:t.sessionId,root,sessionId:t.sessionId,record:registryGet(t.sessionId),moveTopicRef:t.id===active ? moveTopicRef : null,visible:visibleIds.includes(t.id),retained:retained.includes(t.id),onClose:()=>close(t.id),go,flash,overview:ov,onOpen:id=>openThread(id,t.id),onOpenLink:ref=>go(ref.url?{view:'paper',url:ref.url}:{view:'doc',path:ref.path,anchor:ref.anchor,link:true})});
     return h(Empty,null,'This team room is not available in this version.');
   };
   const split=liveSplit ?? layout.split;
